@@ -39,3 +39,39 @@
 
 # debug information files
 *.dwo
+
+# VSC
+.DS_Store
+Thumbs.db
+
+# Cmake and Build
+build/
+cmake-build-*/
+out/
+bin/
+obj/
+.cmake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+CMakeUserPresets.json
+DartConfiguration.tcl
+
+*.cmake
+*.ipynb_checkpoints
+*.db
+*.lock
+
+# Clion
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# Others
+Testing
