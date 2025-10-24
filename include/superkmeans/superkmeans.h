@@ -2,14 +2,16 @@
 #ifndef SUPERKMEANS_H
 #define SUPERKMEANS_H
 
-#include "common.h"
-#include "distance_computers/base_computers.hpp"
+#include "superkmeans/common.h"
+#include "superkmeans/distance_computers/base_computers.hpp"
+#include "superkmeans/pdx/utils.h"
+#include "superkmeans/pdx/pdxearch.h"
 
 namespace skmeans {
 template <Quantization q = f32, DistanceFunction alpha = l2, class Pruner = ADSamplingPruner<q>>
 class SuperKMeans {
     using centroid_value_t = skmeans_centroid_value_t<q>;
-    using vector_value_t   = skmeans_value_t<q>;
+    using vector_value_t = skmeans_value_t<q>;
 
   public:
     SuperKMeans(size_t n_clusters, uint32_t iters = 25, float sampling_fraction = 0.50)
@@ -33,10 +35,10 @@ class SuperKMeans {
      * @param num_threads Number of CPU threads to use (set to -1 to use all cores)
      * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
      */
-    std::vector<skmeans_centroid_value_t<q>> train(const vector_value_t* SKM_RESTRICT data,
-                                                   const size_t n, const size_t d,
-                                                   uint32_t   num_threads = -1,
-                                                   const bool verbose     = false) {
+    std::vector<skmeans_centroid_value_t<q>> Train(
+        const vector_value_t* SKM_RESTRICT data, const size_t n, const size_t d,
+        uint32_t num_threads = -1
+    ) {
         SKMEANS_ENSURE_POSITIVE(n);
         SKMEANS_ENSURE_POSITIVE(d);
         if (_trained) {
@@ -45,37 +47,46 @@ class SuperKMeans {
 
         if (n < _n_clusters) {
             throw std::runtime_error(
-                "The number of points should be at least as large as the number of clusters");
+                "The number of points should be at least as large as the number of clusters"
+            );
         }
 
         vector_value_t* SKM_RESTRICT data_p = data;
+        _centroids.resize(_n_clusters * d);
+        _tmp_centroids.resize(_n_clusters * d);
         /*
-         * 1. Sample using sampling_fraction. In this case you need to create a new buffer for sure.
-         * 2. If metric is dp, normalize the vectors so you can use l2 always
-         * 3. Transform data in data_p with Pruner preprocessing
+         * 1. [opt] Sample using sampling_fraction. In this case you need to create a new buffer for
+         * sure.
+         * 2. [opt] If metric is dp, normalize the vectors so you can use l2 always
+         * 3. [opt] Transform data in data_p with Pruner preprocessing
          *    - ADSampling: Returns pointer to new buffer
          *    - Flat      : Zero copy (pass the pointer back)
-         * 4. Sample centroids from data, copy them in the centroid buffer
-         * 5. PDXify collection (must do multiprocessing, and must go into new buffer)
-         * 6. Loop: assign+update, split
+         * 4. [done] Sample centroids from data, copy them in the centroid buffer
+         * 5. [next] PDXify centroids! (I don't need to PDXify data)
+         * 6. [next] Transform data in centroids with Pruner preprocessing
+         *    - ADSampling
+         *    - Flat
+         * 6. [next] Loop: assign+update, split
          * 7. Finalize:
          *    - I need to unrotate the centroids (Do assignments change if I derotate?)
          *    - I am not sure if I should just return the assignments
          *    - Assigning later would mean that I need to do the rotation also later
          */
 
+        sample_centroids(data_p, n, d);
+
         if (verbose) {
             std::cout << "Clustering..." << std::endl;
         }
 
         for (int i = 0; i < _iters; ++i) {
-            assign_clusters(iter_mat, iter_norms, num_threads);
-            update_centroids(iter_mat);
-            split_clusters(iter_mat);
-            postprocess_centroids();
+            // assign_clusters(iter_mat, iter_norms, num_threads);
+            // update_centroids(iter_mat);
+            // split_clusters(iter_mat);
+            // postprocess_centroids();
             if (verbose)
                 std::cout << "Iteration " << i + 1 << "/" << _iters
-                          << " | Objective: " << cost(iter_mat) << std::endl;
+                          << " | Objective: " << std::endl;
         }
 
         _trained = true;
@@ -93,25 +104,41 @@ class SuperKMeans {
      * @return std::vector<uint32_t> Clustering assignments as a vector of
      * sequential ids of the points assigned to the corresponding cluster
      */
-    std::vector<uint32_t> assign(const vector_value_t* SKM_RESTRICT data, const size_t n) {
+    std::vector<uint32_t> Assign(const vector_value_t* SKM_RESTRICT data, const size_t n) {
         SKMEANS_ENSURE_POSITIVE(n);
     }
 
-    std::vector<skmeans_centroid_value_t<q>> get_centroids() const { return _centroids; }
+    std::vector<skmeans_centroid_value_t<q>> GetCentroids() const { return _centroids; }
 
-    inline size_t get_n_clusters() const { return _n_clusters; }
+    inline size_t GetNClusters() const { return _n_clusters; }
 
-    inline bool is_trained() const { return _trained; }
+    inline bool IsTrained() const { return _trained; }
 
   protected:
+    // Equidistant sampling similar to DuckDB's
+    void SampleCentroids(vector_value_t* SKM_RESTRICT data, const size_t n, const size_t d) const {
+        const auto jumps = static_cast<size_t>(std::floor(1.0 * n / _n_clusters));
+        auto tmp_centroids_p = _tmp_centroids.data();
+        for (size_t i = 0; i < n; i += jumps) {
+            // TODO(@lkuffo, low): What if centroid values are not of the same size of vector values
+            memcpy(tmp_centroids_p, data[i], sizeof(centroid_value_t) * d);
+            tmp_centroids_p += d;
+        }
+        // TODO(@lkuffo, high): Template bool for pruning or not
+        skmeans::PDXify<q, true>(tmp_centroids_p, _centroids.data(), _n_clusters, d);
+    }
+
     std::vector<centroid_value_t> _centroids;
-    std::vector<uint32_t>         _assignments;
-    std::vector<uint32_t>         _cluster_sizes;
+    std::vector<centroid_value_t> _tmp_centroids;
+    std::vector<centroid_value_t> _super_centroids;
+    std::vector<uint32_t> _assignments;
+    std::vector<uint32_t> _cluster_sizes;
 
     const uint32_t _iters;
-    const size_t   _n_clusters;
-    const float    _sampling_fraction;
-    bool           _trained;
+    const size_t _n_clusters;
+    const float _sampling_fraction;
+    bool _trained;
+    bool verbose;
 };
 } // namespace skmeans
 

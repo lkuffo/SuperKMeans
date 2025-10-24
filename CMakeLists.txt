@@ -11,6 +11,6 @@ include(CTest)
 # CMAKE_SOURCE_DIR: ----------------------------------------------------------------------------------------------------
 add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-include_directories(include)
+include_directories(include extern)
 
 add_executable(bench.out bench.cpp)

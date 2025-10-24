@@ -25,10 +25,10 @@ template <> class DistanceComputer<l2, f32> {
 
   public:
     constexpr static auto VerticalPruning = computer::VerticalPruning<true>;
-    constexpr static auto Vertical        = computer::VerticalPruning<false>;
+    constexpr static auto Vertical = computer::VerticalPruning<false>;
 
     constexpr static auto VerticalBlock = computer::Vertical;
-    constexpr static auto Horizontal    = computer::Horizontal;
+    constexpr static auto Horizontal = computer::Horizontal;
 };
 
 template <> class DistanceComputer<l2, u8> {
@@ -36,10 +36,10 @@ template <> class DistanceComputer<l2, u8> {
 
   public:
     constexpr static auto VerticalPruning = computer::VerticalPruning<true>;
-    constexpr static auto Vertical        = computer::VerticalPruning<false>;
+    constexpr static auto Vertical = computer::VerticalPruning<false>;
 
     constexpr static auto VerticalBlock = computer::Vertical;
-    constexpr static auto Horizontal    = computer::Horizontal;
+    constexpr static auto Horizontal = computer::Horizontal;
 };
 
 }; // namespace skmeans

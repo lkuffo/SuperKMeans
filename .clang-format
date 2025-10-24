@@ -13,8 +13,10 @@ ColumnLimit: 100
 
 # Pointer/reference alignment
 PointerAlignment: Left
-AlignConsecutiveAssignments: true
-AlignConsecutiveDeclarations: true
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignAfterOpenBracket: BlockIndent
+BreakTemplateDeclarations: Yes
 
 # Spaces
 SpaceBeforeParens: ControlStatements
