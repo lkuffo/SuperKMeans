@@ -125,7 +125,7 @@ class SuperKMeans {
             tmp_centroids_p += d;
         }
         // TODO(@lkuffo, high): Template bool for pruning or not
-        skmeans::PDXify<q, true>(tmp_centroids_p, _centroids.data(), _n_clusters, d);
+        skmeans::PDXLayout::PDXify<q, true>(tmp_centroids_p, _centroids.data(), _n_clusters, d);
     }
 
     std::vector<centroid_value_t> _centroids;
