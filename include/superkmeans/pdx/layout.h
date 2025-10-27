@@ -15,17 +15,22 @@
 
 namespace skmeans {
 
+struct PDXDimensionSplit {
+    size_t horizontal_d{0};
+    size_t vertical_d{0};
+};
+
 class PDXLayout {
   public:
-    template <Quantization q = f32, bool FULLY_TRANSPOSED = false>
-    static inline void PDXify(
-        const skmeans_value_t<q>* SKM_RESTRICT in_vectors,
-        skmeans_value_t<q>* SKM_RESTRICT out_pdx_vectors, const size_t n, const size_t d
-    ) {
-        using scalar_t = skmeans_value_t<q>;
-        // std::cout << "Threads used in Eigen: " << Eigen::nbThreads() << "\n";
-        assert(n % VECTOR_CHUNK_SIZE == 0);
-
+    /**
+     * @brief Get number of vertical and horizontal dimensions. We will try to split 25% to
+     * vertical and 75% to horizontal. This function will always achieve horizontal blocks
+     * of 64 values
+     *
+     * @param d Number of dimensions (cols) in the data
+     * @return void
+     */
+    static inline PDXDimensionSplit GetDimensionSplit(const size_t d) {
         // We compute the split of vertical and horizontal dimensions
         size_t horizontal_d = static_cast<uint32_t>(d * PROPORTION_VERTICAL_DIM);
         size_t vertical_d = d - horizontal_d;
@@ -37,51 +42,12 @@ class PDXLayout {
             horizontal_d = H_DIM_SIZE;
             vertical_d = d - horizontal_d;
         }
-        // std::cout << "Horizontal dimension: " << horizontal_d << "\n";
-        // std::cout << "Vertical dimension: " << vertical_d << "\n";
-
-        // TODO(@lkuffo, high): Parallelize
-        // There are two options:
-        // - Keep Eigen with 1 thread and use fork_union for paralellization
-        // - Do everything here in just one Eigen operation on the big matrix (should use
-        // paralellization with C++11 threads). BUT: We want to avoid OpenMP
-        // Benchmark! --> I need to be at least AS FAST as numpy full transposition
-        Eigen::Matrix<scalar_t, Eigen::Dynamic, VECTOR_CHUNK_SIZE, Eigen::RowMajor> temp_transpose(
-            d, VECTOR_CHUNK_SIZE
-        );
-        for (size_t i = 0; i < n; i += VECTOR_CHUNK_SIZE) {
-            auto chunk_offset = i * d; // Chunk offset is the same in both layouts
-            auto chunk_p = in_vectors + chunk_offset;
-            auto out_chunk_p = out_pdx_vectors + chunk_offset;
-            // Map vs Copying the buffer
-            // Copying the buffer as a column major could be very beneficial for me
-            auto _vectors = Eigen::Map<
-                const Eigen::Matrix<scalar_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
-                chunk_p, VECTOR_CHUNK_SIZE, d
-            );
-            // Vertical Part
-            if constexpr (FULLY_TRANSPOSED) {
-                temp_transpose = _vectors.transpose();
-                auto _vertical_part = _vectors.transpose().eval();
-                std::memcpy(
-                    out_chunk_p, temp_transpose.data(), (VECTOR_CHUNK_SIZE * d * sizeof(scalar_t))
-                );
-            } else {
-                auto _vertical_part = _vectors.leftCols(vertical_d).transpose().eval();
-                std::memcpy(out_chunk_p, _vertical_part.data(), VECTOR_CHUNK_SIZE * vertical_d);
-                out_chunk_p += VECTOR_CHUNK_SIZE * vertical_d;
-
-                // Horizontal Parts
-                for (size_t j = 0; j < horizontal_d; j += H_DIM_SIZE) {
-                    auto _horizontal_chunk =
-                        _vectors.block(0, j, VECTOR_CHUNK_SIZE, H_DIM_SIZE).eval();
-                    std::memcpy(
-                        out_chunk_p, _horizontal_chunk.data(), VECTOR_CHUNK_SIZE * H_DIM_SIZE
-                    );
-                    out_chunk_p += VECTOR_CHUNK_SIZE * H_DIM_SIZE;
-                }
-            }
+        // TODO(@lkuffo): What are the consequences of this?
+        if (d <= H_DIM_SIZE) {
+            horizontal_d = 0;
+            vertical_d = d;
         }
+        return {horizontal_d, vertical_d};
     }
 
     /**
@@ -98,28 +64,14 @@ class PDXLayout {
      * @return void
      */
     template <Quantization q = f32, bool FULLY_TRANSPOSED = false>
-    static inline void PDXifyV2(
+    static inline void PDXify(
         const skmeans_value_t<q>* SKM_RESTRICT in_vectors,
         skmeans_value_t<q>* SKM_RESTRICT out_pdx_vectors, const size_t n, const size_t d
     ) {
         using scalar_t = skmeans_value_t<q>;
         assert(n % VECTOR_CHUNK_SIZE == 0);
 
-        // We compute the split of vertical and horizontal dimensions
-        size_t horizontal_d = static_cast<uint32_t>(d * PROPORTION_VERTICAL_DIM);
-        size_t vertical_d = d - horizontal_d;
-        if (horizontal_d % H_DIM_SIZE > 0) {
-            horizontal_d = std::floor((1.0 * horizontal_d / H_DIM_SIZE) + 0.5) * H_DIM_SIZE;
-            vertical_d = d - horizontal_d;
-        }
-        if (!vertical_d) {
-            horizontal_d = H_DIM_SIZE;
-            vertical_d = d - horizontal_d;
-        }
-        if (d < H_DIM_SIZE) {
-            horizontal_d = 0;
-            vertical_d = d;
-        }
+        auto [horizontal_d, vertical_d] = GetDimensionSplit(d);
 
         // TODO(@lkuffo, high): Parallelize
         for (size_t i = 0; i < n; i += VECTOR_CHUNK_SIZE) {
@@ -135,7 +87,7 @@ class PDXLayout {
                     out(out_chunk_p, d, VECTOR_CHUNK_SIZE);
                 out.noalias() = in.transpose();
             } else {
-                // Vertical Part
+                // Vertical Block
                 Eigen::Map<const Eigen::Matrix<
                     scalar_t, VECTOR_CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
                     in(chunk_p, VECTOR_CHUNK_SIZE, d);
@@ -145,72 +97,12 @@ class PDXLayout {
                 out.noalias() = in.leftCols(vertical_d).transpose();
                 out_chunk_p += VECTOR_CHUNK_SIZE * vertical_d;
 
-                // Horizontal Parts
+                // Horizontal Blocks
                 for (size_t j = 0; j < horizontal_d; j += H_DIM_SIZE) {
                     Eigen::Map<
                         Eigen::Matrix<scalar_t, H_DIM_SIZE, VECTOR_CHUNK_SIZE, Eigen::RowMajor>>
                         out_h(out_chunk_p, H_DIM_SIZE, VECTOR_CHUNK_SIZE);
                     out_h.noalias() = in.block(0, vertical_d + j, VECTOR_CHUNK_SIZE, H_DIM_SIZE);
-                    out_chunk_p += VECTOR_CHUNK_SIZE * H_DIM_SIZE;
-                }
-            }
-        }
-    }
-
-    template <Quantization q = f32, bool FULLY_TRANSPOSED = false>
-    static inline void PDXifyV3(
-        const skmeans_value_t<q>* SKM_RESTRICT in_vectors,
-        skmeans_value_t<q>* SKM_RESTRICT out_pdx_vectors, const size_t n, const size_t d
-    ) {
-        using scalar_t = skmeans_value_t<q>;
-        assert(n % VECTOR_CHUNK_SIZE == 0);
-
-        // We compute the split of vertical and horizontal dimensions
-        size_t horizontal_d = static_cast<uint32_t>(d * PROPORTION_VERTICAL_DIM);
-        size_t vertical_d = d - horizontal_d;
-        if (horizontal_d % H_DIM_SIZE > 0) {
-            horizontal_d = std::floor((1.0 * horizontal_d / H_DIM_SIZE) + 0.5) * H_DIM_SIZE;
-            vertical_d = d - horizontal_d;
-        }
-        if (!vertical_d) {
-            horizontal_d = H_DIM_SIZE;
-            vertical_d = d - horizontal_d;
-        }
-        if (d < H_DIM_SIZE) {
-            horizontal_d = 0;
-            vertical_d = d;
-        }
-
-        // TODO(@lkuffo, high): Parallelize
-        for (size_t i = 0; i < n; i += VECTOR_CHUNK_SIZE) {
-            auto chunk_offset = i * d; // Chunk offset is the same in both layouts
-            const scalar_t* SKM_RESTRICT chunk_p = in_vectors + chunk_offset;
-            const scalar_t* SKM_RESTRICT out_chunk_p = out_pdx_vectors + chunk_offset;
-            if constexpr (FULLY_TRANSPOSED) {
-                Eigen::Map<const Eigen::Matrix<
-                    scalar_t, VECTOR_CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
-                    in(chunk_p, VECTOR_CHUNK_SIZE, d);
-                Eigen::Map<
-                    Eigen::Matrix<scalar_t, Eigen::Dynamic, VECTOR_CHUNK_SIZE, Eigen::RowMajor>>
-                    out(out_chunk_p, d, VECTOR_CHUNK_SIZE);
-                out.noalias() = in.transpose();
-            } else {
-                // Vertical Part
-                Eigen::Map<const Eigen::Matrix<
-                    scalar_t, VECTOR_CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
-                    in(chunk_p, VECTOR_CHUNK_SIZE, d);
-                Eigen::Map<
-                    Eigen::Matrix<scalar_t, Eigen::Dynamic, VECTOR_CHUNK_SIZE, Eigen::RowMajor>>
-                    out(out_chunk_p, vertical_d, VECTOR_CHUNK_SIZE);
-                out.noalias() = in.leftCols(vertical_d).transpose();
-                out_chunk_p += VECTOR_CHUNK_SIZE * vertical_d;
-
-                // Horizontal Parts
-                for (size_t j = 0; j < horizontal_d; j += H_DIM_SIZE) {
-                    Eigen::Map<
-                        Eigen::Matrix<scalar_t, H_DIM_SIZE, VECTOR_CHUNK_SIZE, Eigen::RowMajor>>
-                        out_h(out_chunk_p, H_DIM_SIZE, VECTOR_CHUNK_SIZE);
-                    out_h.noalias() = in.block(0, j, VECTOR_CHUNK_SIZE, H_DIM_SIZE);
                     out_chunk_p += VECTOR_CHUNK_SIZE * H_DIM_SIZE;
                 }
             }

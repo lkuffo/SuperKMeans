@@ -1,4 +1,5 @@
 #define ANKERL_NANOBENCH_IMPLEMENT
+#define EIGEN_USE_THREADS
 
 #include <iostream>
 #include <random>
@@ -6,6 +7,7 @@
 
 #include "superkmeans/nanobench.h"
 #include "superkmeans/pdx/layout.h"
+#include "superkmeans/pdx/pruners/adsampling.hpp"
 #include "superkmeans/superkmeans.h"
 
 int main(int argc, char* argv[]) {
@@ -41,17 +43,42 @@ int main(int argc, char* argv[]) {
         x = dist(gen);
     // .numWarmupIters()
     // https://nanobench.ankerl.com/reference.html#_CPPv4N6ankerl9nanobench5Bench15epochIterationsE8uint64_t
-    ankerl::nanobench::Bench().epochs(1).epochIterations(5000).run("PDXify[FULL] V1", [&]() {
-        skmeans::PDXLayout::PDXify<skmeans::f32, true>(pdx_vec.data(), pdx_out.data(), n, d);
-    });
-    skmeans::PDXLayout::CheckBlockTranspose(pdx_vec.data(), pdx_out.data(), n, d);
-    ankerl::nanobench::Bench().epochs(1).epochIterations(5000).run("PDXify[FULL] V2", [&]() {
-        skmeans::PDXLayout::PDXifyV2<skmeans::f32, true>(pdx_vec.data(), pdx_out.data(), n, d);
-    });
-    skmeans::PDXLayout::CheckBlockTranspose(pdx_vec.data(), pdx_out.data(), n, d);
-    ankerl::nanobench::Bench().epochs(1).epochIterations(5000).run("PDXify V2", [&]() {
-        skmeans::PDXLayout::PDXifyV2<skmeans::f32, false>(pdx_vec.data(), pdx_out.data(), n, d);
-    });
-    skmeans::PDXLayout::CheckBlockTransposeNonFull(pdx_vec.data(), pdx_out.data(), n, d, 576, 192);
-    // std::cout << "Distance: " << distance << std::endl;
+
+    // PDXifying
+    bool BENCHMARK_PDXIFY = false;
+    bool BENCHMARK_ADSAMPLING = true;
+    if (BENCHMARK_PDXIFY) {
+        ankerl::nanobench::Bench().epochs(1).epochIterations(5000).run("PDXify[FULL]", [&]() {
+            skmeans::PDXLayout::PDXify<skmeans::f32, true>(pdx_vec.data(), pdx_out.data(), n, d);
+        });
+        skmeans::PDXLayout::CheckBlockTranspose(pdx_vec.data(), pdx_out.data(), n, d);
+        skmeans::PDXLayout::CheckBlockTranspose(pdx_vec.data(), pdx_out.data(), n, d);
+        ankerl::nanobench::Bench().epochs(1).epochIterations(5000).run("PDXify", [&]() {
+            skmeans::PDXLayout::PDXify<skmeans::f32, false>(pdx_vec.data(), pdx_out.data(), n, d);
+        });
+        skmeans::PDXLayout::CheckBlockTransposeNonFull(pdx_vec.data(), pdx_out.data(), n, d, 576, 192);
+        // std::cout << "Distance: " << distance << std::endl;
+    }
+
+    // Rotation
+    n = 65536 * 10;
+    d = 512;
+    std::vector<skmeans::skmeans_value_t<skmeans::f32>> raw_in(d * n);
+    std::vector<skmeans::skmeans_value_t<skmeans::f32>> rotated_out(d * n);
+    for (float& x : raw_in)
+        x = dist(gen);
+    for (float& x : rotated_out)
+        x = dist(gen);
+    if (BENCHMARK_ADSAMPLING) {
+        skmeans::ADSamplingPruner<skmeans::f32> ads(d, 1.5);
+        ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("RotationMatrixCreation", [&]() {
+            ankerl::nanobench::doNotOptimizeAway(
+                ads = skmeans::ADSamplingPruner<skmeans::f32>(d, 1.5)
+            );
+        });
+        ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("Rotate", [&]() {
+            ads.Rotate(raw_in.data(), rotated_out.data(), n, d);
+        });
+    }
+
 }

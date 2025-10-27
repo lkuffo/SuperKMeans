@@ -9,25 +9,41 @@
 
 namespace skmeans {
 
-static std::vector<float> ratios{};
-
 /******************************************************************
  * ADSampling pruner
  ******************************************************************/
-template <Quantization q = f32> class ADSamplingPruner {
+template <Quantization q = f32>
+class ADSamplingPruner {
     using DISTANCES_TYPE = skmeans_distance_t<q>;
     using KNNCandidate_t = KNNCandidate<q>;
     using VectorComparator_t = VectorComparator<q>;
+    // TODO(@lkuffo): Rename
+    using MatrixF = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
   public:
     uint32_t num_dimensions;
+    std::vector<float> ratios{};
+
+    ADSamplingPruner(uint32_t num_dimensions_, float epsilon0)
+        : num_dimensions(num_dimensions_), epsilon0(epsilon0) {
+        InitializeRatios();
+#ifdef HAS_FFTW
+        // TODO(@lkuffo) Implement FFTW matrix
+#else
+        matrix.resize(num_dimensions, num_dimensions);
+        matrix = MatrixF::NullaryExpr(num_dimensions, num_dimensions, []() {
+            static thread_local std::mt19937 gen(std::random_device{}());
+            static thread_local std::normal_distribution<float> dist(0.0f, 1.0f);
+            return dist(gen);
+        });
+        const Eigen::HouseholderQR<MatrixF> qr(matrix);
+        matrix = qr.householderQ() * MatrixF::Identity(num_dimensions, num_dimensions);
+#endif
+    }
 
     ADSamplingPruner(uint32_t num_dimensions, float epsilon0, float* matrix_p)
         : num_dimensions(num_dimensions), epsilon0(epsilon0) {
-        ratios.resize(num_dimensions);
-        for (size_t i = 0; i < num_dimensions; ++i) {
-            ratios[i] = GetRatio(i);
-        }
+        InitializeRatios();
 #ifdef HAS_FFTW
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
             matrix =
@@ -47,6 +63,25 @@ template <Quantization q = f32> class ADSamplingPruner {
 #endif
     }
 
+    void InitializeRatios() {
+        ratios.resize(num_dimensions);
+        for (size_t i = 0; i < num_dimensions; ++i) {
+            ratios[i] = GetRatio(i);
+        }
+    }
+
+    static bool VerifyOrthonormal(const MatrixF& Q, float tol = 1e-5f) {
+        uint32_t n = Q.rows();
+        assert(Q.rows() == Q.cols());
+        // Compute Q * Q^T (use column-major temporary for stable multiply)
+        Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> Qc = Q; // conversion
+        Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> M = Qc * Qc.transpose();
+        Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> I =
+            Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic>::Identity(n, n);
+        float err = (M - I).norm(); // Frobenius norm
+        return err <= tol;
+    }
+
     void SetEpsilon0(float epsilon0) {
         ADSamplingPruner::epsilon0 = epsilon0;
         for (size_t i = 0; i < num_dimensions; ++i) {
@@ -64,7 +99,6 @@ template <Quantization q = f32> class ADSamplingPruner {
         const uint32_t current_dimension_idx
     ) {
         float ratio = current_dimension_idx == num_dimensions ? 1 : ratios[current_dimension_idx];
-        // return std::numeric_limits<DistanceType_t<Q>>::max();
         return heap.top().distance * ratio;
     }
 
@@ -72,9 +106,16 @@ template <Quantization q = f32> class ADSamplingPruner {
         Multiply(raw_query, query, num_dimensions);
     }
 
+    // TODO(@lkuffo, high): Pararellize
+    void Rotate( float* SKM_RESTRICT vectors, float* SKM_RESTRICT out_buffer, uint32_t n) {
+        Eigen::Map<const MatrixF> vectors_matrix(vectors, n, num_dimensions);
+        Eigen::Map<MatrixF> out(out_buffer, n, num_dimensions);
+        out.noalias() = vectors_matrix * matrix.transpose();
+    }
+
   private:
     float epsilon0 = 2.1;
-    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> matrix;
+    MatrixF matrix;
 
     float GetRatio(const size_t& visited_dimensions) {
         if (visited_dimensions == 0) {
