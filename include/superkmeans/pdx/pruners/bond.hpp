@@ -5,7 +5,8 @@
 
 namespace skmeans {
 
-template <Quantization q = f32> class BondPruner {
+template <Quantization q = f32>
+class BondPruner {
     using DISTANCES_TYPE = skmeans_distance_t<q>;
     using DATA_TYPE = skmeans_value_t<q>;
     using CLUSTER_TYPE = Cluster<q>;
@@ -23,11 +24,12 @@ template <Quantization q = f32> class BondPruner {
     }
 
     template <Quantization Q = q>
-    skmeans_distance_t<Q>
-    GetPruningThreshold(uint32_t k,
-                        std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>,
-                                            VectorComparator<Q>>& heap,
-                        const uint32_t current_dimension_idx) {
+    skmeans_distance_t<Q> GetPruningThreshold(
+        uint32_t k,
+        std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
+            heap,
+        const uint32_t current_dimension_idx
+    ) {
         return heap.size() == k ? heap.top().distance
                                 : std::numeric_limits<skmeans_distance_t<Q>>::max();
     }

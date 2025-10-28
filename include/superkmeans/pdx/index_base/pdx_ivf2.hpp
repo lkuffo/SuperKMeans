@@ -14,9 +14,11 @@ namespace skmeans {
 /******************************************************************
  * Very rudimentary memory to IVF2 index reader
  ******************************************************************/
-template <Quantization q> class IndexPDXIVF2 {};
+template <Quantization q>
+class IndexPDXIVF2 {};
 
-template <> class IndexPDXIVF2<f32> {
+template <>
+class IndexPDXIVF2<f32> {
   public:
     using CLUSTER_TYPE = Cluster<f32>;
     using CLUSTER_TYPE_L0 = Cluster<f32>;
@@ -95,7 +97,8 @@ template <> class IndexPDXIVF2<f32> {
     }
 };
 
-template <> class IndexPDXIVF2<u8> {
+template <>
+class IndexPDXIVF2<u8> {
   public:
     using CLUSTER_TYPE = Cluster<u8>;
     using CLUSTER_TYPE_L0 = Cluster<f32>;

@@ -2,6 +2,8 @@
 #define SKMEANS_PDX_LAYOUT_HPP
 
 #include "superkmeans/common.h"
+#include "superkmeans/pdx/index_base/pdx_ivf.hpp"
+#include "superkmeans/pdx/pdxearch.h"
 #include <Eigen/Eigen/Dense>
 #include <cassert>
 #include <chrono>
@@ -20,8 +22,52 @@ struct PDXDimensionSplit {
     size_t vertical_d{0};
 };
 
+template <Quantization q = f32, DistanceFunction alpha = l2, class Pruner = ADSamplingPruner<q>>
 class PDXLayout {
+
+    using index_t = IndexPDXIVF<q>;
+    using scalar_t = skmeans_value_t<q>;
+    using cluster_t = Cluster<q>;
+    using searcher_t = PDXearch<q, IndexPDXIVF<q>, alpha, Pruner>;
+
   public:
+    PDXLayout(scalar_t* pdx_data, Pruner& pruner, size_t n_points, size_t d) {
+        index = std::make_unique<index_t>(); // PDXLayout is owner of the Index
+        FromBufferToPDXIndex(pdx_data, n_points, d);
+        searcher = std::make_unique<searcher_t>(index, pruner);
+    }
+
+    // TODO(@lkuffo, low): Support arbitrary cluster sizes rather than always 64
+    void FromBufferToPDXIndex(const scalar_t* pdx_data, size_t n_points, size_t d) {
+        // TODO(@lkuffo, high): Support cluster sizes that are not multiples of 64
+        assert(n_points % VECTOR_CHUNK_SIZE == 0);
+
+        auto [horizontal_d, vertical_d] = GetDimensionSplit(d);
+        size_t n_pdx_clusters = n_points / VECTOR_CHUNK_SIZE;
+        index.num_clusters = n_pdx_clusters;
+        // TODO(@lkuffo, high): Does this belong here?
+        // Seems to important to define the centroid ids here
+        std::iota(centroid_ids.begin(), centroid_ids.end(), 0);
+        index.num_horizontal_dimensions = horizontal_d;
+        index.num_vertical_dimensions = vertical_d;
+        index.num_dimensions = d;
+        // TODO(@lkuffo, medium): Support IVF within centroids
+        // This entails doing a mini-kmeans at the end of every iteration. Not sure if it is worth
+        index.is_ivf = false;
+        index.is_normalized = false;
+        index.clusters.resize(n_pdx_clusters);
+        auto pdx_data_p = pdx_data;
+        size_t cluster_idx = 0;
+        for (size_t cluster_offset = 0; cluster_offset < n_points;
+             cluster_offset += VECTOR_CHUNK_SIZE) {
+            cluster_t& cluster = index.clusters[cluster_idx];
+            cluster.num_embeddings = VECTOR_CHUNK_SIZE;
+            cluster.data = pdx_data_p;
+            cluster.indices = centroid_ids.data() + cluster_offset;
+            pdx_data_p += VECTOR_CHUNK_SIZE * d;
+        }
+    }
+
     /**
      * @brief Get number of vertical and horizontal dimensions. We will try to split 25% to
      * vertical and 75% to horizontal. This function will always achieve horizontal blocks
@@ -63,7 +109,7 @@ class PDXLayout {
      * @param d Number of dimensions (cols) in the data matrix
      * @return void
      */
-    template <Quantization q = f32, bool FULLY_TRANSPOSED = false>
+    template <bool FULLY_TRANSPOSED = false>
     static inline void PDXify(
         const skmeans_value_t<q>* SKM_RESTRICT in_vectors,
         skmeans_value_t<q>* SKM_RESTRICT out_pdx_vectors, const size_t n, const size_t d
@@ -175,7 +221,6 @@ class PDXLayout {
             }
 
             // 2) Horizontal blocks. blocks start at input column base = vertical_d
-            size_t out_ptr_col = vertical_d;
             for (size_t blk = 0; blk < num_horizontal_blocks; ++blk) {
                 const size_t in_block_col0 = vertical_d + (blk * H_DIM_SIZE);
                 constexpr size_t block_width = H_DIM_SIZE;
@@ -210,13 +255,15 @@ class PDXLayout {
                         }
                     }
                 }
-                out_ptr_col +=
-                    block_width; // advance logical column counter (not strictly necessary here)
             }
         } // end chunk loop
-
         return true; // all good
     }
+
+  protected:
+    std::vector<uint32_t> centroid_ids;
+    IndexPDXIVF<q> index;
+    searcher_t searcher;
 };
 
 } // namespace skmeans

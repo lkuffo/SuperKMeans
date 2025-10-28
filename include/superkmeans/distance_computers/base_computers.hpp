@@ -18,9 +18,11 @@
 
 namespace skmeans {
 
-template <DistanceFunction alpha, Quantization q> class DistanceComputer {};
+template <DistanceFunction alpha, Quantization q>
+class DistanceComputer {};
 
-template <> class DistanceComputer<l2, f32> {
+template <>
+class DistanceComputer<l2, f32> {
     using computer = SIMDComputer<l2, f32>;
 
   public:
@@ -31,7 +33,8 @@ template <> class DistanceComputer<l2, f32> {
     constexpr static auto Horizontal = computer::Horizontal;
 };
 
-template <> class DistanceComputer<l2, u8> {
+template <>
+class DistanceComputer<l2, u8> {
     using computer = SIMDComputer<l2, u8>;
 
   public:

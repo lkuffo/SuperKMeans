@@ -82,16 +82,16 @@ class SuperKMeans {
         if (verbose) {
             std::cout << "Sampling data..." << std::endl;
         }
-        SampleCentroids(data_p, n);
+        auto pdx_centroids = GenerateCentroids(data_p, n);
         const auto n_samples = GetNVectorsToSample(n);
-        auto ready_data = SampleVectors(data_p, n, n_samples);
+        auto data_to_cluster = SampleVectors(data_p, n, n_samples);
 
         if (verbose) {
             std::cout << "Clustering..." << std::endl;
         }
 
         for (int i = 0; i < _iters; ++i) {
-            AssignAndUpdateCentroids(ready_data, n_samples);
+            AssignAndUpdateCentroids(data_to_cluster, n_samples);
             // split_clusters(iter_mat);
             if (alpha == dp) {
                 PostprocessCentroids();
@@ -126,12 +126,19 @@ class SuperKMeans {
         // Anyways...
         // fork::union
         // For each vector in data:
+        //      0. What if I start with a 1 to 1 distance with the same centroid that was assigned
+        //      last time and I set it as an initial lower bound?
+        //           This would be more effective than doing a mini-kmeans on the centroids
+        //           But not sure how good
         //      1. size_t nn_idx = pdx.search(k=1, no_preprocessing, q)
         //      2. _cluster_sizes[nn_idx] += 1
         //      3. _tmp_centroids[[dim_positions_on_idx_layout]] += vector[:]
         // For each c_id: _tmp_centroids[[dim_positions_on_idx_layout]] /= _cluster_sizes[c_id]
         //      - Potentially also storing the norms for DP
         // Notes: I don't need proper assignments until the last iteration
+        for (size_t i = 0; i < n; ++i) {
+            
+        }
     }
 
     std::vector<skmeans_centroid_value_t<q>> GetCentroids() const { return _centroids; }
@@ -142,7 +149,8 @@ class SuperKMeans {
 
   protected:
     // Equidistant sampling similar to DuckDB's
-    void SampleCentroids(vector_value_t* SKM_RESTRICT data, const size_t n) const {
+    PDXLayout<q, alpha, Pruner>
+    GenerateCentroids(vector_value_t* SKM_RESTRICT data, const size_t n) const {
         const auto jumps = static_cast<size_t>(std::floor(1.0 * n / _n_clusters));
         auto tmp_centroids_p = _tmp_centroids.data();
         for (size_t i = 0; i < n; i += jumps) {
@@ -150,17 +158,23 @@ class SuperKMeans {
             memcpy(tmp_centroids_p, data + i, sizeof(centroid_value_t) * _d);
             tmp_centroids_p += _d;
         }
-        // Here, I may think of returning a PDX layout of the centroids
+        // We populate the _centroids buffer with the centroids in the PDX layout
         if constexpr (std::is_same_v<Pruner, ADSamplingPruner<q>>) {
             // TODO(@lkuffo, high): Template bool for pruning or not
             std::vector<centroid_value_t> rotated_centroids(_n_clusters * _d);
             _pruner->Rotate(_tmp_centroids.data(), rotated_centroids.data(), _n_clusters);
-            PDXLayout::PDXify<q, true>(
+            PDXLayout<q, alpha, Pruner>::PDXify<q, true>(
                 rotated_centroids.data(), _centroids.data(), _n_clusters, _d
             );
         } else {
-            PDXLayout::PDXify<q, true>(tmp_centroids_p.data(), _centroids.data(), _n_clusters, _d);
+            PDXLayout<q, alpha, Pruner>::PDXify<q, true>(
+                tmp_centroids_p.data(), _centroids.data(), _n_clusters, _d
+            );
         }
+        // We wrap them in our PDXLayout wrapper
+        auto pdx_centroids =
+            PDXLayout<q, alpha, Pruner>(_centroids.data(), _pruner, _n_clusters, _d);
+        return pdx_centroids;
     }
 
     size_t GetNVectorsToSample(const size_t n) const {

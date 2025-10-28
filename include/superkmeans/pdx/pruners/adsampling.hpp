@@ -107,7 +107,7 @@ class ADSamplingPruner {
     }
 
     // TODO(@lkuffo, high): Pararellize
-    void Rotate( float* SKM_RESTRICT vectors, float* SKM_RESTRICT out_buffer, uint32_t n) {
+    void Rotate(float* SKM_RESTRICT vectors, float* SKM_RESTRICT out_buffer, uint32_t n) {
         Eigen::Map<const MatrixF> vectors_matrix(vectors, n, num_dimensions);
         Eigen::Map<MatrixF> out(out_buffer, n, num_dimensions);
         out.noalias() = vectors_matrix * matrix.transpose();

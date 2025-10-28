@@ -468,7 +468,6 @@ class PDXearch {
         clusters_indices_l0.resize(pdx_data.num_clusters_l0);
         std::iota(clusters_indices_l0.begin(), clusters_indices_l0.end(), 0);
         float* tmp_centroids_pdx = pdx_data.centroids_pdx;
-        uint32_t* tmp_cluster_indices = clusters_indices_l0.data();
         size_t SKIPPING_SIZE = PDX_VECTOR_SIZE * pdx_data.num_dimensions;
         size_t full_blocks = std::floor(1.0 * pdx_data.num_clusters_l0 / PDX_VECTOR_SIZE);
         for (size_t centroid_idx = 0; centroid_idx < full_blocks; ++centroid_idx) {
@@ -476,7 +475,6 @@ class PDXearch {
             DistanceComputer<alpha, f32>::VerticalBlock(
                 query, tmp_centroids_pdx, 0, pdx_data.num_dimensions, centroids_distances
             );
-            tmp_cluster_indices += PDX_VECTOR_SIZE;
             tmp_centroids_pdx += SKIPPING_SIZE;
         }
         std::vector<size_t> indices_sorted;
