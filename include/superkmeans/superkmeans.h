@@ -14,6 +14,8 @@ class SuperKMeans {
     using vector_value_t = skmeans_value_t<q>;
 
   public:
+    // @TODO(lkuffo, high): N-threads should be controlled with a global function. By default
+    // it is set to all threads
     SuperKMeans(
         size_t n_clusters, size_t dimensionality, uint32_t iters = 25,
         float sampling_fraction = 0.50
@@ -58,6 +60,7 @@ class SuperKMeans {
         vector_value_t* SKM_RESTRICT data_p = data;
         _centroids.resize(_n_clusters * _d);
         _tmp_centroids.resize(_n_clusters * _d);
+        _cluster_sizes.resize(_n_clusters);
         /*
          * 1. [done] Sample using sampling_fraction. In this case you need to create a new buffer
          * 2. [todo] If metric is dp, normalize the vectors so you can use l2 always
@@ -81,17 +84,18 @@ class SuperKMeans {
         }
         SampleCentroids(data_p, n);
         const auto n_samples = GetNVectorsToSample(n);
-        SampleVectors(data_p, n, n_samples);
+        auto ready_data = SampleVectors(data_p, n, n_samples);
 
         if (verbose) {
             std::cout << "Clustering..." << std::endl;
         }
 
         for (int i = 0; i < _iters; ++i) {
-            // assign_clusters(iter_mat, iter_norms, num_threads);
-            // update_centroids(iter_mat);
+            AssignAndUpdateCentroids(ready_data, n_samples);
             // split_clusters(iter_mat);
-            // postprocess_centroids();
+            if (alpha == dp) {
+                PostprocessCentroids();
+            }
             if (verbose)
                 std::cout << "Iteration " << i + 1 << "/" << _iters
                           << " | Objective: " << std::endl;
@@ -112,8 +116,22 @@ class SuperKMeans {
      * @return std::vector<uint32_t> Clustering assignments as a vector of
      * sequential ids of the points assigned to the corresponding cluster
      */
-    std::vector<uint32_t> Assign(const vector_value_t* SKM_RESTRICT data, const size_t n) {
-        SKMEANS_ENSURE_POSITIVE(n);
+    std::vector<uint32_t>
+    AssignAndUpdateCentroids(const vector_value_t* SKM_RESTRICT data, const size_t n) {
+        // Data is a row-major matrix
+        // Centroids is already in the PDX layout:
+        //      Maybe we should use the PDXLayout abstraction and call Search() per vector
+        //      Random access, no IVF... for now!
+        // But, since collection is already rotated I need some hacks
+        // Anyways...
+        // fork::union
+        // For each vector in data:
+        //      1. size_t nn_idx = pdx.search(k=1, no_preprocessing, q)
+        //      2. _cluster_sizes[nn_idx] += 1
+        //      3. _tmp_centroids[[dim_positions_on_idx_layout]] += vector[:]
+        // For each c_id: _tmp_centroids[[dim_positions_on_idx_layout]] /= _cluster_sizes[c_id]
+        //      - Potentially also storing the norms for DP
+        // Notes: I don't need proper assignments until the last iteration
     }
 
     std::vector<skmeans_centroid_value_t<q>> GetCentroids() const { return _centroids; }
@@ -132,11 +150,14 @@ class SuperKMeans {
             memcpy(tmp_centroids_p, data + i, sizeof(centroid_value_t) * _d);
             tmp_centroids_p += _d;
         }
-        if constexpr(std::is_same_v<Pruner, ADSamplingPruner<q>>) {
+        // Here, I may think of returning a PDX layout of the centroids
+        if constexpr (std::is_same_v<Pruner, ADSamplingPruner<q>>) {
             // TODO(@lkuffo, high): Template bool for pruning or not
             std::vector<centroid_value_t> rotated_centroids(_n_clusters * _d);
             _pruner->Rotate(_tmp_centroids.data(), rotated_centroids.data(), _n_clusters);
-            PDXLayout::PDXify<q, true>(rotated_centroids.data(), _centroids.data(), _n_clusters, _d);
+            PDXLayout::PDXify<q, true>(
+                rotated_centroids.data(), _centroids.data(), _n_clusters, _d
+            );
         } else {
             PDXLayout::PDXify<q, true>(tmp_centroids_p.data(), _centroids.data(), _n_clusters, _d);
         }
@@ -149,8 +170,24 @@ class SuperKMeans {
         return std::floor(n * _sampling_fraction);
     }
 
+    // TODO(@lkuffo, high): Centroids are on PDX, I cant do this
+    void PostprocessCentroids() {
+        auto centroids_p = _centroids.data();
+        for (size_t i = 0; i < _n_clusters; ++i) {
+            float sum = 0.0f;
+            for (size_t j = 0; j < _d; ++j) {
+                sum += centroids_p[j] * centroids_p[j];
+            }
+            float norm = std::sqrt(sum);
+            for (size_t j = 0; j < _d; ++i) {
+                centroids_p[j] = centroids_p[j] / norm;
+            }
+        }
+    }
+
     // Equidistant sampling similar to DuckDB's
-    vector_value_t* SampleVectors(vector_value_t* SKM_RESTRICT data, const size_t n, const size_t n_sampled) const {
+    vector_value_t*
+    SampleVectors(vector_value_t* SKM_RESTRICT data, const size_t n, const size_t n_sampled) const {
         vector_value_t* tmp_data_buffer_p;
         // TODO(@lkuffo, medium): If DP, normalize here while taking the samples
         if (n_sampled < n) {
@@ -162,16 +199,16 @@ class SuperKMeans {
                 memcpy(tmp_data_buffer_p, data + i, sizeof(vector_value_t) * _d);
                 tmp_data_buffer_p += _d;
             }
-        } else { // Flat
+        } else {                      // Flat
             tmp_data_buffer_p = data; // Zero-copy
         }
 
-        if constexpr(std::is_same_v<Pruner, ADSamplingPruner<q>>) {
+        if constexpr (std::is_same_v<Pruner, ADSamplingPruner<q>>) {
             // TODO(@lkuffo, high): Try to remove temporary buffer for rotating the vectors (sad)
             std::vector<vector_value_t> rotated_data(n_sampled * _d);
             _pruner->Rotate(tmp_data_buffer_p, rotated_data.data(), n_sampled);
             return rotated_data.data();
-        } else { // Flat
+        } else {                      // Flat
             return tmp_data_buffer_p; // Zero-copy
         }
     }
