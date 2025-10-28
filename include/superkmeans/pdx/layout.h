@@ -155,6 +155,23 @@ class PDXLayout {
         }
     }
 
+    template <bool FULLY_TRANSPOSED = false>
+    static inline void UpdateSum(
+        scalar_t* SKM_RESTRICT pdx_data, const scalar_t* SKM_RESTRICT vector, const size_t position,
+        const size_t n_points, const size_t d, const size_t horizontal_d, const size_t vertical_d
+    ) {
+        // Calculate Position
+        // Apply operand
+        //
+    }
+
+    SKM_ALWAYS_INLINE static size_t OffsetCalculator(
+        const size_t vector_position, const size_t d, const size_t horizontal_d,
+        const size_t vertical_d
+    ) {
+
+    }
+
     template <typename T>
     static bool CheckBlockTranspose(const T* in_vectors, const T* out_vectors, size_t n, size_t d) {
         constexpr float EPS = 1e-6f;

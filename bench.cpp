@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
     // https://nanobench.ankerl.com/reference.html#_CPPv4N6ankerl9nanobench5Bench15epochIterationsE8uint64_t
 
     // PDXifying
-    bool BENCHMARK_PDXIFY = false;
+    bool BENCHMARK_PDXIFY = true;
     bool BENCHMARK_ADSAMPLING = true;
     if (BENCHMARK_PDXIFY) {
         ankerl::nanobench::Bench().epochs(1).epochIterations(5000).run("PDXify[FULL]", [&]() {
