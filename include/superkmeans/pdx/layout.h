@@ -34,37 +34,39 @@ class PDXLayout {
     PDXLayout(scalar_t* pdx_data, Pruner& pruner, size_t n_points, size_t d) {
         index = std::make_unique<index_t>(); // PDXLayout is owner of the Index
         FromBufferToPDXIndex(pdx_data, n_points, d);
-        searcher = std::make_unique<searcher_t>(index, pruner);
+        searcher = std::make_unique<searcher_t>(*index, pruner);
     }
 
     // TODO(@lkuffo, low): Support arbitrary cluster sizes rather than always 64
-    void FromBufferToPDXIndex(const scalar_t* pdx_data, size_t n_points, size_t d) {
+    void FromBufferToPDXIndex(scalar_t* pdx_data, size_t n_points, size_t d) {
         // TODO(@lkuffo, high): Support cluster sizes that are not multiples of 64
         assert(n_points % VECTOR_CHUNK_SIZE == 0);
 
         auto [horizontal_d, vertical_d] = GetDimensionSplit(d);
         size_t n_pdx_clusters = n_points / VECTOR_CHUNK_SIZE;
-        index.num_clusters = n_pdx_clusters;
+        index->num_clusters = n_pdx_clusters;
         // TODO(@lkuffo, high): Does this belong here?
         // Seems to important to define the centroid ids here
+        centroid_ids.resize(n_points);
         std::iota(centroid_ids.begin(), centroid_ids.end(), 0);
-        index.num_horizontal_dimensions = horizontal_d;
-        index.num_vertical_dimensions = vertical_d;
-        index.num_dimensions = d;
+        index->num_horizontal_dimensions = horizontal_d;
+        index->num_vertical_dimensions = vertical_d;
+        index->num_dimensions = d;
         // TODO(@lkuffo, medium): Support IVF within centroids
         // This entails doing a mini-kmeans at the end of every iteration. Not sure if it is worth
-        index.is_ivf = false;
-        index.is_normalized = false;
-        index.clusters.resize(n_pdx_clusters);
+        index->is_ivf = false;
+        index->is_normalized = false;
+        index->clusters.resize(n_pdx_clusters);
         auto pdx_data_p = pdx_data;
         size_t cluster_idx = 0;
         for (size_t cluster_offset = 0; cluster_offset < n_points;
              cluster_offset += VECTOR_CHUNK_SIZE) {
-            cluster_t& cluster = index.clusters[cluster_idx];
+            cluster_t& cluster = index->clusters[cluster_idx];
             cluster.num_embeddings = VECTOR_CHUNK_SIZE;
             cluster.data = pdx_data_p;
             cluster.indices = centroid_ids.data() + cluster_offset;
             pdx_data_p += VECTOR_CHUNK_SIZE * d;
+            cluster_idx += 1;
         }
     }
 
@@ -168,9 +170,7 @@ class PDXLayout {
     SKM_ALWAYS_INLINE static size_t OffsetCalculator(
         const size_t vector_position, const size_t d, const size_t horizontal_d,
         const size_t vertical_d
-    ) {
-
-    }
+    ) {}
 
     template <typename T>
     static bool CheckBlockTranspose(const T* in_vectors, const T* out_vectors, size_t n, size_t d) {
@@ -277,10 +277,11 @@ class PDXLayout {
         return true; // all good
     }
 
+    std::unique_ptr<searcher_t> searcher = nullptr;
+    std::unique_ptr<index_t> index;
+
   protected:
     std::vector<uint32_t> centroid_ids;
-    IndexPDXIVF<q> index;
-    searcher_t searcher;
 };
 
 } // namespace skmeans

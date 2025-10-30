@@ -10,8 +10,6 @@ include(CheckCXXCompilerFlag)
 include(CMakePrintHelpers)
 include(CTest)
 
-# set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native")
-
 # CMAKE_SOURCE_DIR: ----------------------------------------------------------------------------------------------------
 add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 

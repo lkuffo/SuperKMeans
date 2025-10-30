@@ -10,6 +10,39 @@
 #include "superkmeans/pdx/pruners/adsampling.hpp"
 #include "superkmeans/superkmeans.h"
 
+
+std::vector<float> make_blobs(
+    size_t n_samples,
+    size_t n_features,
+    size_t n_centers,
+    unsigned int random_state = 1)
+{
+    std::mt19937 gen(random_state);
+
+    // Random cluster centers
+    std::normal_distribution<float> center_dist(0.0f, 10.0f);
+    std::vector<std::vector<float>> centers(n_centers, std::vector<float>(n_features));
+    for (auto& c : centers)
+        for (auto& x : c)
+            x = center_dist(gen);
+
+    // Distributions for choosing cluster and spreading points
+    std::uniform_int_distribution<size_t> cluster_dist(0, n_centers - 1);
+    std::normal_distribution<float> point_dist(0.0f, 1.0f);
+
+    // Flattened result: row-major layout [sample0_dim0, sample0_dim1, ..., sampleN_dimD]
+    std::vector<float> data;
+    data.reserve(n_samples * n_features);
+
+    for (size_t i = 0; i < n_samples; ++i) {
+        const auto& center = centers[cluster_dist(gen)];
+        for (size_t j = 0; j < n_features; ++j)
+            data.push_back(center[j] + point_dist(gen));
+    }
+
+    return data;
+}
+
 int main(int argc, char* argv[]) {
     std::cout << "Compiles!" << std::endl;
     constexpr size_t DIM = 128;
@@ -45,8 +78,8 @@ int main(int argc, char* argv[]) {
     // https://nanobench.ankerl.com/reference.html#_CPPv4N6ankerl9nanobench5Bench15epochIterationsE8uint64_t
 
     // PDXifying
-    bool BENCHMARK_PDXIFY = true;
-    bool BENCHMARK_ADSAMPLING = true;
+    bool BENCHMARK_PDXIFY = false;
+    bool BENCHMARK_ADSAMPLING = false;
     if (BENCHMARK_PDXIFY) {
         ankerl::nanobench::Bench().epochs(1).epochIterations(5000).run("PDXify[FULL]", [&]() {
             skmeans::PDXLayout<>::PDXify<true>(pdx_vec.data(), pdx_out.data(), n, d);
@@ -61,14 +94,10 @@ int main(int argc, char* argv[]) {
     }
 
     // Rotation
-    n = 65536 * 10;
+    n = 65536 * 1;
     d = 512;
     std::vector<skmeans::skmeans_value_t<skmeans::f32>> raw_in(d * n);
     std::vector<skmeans::skmeans_value_t<skmeans::f32>> rotated_out(d * n);
-    for (float& x : raw_in)
-        x = dist(gen);
-    for (float& x : rotated_out)
-        x = dist(gen);
     if (BENCHMARK_ADSAMPLING) {
         skmeans::ADSamplingPruner<skmeans::f32> ads(d, 1.5);
         ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("RotationMatrixCreation", [&]() {
@@ -80,5 +109,17 @@ int main(int argc, char* argv[]) {
             ads.Rotate(raw_in.data(), rotated_out.data(), n);
         });
     }
+
+    // SKMeans
+    n = 131072;
+    d = 128;
+    size_t n_clusters = 512;
+    uint32_t n_iters = 1;
+    float sampling_fraction = 1.0;
+    std::vector<skmeans::skmeans_value_t<skmeans::f32>> data = make_blobs(n, d, n_clusters);
+
+    auto kmeans_state = skmeans::SuperKMeans<skmeans::f32, skmeans::l2>(n_clusters, d, n_iters, sampling_fraction, true);
+    auto centroids = kmeans_state.Train(data.data(), n);
+
 
 }

@@ -17,7 +17,7 @@ class ADSamplingPruner {
     using DISTANCES_TYPE = skmeans_distance_t<q>;
     using KNNCandidate_t = KNNCandidate<q>;
     using VectorComparator_t = VectorComparator<q>;
-    // TODO(@lkuffo): Rename
+    // TODO(@lkuffo): Rename type to be more verbose
     using MatrixF = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
   public:
@@ -102,12 +102,12 @@ class ADSamplingPruner {
         return heap.top().distance * ratio;
     }
 
-    void PreprocessQuery(float* raw_query, float* query) {
+    void PreprocessQuery(const float* raw_query, float* query) {
         Multiply(raw_query, query, num_dimensions);
     }
 
-    // TODO(@lkuffo, high): Pararellize
-    void Rotate(float* SKM_RESTRICT vectors, float* SKM_RESTRICT out_buffer, uint32_t n) {
+    // TODO(@lkuffo, high): Pararellize, use scalar_t
+    void Rotate(const float* SKM_RESTRICT vectors, float* SKM_RESTRICT out_buffer, uint32_t n) {
         Eigen::Map<const MatrixF> vectors_matrix(vectors, n, num_dimensions);
         Eigen::Map<MatrixF> out(out_buffer, n, num_dimensions);
         out.noalias() = vectors_matrix * matrix.transpose();
@@ -129,7 +129,7 @@ class ADSamplingPruner {
                (1.0 + epsilon0 / std::sqrt(visited_dimensions));
     }
 
-    void Multiply(float* raw_query, float* query, uint32_t num_dimensions) {
+    void Multiply(const float* raw_query, float* query, uint32_t num_dimensions) {
         Eigen::Map<const Eigen::RowVectorXf> query_matrix(raw_query, num_dimensions);
         Eigen::Map<Eigen::RowVectorXf> output(query, num_dimensions);
 #ifdef HAS_FFTW
