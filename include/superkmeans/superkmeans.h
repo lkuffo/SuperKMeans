@@ -78,7 +78,7 @@ class SuperKMeans {
          *    - ADSampling  [done]
          *    - Flat        [done]
          * 6. [done] PDXify centroids! (I don't need to PDXify data)
-         * 7. [next] Loop: assign+update, split
+         * 7. [done] Loop: assign+update, split
          * 8. Finalize:
          *    - I need to unrotate the centroids (Do assignments change if I derotate?)
          *    - I am not sure if I should just return the assignments
@@ -152,10 +152,9 @@ class SuperKMeans {
         std::fill(_tmp_centroids.begin(), _tmp_centroids.end(), 0.0);
         std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
         auto data_p = data;
-        // TODO(@lkuffo, high): Remove this out
-        // auto [horizontal_d, vertical_d] = PDXLayout<q, alpha>::GetDimensionSplit(_d);
         cost = 0.0;
         float tt = 0.0;
+        // TODO(@lkuffo, crit): Fork Union
         for (size_t i = 0; i < n; ++i) {
             // PDXearch per vector
             std::vector<knn_candidate_t> assignment = pdx_centroids.searcher->Top1Search(data_p);
@@ -196,14 +195,6 @@ class SuperKMeans {
 
     // TODO(@lkuffo, critical)
     void SplitClusters(const size_t n) { // TODO(@lkuffo, med): Horrible parameter depth
-        // size_t c = 0;
-        // for (size_t i = 0; i < _n_clusters; ++i) {
-        //     if (_cluster_sizes[i] == 0) {
-        //         c += 1;
-        //         // std::cout << "Need to split centroid: " << i << std::endl;
-        //     }
-        // }
-        /* Take care of void clusters */
         size_t nsplit = 0;
         std::default_random_engine rng;
         auto _tmp_centroids_p = _tmp_centroids.data();
@@ -259,7 +250,6 @@ class SuperKMeans {
 
     void ConsolidateCentroids(const size_t n) { // TODO(@lkuffo, med): Horrible parameter depth
         for (size_t i = 0; i < _n_clusters; ++i) {
-            // std::cout << "Cluster " << i << ": " << _cluster_sizes[i] << std::endl;
             _reciprocal_cluster_sizes[i] = 1.0 / _cluster_sizes[i];
         }
         auto _tmp_centroids_p = _tmp_centroids.data();
@@ -268,7 +258,6 @@ class SuperKMeans {
                 _tmp_centroids_p += _d;
                 continue;
             }
-            // TODO(@lkuffo, low): Skip clusters with 0 size
             auto mult_factor = _reciprocal_cluster_sizes[i];
             // TODO(@lkuffo, low): This should be trivially auto-vectorized in any architecture
             for (size_t j = 0; j < _d; ++j) {

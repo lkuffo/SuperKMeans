@@ -79,3 +79,6 @@ Testing
 venv
 
 *.bin
+
+_deps
+_deps/
