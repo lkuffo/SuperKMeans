@@ -4,6 +4,7 @@
 #include <iostream>
 #include <random>
 #include <vector>
+#include <omp.h>
 
 #include "superkmeans/nanobench.h"
 #include "superkmeans/pdx/layout.h"
@@ -33,9 +34,10 @@ int main(int argc, char* argv[]) {
     file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
     file.close();
 
+    omp_set_num_threads(10);
     auto km = Lorann::KMeans(n_clusters, n_iters);
     ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("Lorann KMeans", [&]() {
-        km.train(data.data(), n, d, true, 1);
+        km.train(data.data(), n, d, true, 10);
     });
 
 }

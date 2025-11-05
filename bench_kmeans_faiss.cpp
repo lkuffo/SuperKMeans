@@ -12,7 +12,8 @@
 #include "superkmeans/nanobench.h"
 
 int main(int argc, char* argv[]) {
-    omp_set_num_threads(1);
+    constexpr size_t THREADS = 1;
+    omp_set_num_threads(THREADS);
 
     // SKMeans
     const int n = 262144;

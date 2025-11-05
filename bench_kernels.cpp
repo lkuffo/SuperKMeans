@@ -2,15 +2,15 @@
 #define EIGEN_USE_THREADS
 
 #include <iostream>
+#include <omp.h>
 #include <random>
 #include <vector>
-#include <omp.h>
 
-#include <Eigen/Eigen/Dense>
 #include "superkmeans/nanobench.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/pruners/adsampling.hpp"
 #include "superkmeans/superkmeans.h"
+#include <Eigen/Eigen/Dense>
 
 std::vector<float>
 make_blobs(size_t n_samples, size_t n_features, size_t n_centers, unsigned int random_state = 1) {
@@ -47,12 +47,17 @@ bool almost_equal(float a, float b, float rel_tol = 1e-6f, float abs_tol = 1e-9f
 int main(int argc, char* argv[]) {
     std::cout << "Compiles!" << std::endl;
 
-
-    size_t n = 131072;
+    size_t n = 262144;
     size_t centroids_n = 1024;
-    size_t d = 512;
+    size_t d = 1024;
     float distance = 0.0f;
-    auto [horizontal_d, vertical_d] = skmeans::PDXLayout<skmeans::f32>::GetDimensionSplit(d);
+    constexpr size_t THREADS = 10;
+    omp_set_num_threads(THREADS);
+    constexpr size_t EPOCHS = 1;
+    constexpr size_t ITERATIONS = 1;
+    const auto dims = skmeans::PDXLayout<skmeans::f32>::GetDimensionSplit(d);
+    const size_t horizontal_d = dims.horizontal_d;
+    const size_t vertical_d = dims.vertical_d;
     std::vector<skmeans::skmeans_value_t<skmeans::f32>> data = make_blobs(n, d, 512);
     std::vector<skmeans::skmeans_value_t<skmeans::f32>> centroids = make_blobs(centroids_n, d, 512);
     std::cout << "Total distance calculations: " << n * centroids_n << std::endl;
@@ -63,65 +68,94 @@ int main(int argc, char* argv[]) {
     // Eigen
     //
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-    using MatrixC = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+    // using MatrixC = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
     std::vector<float> eigen_out_buf(n * centroids_n);
     Eigen::Map<const MatrixR> eigen_data(data.data(), n, d);
     Eigen::Map<MatrixR> eigen_centroids(centroids.data(), centroids_n, d);
     Eigen::Map<MatrixR> eigen_out(eigen_out_buf.data(), n, centroids_n);
 
-    omp_set_num_threads(1);
-    // Eigen::setNbThreads(10);
     std::cout << "Eigen # threads: " << Eigen::nbThreads() << std::endl;
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("Eigen", [&]() {
-        ankerl::nanobench::doNotOptimizeAway(
-        eigen_out.noalias() = eigen_data * eigen_centroids.transpose()
-        );
-    });
 
     //
     // Horizontal Serial
     //
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("Horizontal Serial", [&]() {
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Horizontal Serial", [&]() {
         auto data_p = data.data();
         // For each point
+#pragma omp parallel for if (THREADS > 1) num_threads(THREADS)
         for (size_t i = 0; i < n; ++i) {
             // We query the centroids
+            float local_distance = 0.0f;
             auto centroids_p = centroids.data();
             for (size_t j = 0; j < centroids_n; ++j) {
-                ankerl::nanobench::doNotOptimizeAway(
-                    distance = skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::Horizontal(
-                        data_p, centroids_p, d
-                    )
-                );
+                if constexpr (THREADS > 1) {
+                    ankerl::nanobench::doNotOptimizeAway(
+                        local_distance = skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::Horizontal(
+                            data_p, centroids_p, d
+                        )
+                    );
+                } else {
+                    ankerl::nanobench::doNotOptimizeAway(
+                        distance = skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::Horizontal(
+                            data_p, centroids_p, d
+                        )
+                    );
+                }
                 centroids_p += d;
             }
             data_p += d;
         }
     });
 
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Eigen", [&]() {
+        ankerl::nanobench::doNotOptimizeAway(
+            eigen_out.noalias() = eigen_data * eigen_centroids.transpose()
+        );
+    });
+
     //
     // Vertical Serial
     //
     size_t p_math = 0;
-    std::vector<float> distances_full(skmeans::VECTOR_CHUNK_SIZE);
+    std::vector<float> distances_vertical_serial(skmeans::VECTOR_CHUNK_SIZE);
     std::vector<skmeans::skmeans_value_t<skmeans::f32>> pdx_full_centroids(centroids_n * d);
-    skmeans::PDXLayout<skmeans::f32>::PDXify<true>(centroids.data(), pdx_full_centroids.data(), centroids_n, d);
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("Vertical Serial", [&]() {
+    skmeans::PDXLayout<skmeans::f32>::PDXify<true>(
+        centroids.data(), pdx_full_centroids.data(), centroids_n, d
+    );
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Vertical Serial", [&]() {
         auto data_p = data.data();
         // For each point
+#pragma omp parallel for if (THREADS > 1) num_threads(THREADS)
         for (size_t i = 0; i < n; ++i) {
             // We query the centroids
+            std::vector<float> distances_vertical_serial_local;
+            if constexpr (THREADS > 1) {
+                distances_vertical_serial_local.resize(skmeans::VECTOR_CHUNK_SIZE);
+            }
             auto centroids_p = pdx_full_centroids.data();
             p_math = 0;
-            for (size_t j = 0; j < centroids_n; j+=skmeans::VECTOR_CHUNK_SIZE) {
-                std::fill(distances_full.begin(), distances_full.end(), 0.0f);
-                skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlock(
-                    data_p, centroids_p, 0, d, distances_full.data()
-                );
+            for (size_t j = 0; j < centroids_n; j += skmeans::VECTOR_CHUNK_SIZE) {
+                if constexpr (THREADS > 1) {
+                    std::fill(
+                        distances_vertical_serial_local.begin(),
+                        distances_vertical_serial_local.end(), 0.0f
+                    );
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlock(
+                        data_p, centroids_p, 0, d, distances_vertical_serial_local.data()
+                    );
+                } else {
+                    std::fill(
+                        distances_vertical_serial.begin(), distances_vertical_serial.end(), 0.0f
+                    );
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlock(
+                        data_p, centroids_p, 0, d, distances_vertical_serial.data()
+                    );
+                }
                 centroids_p += skmeans::VECTOR_CHUNK_SIZE * d;
                 p_math += skmeans::VECTOR_CHUNK_SIZE * d;
             }
-            assert(p_math == centroids_n * d);
+            if constexpr (THREADS == 1)
+                assert(p_math == centroids_n * d);
             data_p += d;
         }
     });
@@ -132,38 +166,64 @@ int main(int argc, char* argv[]) {
     std::vector<float> distances_pdx(skmeans::VECTOR_CHUNK_SIZE);
     std::fill(distances_pdx.begin(), distances_pdx.end(), 0);
     std::vector<skmeans::skmeans_value_t<skmeans::f32>> pdx_centroids(centroids_n * d);
-    skmeans::PDXLayout<skmeans::f32>::PDXify<false>(centroids.data(), pdx_centroids.data(), centroids_n, d);
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("PDX Serial", [&]() {
+    skmeans::PDXLayout<skmeans::f32>::PDXify<false>(
+        centroids.data(), pdx_centroids.data(), centroids_n, d
+    );
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("PDX Serial", [&]() {
         auto data_p = data.data();
         // For each point
+#pragma omp parallel for if (THREADS > 1) num_threads(THREADS)
         for (size_t i = 0; i < n; ++i) {
+            std::vector<float> distances_local_full;
+            if constexpr (THREADS > 1) {
+                distances_local_full.reserve(skmeans::VECTOR_CHUNK_SIZE);
+            }
+
             // We query the centroids
             auto centroids_p = pdx_centroids.data();
             p_math = 0;
-            for (size_t j = 0; j < centroids_n; j+=skmeans::VECTOR_CHUNK_SIZE) {
-                std::fill(distances_pdx.begin(), distances_pdx.end(), 0.0f);
-                skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlock(
-                    data_p, centroids_p, 0, vertical_d, distances_pdx.data()
-                );
+            for (size_t j = 0; j < centroids_n; j += skmeans::VECTOR_CHUNK_SIZE) {
+                if constexpr (THREADS > 1) {
+                    std::fill(distances_local_full.begin(), distances_local_full.end(), 0.0f);
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlock(
+                        data_p, centroids_p, 0, vertical_d, distances_local_full.data()
+                    );
+                } else {
+                    std::fill(distances_pdx.begin(), distances_pdx.end(), 0.0f);
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlock(
+                        data_p, centroids_p, 0, vertical_d, distances_pdx.data()
+                    );
+                }
                 centroids_p += skmeans::VECTOR_CHUNK_SIZE * vertical_d;
                 p_math += skmeans::VECTOR_CHUNK_SIZE * vertical_d;
-                for (size_t k = vertical_d; k < d; k+=skmeans::H_DIM_SIZE) { // Go through the horizontal segments
+                for (size_t k = vertical_d; k < d;
+                     k += skmeans::H_DIM_SIZE) { // Go through the horizontal segments
                     for (size_t t = 0; t < skmeans::VECTOR_CHUNK_SIZE; ++t) { // Of 64 vectors
-                        ankerl::nanobench::doNotOptimizeAway(
-                            distances_pdx[t] += skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::Horizontal(
-                                data_p + k, centroids_p, skmeans::H_DIM_SIZE
-                            )
-                        );
+                        if constexpr (THREADS > 1) {
+                            ankerl::nanobench::doNotOptimizeAway(
+                                distances_local_full[t] +=
+                                skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::Horizontal(
+                                    data_p + k, centroids_p, skmeans::H_DIM_SIZE
+                                )
+                            );
+                        } else {
+                            ankerl::nanobench::doNotOptimizeAway(
+                                distances_pdx[t] +=
+                                skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::Horizontal(
+                                    data_p + k, centroids_p, skmeans::H_DIM_SIZE
+                                )
+                            );
+                        }
                         centroids_p += skmeans::H_DIM_SIZE;
                         p_math += skmeans::H_DIM_SIZE;
                     }
                 }
             }
-            assert(p_math == centroids_n * d);
+            if constexpr (THREADS == 1)
+                assert(p_math == centroids_n * d);
             data_p += d;
         }
     });
-
 
     //
     // Vertical Batched 64
@@ -174,124 +234,204 @@ int main(int argc, char* argv[]) {
     std::vector<float> distances_batch_vertical(BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE);
     std::vector<skmeans::skmeans_value_t<skmeans::f32>> pdx_full_data(n * d);
     skmeans::PDXLayout<skmeans::f32>::PDXify<true>(data.data(), pdx_full_data.data(), n, d);
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("Vertical Batched 64", [&]() {
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Vertical Batched 64", [&]() {
         auto data_p = pdx_full_data.data();
         // For each point
-        for (size_t i = 0; i < n; i+=BATCH_SIZE_64) {
+#pragma omp parallel for if (THREADS > 1) num_threads(THREADS)
+        for (size_t i = 0; i < n; i += BATCH_SIZE_64) {
+            std::vector<float> distances_batch_vertical_local;
+            if constexpr (THREADS > 1) {
+                distances_batch_vertical_local.reserve(BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE);
+            }
             // We query the centroids
             auto centroids_p = pdx_full_centroids.data();
             p_math = 0;
-            for (size_t j = 0; j < centroids_n; j+=skmeans::VECTOR_CHUNK_SIZE) {
-                std::fill(distances_batch_vertical.begin(), distances_batch_vertical.end(), 0.0f);
-                skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch64(
-                    data_p, centroids_p, 0, d, distances_batch_vertical.data()
-                );
+            for (size_t j = 0; j < centroids_n; j += skmeans::VECTOR_CHUNK_SIZE) {
+                if constexpr (THREADS > 1) {
+                    std::fill(
+                        distances_batch_vertical_local.begin(),
+                        distances_batch_vertical_local.end(), 0.0f
+                    );
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch64(
+                        data_p, centroids_p, 0, d, distances_batch_vertical_local.data()
+                    );
+                } else {
+                    std::fill(
+                        distances_batch_vertical.begin(), distances_batch_vertical.end(), 0.0f
+                    );
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch64(
+                        data_p, centroids_p, 0, d, distances_batch_vertical.data()
+                    );
+                }
                 centroids_p += skmeans::VECTOR_CHUNK_SIZE * d;
                 p_math += skmeans::VECTOR_CHUNK_SIZE * d;
             }
-            assert(p_math == centroids_n * d);
+            if constexpr (THREADS == 1)
+                assert(p_math == centroids_n * d);
             data_p += BATCH_SIZE_64 * d;
             data_p_math += BATCH_SIZE_64 * d;
         }
-        assert(data_p_math == n * d);
+        if constexpr (THREADS == 1)
+            assert(data_p_math == n * d);
     });
 
     //
+    //
     // Vertical Batched 64 V2
+    //
     //
     p_math = 0;
     data_p_math = 0;
     std::vector<float> distances_batch_vertical_v2(BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE);
     std::fill(distances_batch_vertical_v2.begin(), distances_batch_vertical_v2.end(), 0.0f);
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("Vertical Batched 64 v2", [&]() {
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Vertical Batched 64 v2", [&]() {
         auto data_p = pdx_full_data.data();
         // For each point
-        for (size_t i = 0; i < n; i+=BATCH_SIZE_64) {
+#pragma omp parallel for if (THREADS > 1) num_threads(THREADS)
+        for (size_t i = 0; i < n; i += BATCH_SIZE_64) {
+            std::vector<float> distances_batch_vertical_v2_local;
+            if constexpr (THREADS > 1) {
+                distances_batch_vertical_v2_local.reserve(
+                    BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE
+                );
+            }
+
             // We query the centroids
             auto centroids_p = pdx_full_centroids.data();
             p_math = 0;
-            for (size_t j = 0; j < centroids_n; j+=skmeans::VECTOR_CHUNK_SIZE) {
-                std::fill(distances_batch_vertical_v2.begin(), distances_batch_vertical_v2.end(), 0.0f);
-                skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch64V2(
-                    data_p, centroids_p, 0, d, distances_batch_vertical_v2.data()
-                );
+            for (size_t j = 0; j < centroids_n; j += skmeans::VECTOR_CHUNK_SIZE) {
+                if constexpr (THREADS > 1) {
+                    std::fill(
+                        distances_batch_vertical_v2_local.begin(),
+                        distances_batch_vertical_v2_local.end(), 0.0f
+                    );
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch64V2(
+                        data_p, centroids_p, 0, d,
+                        // distances_batch_vertical_v2.data()
+                        distances_batch_vertical_v2_local.data()
+                    );
+                } else {
+                    std::fill(
+                        distances_batch_vertical_v2.begin(), distances_batch_vertical_v2.end(), 0.0f
+                    );
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch64V2(
+                        data_p, centroids_p, 0, d, distances_batch_vertical_v2.data()
+                    );
+                }
+
                 centroids_p += skmeans::VECTOR_CHUNK_SIZE * d;
                 p_math += skmeans::VECTOR_CHUNK_SIZE * d;
             }
-            assert(p_math == centroids_n * d);
+            if constexpr (THREADS == 1)
+                assert(p_math == centroids_n * d);
             data_p += BATCH_SIZE_64 * d;
             data_p_math += BATCH_SIZE_64 * d;
         }
-        assert(data_p_math == n * d);
+        if constexpr (THREADS == 1)
+            assert(data_p_math == n * d);
     });
 
     //
+    //
     // Vertical Batched 64 SIMD
+    //
     //
     p_math = 0;
     data_p_math = 0;
     std::vector<float> distances_batch_vertical_64_simd(BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE);
-    std::fill(distances_batch_vertical_64_simd.begin(), distances_batch_vertical_64_simd.end(), 0.0f);
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("Vertical Batched 64 SIMD", [&]() {
+    std::fill(
+        distances_batch_vertical_64_simd.begin(), distances_batch_vertical_64_simd.end(), 0.0f
+    );
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Vertical Batched 64 SIMD", [&]() {
         auto data_p = pdx_full_data.data();
         // For each point
-        for (size_t i = 0; i < n; i+=BATCH_SIZE_64) {
+#pragma omp parallel for if (THREADS > 1) num_threads(THREADS)
+        for (size_t i = 0; i < n; i += BATCH_SIZE_64) {
+            std::vector<float> distances_batch_vertical_64_simd_local;
+            if constexpr (THREADS > 1) {
+                distances_batch_vertical_64_simd_local.resize(
+                    BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE
+                );
+            }
             // We query the centroids
             auto centroids_p = pdx_full_centroids.data();
             p_math = 0;
-            for (size_t j = 0; j < centroids_n; j+=skmeans::VECTOR_CHUNK_SIZE) {
-                std::fill(distances_batch_vertical_64_simd.begin(), distances_batch_vertical_64_simd.end(), 0.0f);
-                skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch64SIMD(
-                    data_p, centroids_p, 0, d, distances_batch_vertical_64_simd.data()
-                );
+            for (size_t j = 0; j < centroids_n; j += skmeans::VECTOR_CHUNK_SIZE) {
+                if constexpr (THREADS > 1) {
+                    std::fill(
+                        distances_batch_vertical_64_simd_local.begin(),
+                        distances_batch_vertical_64_simd_local.end(), 0.0f
+                    );
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch64SIMD(
+                        data_p, centroids_p, 0, d, distances_batch_vertical_64_simd_local.data()
+                    );
+                } else {
+                    std::fill(
+                        distances_batch_vertical_64_simd.begin(),
+                        distances_batch_vertical_64_simd.end(), 0.0f
+                    );
+                    skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch64SIMD(
+                        data_p, centroids_p, 0, d, distances_batch_vertical_64_simd.data()
+                    );
+                }
                 centroids_p += skmeans::VECTOR_CHUNK_SIZE * d;
                 p_math += skmeans::VECTOR_CHUNK_SIZE * d;
             }
-            assert(p_math == centroids_n * d);
+            if constexpr (THREADS == 1)
+                assert(p_math == centroids_n * d);
             data_p += BATCH_SIZE_64 * d;
             data_p_math += BATCH_SIZE_64 * d;
         }
-        assert(data_p_math == n * d);
+        if constexpr (THREADS == 1)
+            assert(data_p_math == n * d);
     });
 
     //
     // Vertical Batched 8 V2
     //
-    p_math = 0;
-    data_p_math = 0;
-    constexpr size_t BATCH_SIZE_8 = 8;
-    std::vector<float> distances_batch_vertical_8_v2(BATCH_SIZE_8 * skmeans::VECTOR_CHUNK_SIZE);
-    std::fill(distances_batch_vertical_8_v2.begin(), distances_batch_vertical_8_v2.end(), 0.0f);
-    skmeans::PDXLayout<skmeans::f32>::PDXify<true, BATCH_SIZE_8>(data.data(), pdx_full_data.data(), n, d);
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("Vertical Batched 8 v2", [&]() {
-        auto data_p = pdx_full_data.data();
-        // For each point
-        for (size_t i = 0; i < n; i+=BATCH_SIZE_8) {
-            // We query the centroids
-            auto centroids_p = pdx_full_centroids.data();
-            p_math = 0;
-            for (size_t j = 0; j < centroids_n; j+=skmeans::VECTOR_CHUNK_SIZE) {
-                std::fill(distances_batch_vertical_8_v2.begin(), distances_batch_vertical_8_v2.end(), 0.0f);
-                skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch8V2(
-                    data_p, centroids_p, 0, d, distances_batch_vertical_v2.data()
-                );
-                centroids_p += skmeans::VECTOR_CHUNK_SIZE * d;
-                p_math += skmeans::VECTOR_CHUNK_SIZE * d;
-            }
-            assert(p_math == centroids_n * d);
-            data_p += BATCH_SIZE_8 * d;
-            data_p_math += BATCH_SIZE_8 * d;
-        }
-        assert(data_p_math == n * d);
-    });
+    // p_math = 0;
+    // data_p_math = 0;
+    // constexpr size_t BATCH_SIZE_8 = 8;
+    // std::vector<float> distances_batch_vertical_8_v2(BATCH_SIZE_8 * skmeans::VECTOR_CHUNK_SIZE);
+    // std::fill(distances_batch_vertical_8_v2.begin(), distances_batch_vertical_8_v2.end(), 0.0f);
+    // skmeans::PDXLayout<skmeans::f32>::PDXify<true, BATCH_SIZE_8>(data.data(),
+    // pdx_full_data.data(), n, d);
+    // ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Vertical Batched 8 v2", [&]() {
+    //     auto data_p = pdx_full_data.data();
+    //     // For each point
+    //     for (size_t i = 0; i < n; i+=BATCH_SIZE_8) {
+    //         // We query the centroids
+    //         auto centroids_p = pdx_full_centroids.data();
+    //         p_math = 0;
+    //         for (size_t j = 0; j < centroids_n; j+=skmeans::VECTOR_CHUNK_SIZE) {
+    //             std::fill(distances_batch_vertical_8_v2.begin(),
+    //             distances_batch_vertical_8_v2.end(), 0.0f);
+    //             skmeans::DistanceComputer<skmeans::l2, skmeans::f32>::VerticalBlockBatch8V2(
+    //                 data_p, centroids_p, 0, d, distances_batch_vertical_v2.data()
+    //             );
+    //             centroids_p += skmeans::VECTOR_CHUNK_SIZE * d;
+    //             p_math += skmeans::VECTOR_CHUNK_SIZE * d;
+    //         }
+    //         assert(p_math == centroids_n * d);
+    //         data_p += BATCH_SIZE_8 * d;
+    //         data_p_math += BATCH_SIZE_8 * d;
+    //     }
+    //     assert(data_p_math == n * d);
+    // });
 
+    if constexpr (THREADS == 1) {
+        std::cout << std::endl;
+        std::cout << "Dist H: " << distance << std::endl;
+        std::cout << "Dist PDX FULL: " << distances_vertical_serial[63] << std::endl;
+        std::cout << "Dist PDX: " << distances_pdx[63] << std::endl;
+        std::cout << "Dist PDX FULL BATCH 64: "
+                  << distances_batch_vertical[BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE - 1]
+                  << std::endl;
+        std::cout << "Dist PDX FULL BATCH SIMD 64: "
+                  << distances_batch_vertical_64_simd[BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE - 1]
+                  << std::endl;
+        assert(almost_equal(distance, distances_vertical_serial[63]));
+        assert(almost_equal(distance, distances_pdx[63]));
+    }
 
-    std::cout << std::endl;
-    std::cout << "Dist H: " << distance << std::endl;
-    std::cout << "Dist PDX FULL: " << distances_full[63] << std::endl;
-    std::cout << "Dist PDX: " << distances_pdx[63] << std::endl;
-    std::cout << "Dist PDX FULL BATCH 64: " << distances_batch_vertical[BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE - 1] << std::endl;
-    std::cout << "Dist PDX FULL BATCH SIMD 64: " << distances_batch_vertical_64_simd[BATCH_SIZE_64 * skmeans::VECTOR_CHUNK_SIZE - 1] << std::endl;
-    assert(almost_equal(distance, distances_full[63]));
-    assert(almost_equal(distance, distances_pdx[63]));
 }
