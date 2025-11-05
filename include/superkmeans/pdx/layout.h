@@ -111,47 +111,47 @@ class PDXLayout {
      * @param d Number of dimensions (cols) in the data matrix
      * @return void
      */
-    template <bool FULLY_TRANSPOSED = false>
+    template <bool FULLY_TRANSPOSED = false, size_t CHUNK_SIZE=VECTOR_CHUNK_SIZE>
     static inline void PDXify(
         const skmeans_value_t<q>* SKM_RESTRICT in_vectors,
         skmeans_value_t<q>* SKM_RESTRICT out_pdx_vectors, const size_t n, const size_t d
     ) {
         using scalar_t = skmeans_value_t<q>;
-        assert(n % VECTOR_CHUNK_SIZE == 0);
+        assert(n % CHUNK_SIZE == 0);
 
         auto [horizontal_d, vertical_d] = GetDimensionSplit(d);
 
         // TODO(@lkuffo, high): Parallelize
-        for (size_t i = 0; i < n; i += VECTOR_CHUNK_SIZE) {
+        for (size_t i = 0; i < n; i += CHUNK_SIZE) {
             auto chunk_offset = i * d; // Chunk offset is the same in both layouts
             const scalar_t* SKM_RESTRICT chunk_p = in_vectors + chunk_offset;
             scalar_t* SKM_RESTRICT out_chunk_p = out_pdx_vectors + chunk_offset;
             if constexpr (FULLY_TRANSPOSED) {
                 Eigen::Map<const Eigen::Matrix<
-                    scalar_t, VECTOR_CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
-                    in(chunk_p, VECTOR_CHUNK_SIZE, d);
+                    scalar_t, CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
+                    in(chunk_p, CHUNK_SIZE, d);
                 Eigen::Map<
-                    Eigen::Matrix<scalar_t, Eigen::Dynamic, VECTOR_CHUNK_SIZE, Eigen::RowMajor>>
-                    out(out_chunk_p, d, VECTOR_CHUNK_SIZE);
+                    Eigen::Matrix<scalar_t, Eigen::Dynamic, CHUNK_SIZE, Eigen::RowMajor>>
+                    out(out_chunk_p, d, CHUNK_SIZE);
                 out.noalias() = in.transpose();
             } else {
                 // Vertical Block
                 Eigen::Map<const Eigen::Matrix<
-                    scalar_t, VECTOR_CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
-                    in(chunk_p, VECTOR_CHUNK_SIZE, d);
+                    scalar_t, CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
+                    in(chunk_p, CHUNK_SIZE, d);
                 Eigen::Map<
-                    Eigen::Matrix<scalar_t, Eigen::Dynamic, VECTOR_CHUNK_SIZE, Eigen::RowMajor>>
-                    out(out_chunk_p, vertical_d, VECTOR_CHUNK_SIZE);
+                    Eigen::Matrix<scalar_t, Eigen::Dynamic, CHUNK_SIZE, Eigen::RowMajor>>
+                    out(out_chunk_p, vertical_d, CHUNK_SIZE);
                 out.noalias() = in.leftCols(vertical_d).transpose();
-                out_chunk_p += VECTOR_CHUNK_SIZE * vertical_d;
+                out_chunk_p += CHUNK_SIZE * vertical_d;
 
                 // Horizontal Blocks
                 for (size_t j = 0; j < horizontal_d; j += H_DIM_SIZE) {
                     Eigen::Map<
-                        Eigen::Matrix<scalar_t, H_DIM_SIZE, VECTOR_CHUNK_SIZE, Eigen::RowMajor>>
-                        out_h(out_chunk_p, H_DIM_SIZE, VECTOR_CHUNK_SIZE);
-                    out_h.noalias() = in.block(0, vertical_d + j, VECTOR_CHUNK_SIZE, H_DIM_SIZE);
-                    out_chunk_p += VECTOR_CHUNK_SIZE * H_DIM_SIZE;
+                        Eigen::Matrix<scalar_t, H_DIM_SIZE, CHUNK_SIZE, Eigen::RowMajor>>
+                        out_h(out_chunk_p, H_DIM_SIZE, CHUNK_SIZE);
+                    out_h.noalias() = in.block(0, vertical_d + j, CHUNK_SIZE, H_DIM_SIZE);
+                    out_chunk_p += CHUNK_SIZE * H_DIM_SIZE;
                 }
             }
         }
