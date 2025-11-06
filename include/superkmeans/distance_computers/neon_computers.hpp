@@ -207,6 +207,7 @@ class SIMDComputer<l2, f32> {
         const data_t* SKM_RESTRICT queries, const data_t* SKM_RESTRICT data, size_t start_dimension,
         size_t end_dimension, distance_t* distances_p
     ) {
+        constexpr size_t VC_BLOCKS = 16;
         // 1024 registers => 4KB, every query needs 16 registers to fit 64 accumulators
         constexpr size_t reg_n = 64 * 16;
         float32x4_t res_reg[reg_n];

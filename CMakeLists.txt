@@ -12,6 +12,7 @@ include(CheckCXXCompilerFlag)
 include(CMakePrintHelpers)
 include(CTest)
 
+add_definitions(-DEIGEN_USE_BLAS)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "disable python" FORCE)
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "disable gpu" FORCE)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "shared libs" FORCE)
@@ -35,3 +36,6 @@ add_executable(bench_kmeans_lorann.out bench_kmeans_lorann.cpp)
 add_executable(bench_kmeans_faiss.out bench_kmeans_faiss.cpp)
 
 target_link_libraries(bench_kmeans_faiss.out PRIVATE faiss)
+
+target_link_libraries(bench_kernels.out PRIVATE "-framework Accelerate")
+target_link_libraries(bench_kmeans.out PRIVATE "-framework Accelerate")

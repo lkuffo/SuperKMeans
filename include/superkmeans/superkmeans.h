@@ -2,11 +2,13 @@
 #ifndef SUPERKMEANS_H
 #define SUPERKMEANS_H
 
+#include <random>
+#include <omp.h>
+
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.hpp"
 #include "superkmeans/pdx/pdxearch.h"
 #include "superkmeans/pdx/utils.h"
-#include <random>
 
 #define EPS (1 / 1024.)
 
@@ -23,10 +25,10 @@ class SuperKMeans {
     //   it is set to all threads
     SuperKMeans(
         size_t n_clusters, size_t dimensionality, uint32_t iters = 25,
-        float sampling_fraction = 0.50, bool verbose = false
+        float sampling_fraction = 0.50, bool verbose = false, uint32_t n_threads = 1
     )
         : _iters(iters), _n_clusters(n_clusters), _sampling_fraction(sampling_fraction),
-          _d(dimensionality), _trained(false), verbose(verbose) {
+          _d(dimensionality), _trained(false), verbose(verbose), N_THREADS(n_threads) {
         SKMEANS_ENSURE_POSITIVE(n_clusters);
         SKMEANS_ENSURE_POSITIVE(iters);
         SKMEANS_ENSURE_POSITIVE(sampling_fraction);
@@ -151,26 +153,36 @@ class SuperKMeans {
         //      This will be key to really achieve a lot of performance
         std::fill(_tmp_centroids.begin(), _tmp_centroids.end(), 0.0);
         std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
-        auto data_p = data;
+        // create locks (once, outside frequent calls)
+        std::vector<omp_lock_t> centroid_locks(_n_clusters);
+        for (size_t c = 0; c < _n_clusters; ++c) omp_init_lock(&centroid_locks[c]);
+        // auto data_p = data;
         cost = 0.0;
         float tt = 0.0;
         // TODO(@lkuffo, crit): Fork Union
+#pragma omp parallel for if (N_THREADS > 1) num_threads(N_THREADS)
         for (size_t i = 0; i < n; ++i) {
+            const auto data_p = data + i * _d;
             // PDXearch per vector
             std::vector<knn_candidate_t> assignment = pdx_centroids.searcher->Top1Search(data_p);
             auto [assignment_idx, assignment_distance] = assignment[0];
-            tt += pdx_centroids.searcher->end_to_end_clock.accum_time;
+            // tt += pdx_centroids.searcher->end_to_end_clock.accum_time;
+#pragma omp atomic
             _cluster_sizes[assignment_idx] += 1;
             // TODO(@lkuffo, med): Only if verbose... but I dont want to touch this critical loop
+#pragma omp atomic
             cost += assignment_distance;
             // std::cout << "Assigned to: " << assignment_idx << std::endl;
             // TODO(@lkuffo, med): Is it better to update directly on PDX or keep as RowMaj+PDXify
+            omp_set_lock(&centroid_locks[assignment_idx]);
             UpdateCentroid(data_p, assignment_idx);
-            data_p += _d;
+            omp_unset_lock(&centroid_locks[assignment_idx]);
+            // data_p += _d;
         }
-        std::cout << "Total time for search (ns): " << tt << std::endl;
-        std::cout << "Total time for search (ms): " << tt / 1000000 << std::endl;
-        std::cout << "Time per query (ms): " << (tt / 1000000) / n << std::endl;
+        for (size_t c = 0; c < _n_clusters; ++c) omp_destroy_lock(&centroid_locks[c]);
+        // std::cout << "Total time for search (ns): " << tt << std::endl;
+        // std::cout << "Total time for search (ms): " << tt / 1000000 << std::endl;
+        // std::cout << "Time per query (ms): " << (tt / 1000000) / n << std::endl;
         ConsolidateCentroids(n); // TODO(@lkuffo, med): Horrible parameter depth
     }
 
@@ -403,6 +415,7 @@ class SuperKMeans {
     bool _trained;
     bool verbose;
     float cost;
+    uint32_t N_THREADS;
 };
 } // namespace skmeans
 

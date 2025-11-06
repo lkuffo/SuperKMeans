@@ -48,10 +48,11 @@ int main(int argc, char* argv[]) {
     std::cout << "Compiles!" << std::endl;
 
     size_t n = 262144;
+    // n = 65536;
     size_t centroids_n = 1024;
     size_t d = 1024;
     float distance = 0.0f;
-    constexpr size_t THREADS = 10;
+    constexpr size_t THREADS = 14;
     omp_set_num_threads(THREADS);
     constexpr size_t EPOCHS = 1;
     constexpr size_t ITERATIONS = 1;
@@ -63,18 +64,31 @@ int main(int argc, char* argv[]) {
     std::cout << "Total distance calculations: " << n * centroids_n << std::endl;
     std::cout << "Vertical D: " << vertical_d << std::endl;
     std::cout << "Horizontal D: " << horizontal_d << std::endl;
+    std::cout << "Eigen ISA: " << Eigen::SimdInstructionSetsInUse() << std::endl;
+    std::cout << "Eigen # threads: " << Eigen::nbThreads() << " (note: it will always be 1 if BLAS is enabled" << std::endl;
 
     //
     // Eigen
     //
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-    // using MatrixC = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+    using MatrixC = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
     std::vector<float> eigen_out_buf(n * centroids_n);
     Eigen::Map<const MatrixR> eigen_data(data.data(), n, d);
     Eigen::Map<MatrixR> eigen_centroids(centroids.data(), centroids_n, d);
     Eigen::Map<MatrixR> eigen_out(eigen_out_buf.data(), n, centroids_n);
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Eigen", [&]() {
+        ankerl::nanobench::doNotOptimizeAway(
+            eigen_out.noalias() = eigen_data * eigen_centroids.transpose()
+        );
+    });
 
-    std::cout << "Eigen # threads: " << Eigen::nbThreads() << std::endl;
+    Eigen::Map<MatrixC> eigen_data_t(data.data(), n, d);
+    Eigen::Map<MatrixC> eigen_centroids_t(centroids.data(), d, centroids_n);
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Eigen (NT)", [&]() {
+        ankerl::nanobench::doNotOptimizeAway(
+            eigen_out.noalias() = eigen_data_t * eigen_centroids_t
+        );
+    });
 
     //
     // Horizontal Serial
@@ -105,12 +119,6 @@ int main(int argc, char* argv[]) {
             }
             data_p += d;
         }
-    });
-
-    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Eigen", [&]() {
-        ankerl::nanobench::doNotOptimizeAway(
-            eigen_out.noalias() = eigen_data * eigen_centroids.transpose()
-        );
     });
 
     //

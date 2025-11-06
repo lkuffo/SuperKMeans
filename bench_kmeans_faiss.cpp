@@ -12,14 +12,14 @@
 #include "superkmeans/nanobench.h"
 
 int main(int argc, char* argv[]) {
-    constexpr size_t THREADS = 1;
+    constexpr size_t THREADS = 14;
     omp_set_num_threads(THREADS);
 
     // SKMeans
     const int n = 262144;
     const int d = 1024;
     int n_clusters = 1024;
-    int n_iters = 1;
+    int n_iters = 25;
     float sampling_fraction = 1.0;
 
     std::vector<float> data(n * d);

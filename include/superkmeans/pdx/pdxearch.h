@@ -34,7 +34,6 @@ class PDXearch {
 
     Pruner pruner;
     INDEX_TYPE& pdx_data;
-    uint32_t current_dimension_idx{0};
 
     PDXearch(INDEX_TYPE& data_index, Pruner& pruner) : pdx_data(data_index), pruner(pruner) {
         indices_dimensions.resize(pdx_data.num_dimensions);
@@ -64,44 +63,18 @@ class PDXearch {
   protected:
     float selectivity_threshold = 0.80;
     size_t ivf_nprobe = 0;
-    int is_adsampling = false;
-    size_t current_cluster = 0;
+    uint32_t is_adsampling = false;
+    size_t total_embeddings = 0;
 
-    size_t cur_subgrouping_size_idx{0};
-    size_t total_embeddings{0};
-
-    std::vector<uint32_t> indices_dimensions;
-    std::vector<uint32_t> clusters_indices;
-    std::vector<uint32_t> clusters_indices_l0;
+    std::vector<uint32_t> indices_dimensions;  // TODO: Thread local
+    std::vector<uint32_t> clusters_indices;    // TODO: Thread local
+    std::vector<uint32_t> clusters_indices_l0; // TODO: Thread local
     std::vector<size_t> cluster_offsets;
-
-    size_t n_vectors_not_pruned = 0;
-
-    DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
-    skmeans_distance_t<f32> pruning_threshold_l0 =
-        std::numeric_limits<skmeans_distance_t<f32>>::max();
 
     // For pruning we do not use tight loops of 64. We know that tight loops bring benefits
     // to the distance kernels (40% faster), however doing so + PRUNING in the tight block of 64
     // slightly reduces the performance of PDXearch. We are still investigating why.
     static constexpr uint16_t PDX_VECTOR_SIZE = 64;
-    alignas(64
-    ) inline static DISTANCES_TYPE distances[PDX_VECTOR_SIZE]; // Used in full scans (no pruning)
-    alignas(64) inline static DISTANCES_TYPE pruning_distances[10240];
-
-    alignas(64) inline static uint32_t pruning_positions[10240];
-    std::priority_queue<KNNCandidate<q>, std::vector<KNNCandidate<q>>, VectorComparator<q>> best_k{
-    };
-
-    alignas(64) inline static skmeans_distance_t<f32> centroids_distances[PDX_VECTOR_SIZE];
-    alignas(64) inline static skmeans_distance_t<f32> pruning_distances_l0[10240];
-    alignas(64) inline static uint32_t pruning_positions_l0[10240];
-    std::priority_queue<KNNCandidate<f32>, std::vector<KNNCandidate<f32>>, VectorComparator<f32>>
-        best_k_centroids{};
-
-    void ResetDistancesScalar(size_t n_vectors) {
-        memset((void*) distances, 0, n_vectors * sizeof(DISTANCES_TYPE));
-    }
 
     template <Quantization Q = q>
     void ResetPruningDistances(size_t n_vectors, skmeans_distance_t<Q>* pruning_distances) {
@@ -119,7 +92,7 @@ class PDXearch {
         uint32_t k,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
             heap,
-        skmeans_distance_t<Q>& pruning_threshold
+        skmeans_distance_t<Q>& pruning_threshold, uint32_t current_dimension_idx
     ) {
         pruning_threshold = pruner.template GetPruningThreshold<Q>(k, heap, current_dimension_idx);
     };
@@ -247,15 +220,17 @@ class PDXearch {
         const size_t n_vectors, uint32_t k, float tuples_threshold, uint32_t* pruning_positions,
         skmeans_distance_t<Q>* pruning_distances, skmeans_distance_t<Q>& pruning_threshold,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
-            heap
+            heap,
+        uint32_t& current_dimension_idx
     ) {
         current_dimension_idx = 0;
+        thread_local size_t cur_subgrouping_size_idx = 0;
         cur_subgrouping_size_idx = 0;
         size_t tuples_needed_to_exit = std::ceil(1.0 * tuples_threshold * n_vectors);
         ResetPruningDistances<Q>(n_vectors, pruning_distances);
         uint32_t n_tuples_to_prune = 0;
         if (!is_adsampling)
-            GetPruningThreshold<Q>(k, heap, pruning_threshold);
+            GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
         while (1.0 * n_tuples_to_prune < tuples_needed_to_exit &&
                current_dimension_idx < pdx_data.num_vertical_dimensions) {
             size_t last_dimension_to_fetch = std::min(
@@ -269,7 +244,7 @@ class PDXearch {
             current_dimension_idx = last_dimension_to_fetch;
             cur_subgrouping_size_idx += 1;
             if (is_adsampling)
-                GetPruningThreshold<Q>(k, heap, pruning_threshold);
+                GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
             n_tuples_to_prune = 0;
             EvaluatePruningPredicateScalar<Q>(
                 n_tuples_to_prune, n_vectors, pruning_distances, pruning_threshold
@@ -284,9 +259,10 @@ class PDXearch {
         const size_t n_vectors, uint32_t k, uint32_t* pruning_positions,
         skmeans_distance_t<Q>* pruning_distances, skmeans_distance_t<Q>& pruning_threshold,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
-            heap
+            heap,
+        size_t& n_vectors_not_pruned, uint32_t& current_dimension_idx
     ) {
-        GetPruningThreshold<Q>(k, heap, pruning_threshold);
+        GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
         InitPositionsArray<Q>(
             n_vectors, n_vectors_not_pruned, pruning_positions, pruning_threshold, pruning_distances
         );
@@ -315,7 +291,7 @@ class PDXearch {
             current_horizontal_dimension += H_DIM_SIZE;
             current_dimension_idx += H_DIM_SIZE;
             if (is_adsampling)
-                GetPruningThreshold<Q>(k, heap, pruning_threshold);
+                GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
             assert(
                 current_dimension_idx == current_vertical_dimension + current_horizontal_dimension
             );
@@ -345,7 +321,7 @@ class PDXearch {
                 current_dimension_idx == current_vertical_dimension + current_horizontal_dimension
             );
             if (is_adsampling)
-                GetPruningThreshold<Q>(k, heap, pruning_threshold);
+                GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
             EvaluatePruningPredicateOnPositionsArray<Q>(
                 cur_n_vectors_not_pruned, n_vectors_not_pruned, pruning_positions,
                 pruning_threshold, pruning_distances
@@ -385,7 +361,10 @@ class PDXearch {
         }
     }
 
-    std::vector<KNNCandidate_t> BuildResultSet(uint32_t k) {
+    std::vector<KNNCandidate_t> BuildResultSet(
+        uint32_t k,
+        std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>& best_k
+    ) {
         size_t result_set_size = std::min(best_k.size(), (size_t) k);
         std::vector<KNNCandidate_t> result;
         result.resize(result_set_size);
@@ -408,7 +387,11 @@ class PDXearch {
         return result;
     }
 
-    void BuildResultSetCentroids(uint32_t k) {
+    void BuildResultSetCentroids(
+        uint32_t k, std::priority_queue<
+                        KNNCandidate<f32>, std::vector<KNNCandidate<f32>>, VectorComparator<f32>>&
+                        best_k_centroids
+    ) {
         for (int i = k - 1; i >= 0; --i) {
             const KNNCandidate<f32>& embedding = best_k_centroids.top();
             clusters_indices[i] = embedding.index;
@@ -419,8 +402,7 @@ class PDXearch {
     // We store centroids using PDX in tight blocks of 64
     // TODO: Always assumes multiple of 64
     void GetL0ClustersAccessOrderPDX(const float* __restrict query) {
-        best_k_centroids = std::priority_queue<
-            KNNCandidate<f32>, std::vector<KNNCandidate<f32>>, VectorComparator<f32>>{};
+        alignas(64) thread_local skmeans_distance_t<f32> centroids_distances[PDX_VECTOR_SIZE];
         clusters_indices_l0.resize(pdx_data.num_clusters_l0);
         std::iota(clusters_indices_l0.begin(), clusters_indices_l0.end(), 0);
         float* tmp_centroids_pdx = pdx_data.centroids_pdx;
@@ -449,6 +431,19 @@ class PDXearch {
     void GetL1ClustersAccessOrderPDX(
         const float* __restrict query, size_t n_buckets, bool safe_to_prune_space = true
     ) {
+        alignas(64) thread_local skmeans_distance_t<f32> pruning_distances_l0[10240];
+        alignas(64) thread_local uint32_t pruning_positions_l0[10240];
+        thread_local auto best_k_centroids = std::priority_queue<
+            KNNCandidate<f32>, std::vector<KNNCandidate<f32>>, VectorComparator<f32>>{};
+        thread_local skmeans_distance_t<f32> pruning_threshold_l0 =
+            std::numeric_limits<skmeans_distance_t<f32>>::max();
+        thread_local size_t current_cluster = 0;
+        thread_local uint32_t current_dimension_idx = 0;
+        thread_local size_t n_vectors_not_pruned = 0;
+        best_k_centroids.empty();
+        current_cluster = 0;
+        current_dimension_idx = 0;
+        n_vectors_not_pruned = 0;
         size_t clusters_to_visit = pdx_data.num_clusters_l0;
         if ((n_buckets < pdx_data.num_clusters / 2) && safe_to_prune_space) {
             // We prune half of the super-clusters only if the user wants to
@@ -471,11 +466,13 @@ class PDXearch {
             }
             Warmup<f32>(
                 query, cluster.data, cluster.num_embeddings, n_buckets, selectivity_threshold,
-                pruning_positions_l0, pruning_distances_l0, pruning_threshold_l0, best_k_centroids
+                pruning_positions_l0, pruning_distances_l0, pruning_threshold_l0, best_k_centroids,
+                current_dimension_idx
             );
             Prune<f32>(
                 query, cluster.data, cluster.num_embeddings, n_buckets, pruning_positions_l0,
-                pruning_distances_l0, pruning_threshold_l0, best_k_centroids
+                pruning_distances_l0, pruning_threshold_l0, best_k_centroids, n_vectors_not_pruned,
+                current_dimension_idx
             );
             if (n_vectors_not_pruned) {
                 MergeIntoHeap<true, f32>(
@@ -500,7 +497,7 @@ class PDXearch {
                 }
             }
         }
-        BuildResultSetCentroids(n_buckets);
+        BuildResultSetCentroids(n_buckets, best_k_centroids);
     }
 
     void GetClustersAccessOrderRandom() {
@@ -512,12 +509,25 @@ class PDXearch {
      * Search methods
      ******************************************************************/
     std::vector<KNNCandidate_t> Search(const float* __restrict raw_query, uint32_t k) {
+        alignas(64) thread_local uint32_t pruning_positions[10240];
+        alignas(64) thread_local DISTANCES_TYPE distances[PDX_VECTOR_SIZE];
+        alignas(64) thread_local DISTANCES_TYPE pruning_distances[10240];
+        thread_local size_t current_cluster = 0;
+        thread_local DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
+        thread_local auto best_k =
+            std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
+        thread_local size_t n_vectors_not_pruned = 0;
+        thread_local uint32_t current_dimension_idx = 0;
+        pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
+        best_k.empty();
+        current_dimension_idx = 0;
+        n_vectors_not_pruned = 0;
+        current_cluster = 0;
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
         this->end_to_end_clock.Tic();
 #endif
-        best_k =
-            std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
+
         alignas(64) float query[pdx_data.num_dimensions];
         if (!pdx_data.is_normalized) {
             pruner.PreprocessQuery(raw_query, query);
@@ -556,11 +566,13 @@ class PDXearch {
             }
             Warmup(
                 prepared_query, cluster.data, cluster.num_embeddings, k, selectivity_threshold,
-                pruning_positions, pruning_distances, pruning_threshold, best_k
+                pruning_positions, pruning_distances, pruning_threshold, best_k,
+                current_dimension_idx
             );
             Prune(
                 prepared_query, cluster.data, cluster.num_embeddings, k, pruning_positions,
-                pruning_distances, pruning_threshold, best_k
+                pruning_distances, pruning_threshold, best_k, n_vectors_not_pruned,
+                current_dimension_idx
             );
             if (n_vectors_not_pruned) {
                 MergeIntoHeap<true>(
@@ -569,7 +581,7 @@ class PDXearch {
                 );
             }
         }
-        std::vector<KNNCandidate_t> result = BuildResultSet(k);
+        std::vector<KNNCandidate_t> result = BuildResultSet(k, best_k);
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif
@@ -577,13 +589,25 @@ class PDXearch {
     }
 
     std::vector<KNNCandidate_t> Top1Search(const float* __restrict query) {
+        alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
+        alignas(64) thread_local DISTANCES_TYPE distances[PDX_VECTOR_SIZE];
+        alignas(64) thread_local DISTANCES_TYPE pruning_distances[PDX_VECTOR_SIZE];
+        thread_local DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
+        thread_local auto best_k =
+            std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
+        thread_local size_t n_vectors_not_pruned = 0;
+        thread_local uint32_t current_dimension_idx = 0;
+        thread_local size_t current_cluster = 0;
+        pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
+        best_k.empty();
+        current_dimension_idx = 0;
+        n_vectors_not_pruned = 0;
+        current_cluster = 0;
 #ifdef BENCHMARK_TIME
         this->ResetClocks();
         this->end_to_end_clock.Tic();
 #endif
         constexpr uint32_t k = 1;
-        best_k =
-            std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         size_t clusters_to_visit = pdx_data.num_clusters;
         if constexpr (std::is_same_v<Index, IndexPDXIVF2<q>>) {
             // Multilevel access
@@ -612,11 +636,13 @@ class PDXearch {
             }
             Warmup(
                 query, cluster.data, cluster.num_embeddings, k, selectivity_threshold,
-                pruning_positions, pruning_distances, pruning_threshold, best_k
+                pruning_positions, pruning_distances, pruning_threshold, best_k,
+                current_dimension_idx
             );
             Prune(
                 query, cluster.data, cluster.num_embeddings, k, pruning_positions,
-                pruning_distances, pruning_threshold, best_k
+                pruning_distances, pruning_threshold, best_k, n_vectors_not_pruned,
+                current_dimension_idx
             );
             if (n_vectors_not_pruned) {
                 MergeIntoHeap<true>(
@@ -625,12 +651,19 @@ class PDXearch {
                 );
             }
         }
-        std::vector<KNNCandidate_t> result = BuildResultSet(k);
+        std::vector<KNNCandidate_t> result = BuildResultSet(k, best_k);
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif
         return result;
     }
+
+    // Top1SearchWithThreshold(const float* __restrict query, float pruning_tresh, uint32_t assigned_point)
+    //      pruning_tresh is the distance from the query to its previously assigned centroid id (but already recomputed)
+    //      assigned_point is the id of this point
+    // Initialize the pruning_threshold to pruning_treshold
+    // Initialize heap with one value, the assigned_point and the pruning_threshold as distance
+    // Avoid Start, go directly into the WARMUP/PRUNE cycle
 
 };
 
