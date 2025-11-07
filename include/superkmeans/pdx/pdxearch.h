@@ -21,7 +21,9 @@ namespace skmeans {
  * Implements our algorithm for vertical pruning
  ******************************************************************/
 template <
-    Quantization q = f32, class Index = IndexPDXIVF<q>, DistanceFunction alpha = l2,
+    Quantization q = f32,
+    class Index = IndexPDXIVF<q>,
+    DistanceFunction alpha = l2,
     class Pruner = ADSamplingPruner<q>>
 class PDXearch {
   public:
@@ -92,14 +94,17 @@ class PDXearch {
         uint32_t k,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
             heap,
-        skmeans_distance_t<Q>& pruning_threshold, uint32_t current_dimension_idx
+        skmeans_distance_t<Q>& pruning_threshold,
+        uint32_t current_dimension_idx
     ) {
         pruning_threshold = pruner.template GetPruningThreshold<Q>(k, heap, current_dimension_idx);
     };
 
     template <Quantization Q = q>
     void EvaluatePruningPredicateScalar(
-        uint32_t& n_pruned, size_t n_vectors, skmeans_distance_t<Q>* pruning_distances,
+        uint32_t& n_pruned,
+        size_t n_vectors,
+        skmeans_distance_t<Q>* pruning_distances,
         const skmeans_distance_t<Q> pruning_threshold
     ) {
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
@@ -109,8 +114,11 @@ class PDXearch {
 
     template <Quantization Q = q>
     void EvaluatePruningPredicateOnPositionsArray(
-        size_t n_vectors, size_t& n_vectors_not_pruned, uint32_t* pruning_positions,
-        skmeans_distance_t<Q> pruning_threshold, skmeans_distance_t<Q>* pruning_distances
+        size_t n_vectors,
+        size_t& n_vectors_not_pruned,
+        uint32_t* pruning_positions,
+        skmeans_distance_t<Q> pruning_threshold,
+        skmeans_distance_t<Q>* pruning_distances
     ) {
         n_vectors_not_pruned = 0;
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
@@ -122,7 +130,8 @@ class PDXearch {
 
     template <Quantization Q = q>
     void EvaluatePruningPredicateVectorized(
-        uint32_t& n_pruned, skmeans_distance_t<Q> pruning_threshold,
+        uint32_t& n_pruned,
+        skmeans_distance_t<Q> pruning_threshold,
         skmeans_distance_t<Q>* pruning_distances
     ) {
         for (size_t vector_idx = 0; vector_idx < PDX_VECTOR_SIZE; ++vector_idx) {
@@ -132,8 +141,11 @@ class PDXearch {
 
     template <Quantization Q = q>
     void InitPositionsArray(
-        size_t n_vectors, size_t& n_vectors_not_pruned, uint32_t* pruning_positions,
-        skmeans_distance_t<Q> pruning_threshold, skmeans_distance_t<Q>* pruning_distances
+        size_t n_vectors,
+        size_t& n_vectors_not_pruned,
+        uint32_t* pruning_positions,
+        skmeans_distance_t<Q> pruning_threshold,
+        skmeans_distance_t<Q>* pruning_distances
     ) {
         n_vectors_not_pruned = 0;
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
@@ -143,7 +155,9 @@ class PDXearch {
     };
 
     static void GetClustersAccessOrderIVF(
-        const float* __restrict query, const INDEX_TYPE& data, size_t nprobe,
+        const float* __restrict query,
+        const INDEX_TYPE& data,
+        size_t nprobe,
         std::vector<uint32_t>& clusters_indices
     ) {
         std::vector<float> distances_to_centroids;
@@ -166,9 +180,13 @@ class PDXearch {
     // On the first bucket, we do a full scan (we do not prune vectors)
     template <Quantization Q = q>
     void Start(
-        const skmeans_value_t<Q>* __restrict query, const skmeans_value_t<Q>* data,
-        const size_t n_vectors, uint32_t k, const uint32_t* vector_indices,
-        uint32_t* pruning_positions, skmeans_distance_t<Q>* pruning_distances,
+        const skmeans_value_t<Q>* __restrict query,
+        const skmeans_value_t<Q>* data,
+        const size_t n_vectors,
+        uint32_t k,
+        const uint32_t* vector_indices,
+        uint32_t* pruning_positions,
+        skmeans_distance_t<Q>* pruning_distances,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
             heap
     ) {
@@ -216,9 +234,14 @@ class PDXearch {
     // is low
     template <Quantization Q = q>
     void Warmup(
-        const skmeans_value_t<Q>* __restrict query, const skmeans_value_t<Q>* __restrict data,
-        const size_t n_vectors, uint32_t k, float tuples_threshold, uint32_t* pruning_positions,
-        skmeans_distance_t<Q>* pruning_distances, skmeans_distance_t<Q>& pruning_threshold,
+        const skmeans_value_t<Q>* __restrict query,
+        const skmeans_value_t<Q>* __restrict data,
+        const size_t n_vectors,
+        uint32_t k,
+        float tuples_threshold,
+        uint32_t* pruning_positions,
+        skmeans_distance_t<Q>* pruning_distances,
+        skmeans_distance_t<Q>& pruning_threshold,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
             heap,
         uint32_t& current_dimension_idx
@@ -255,12 +278,17 @@ class PDXearch {
     // We scan only the not-yet pruned vectors
     template <Quantization Q = q>
     void Prune(
-        const skmeans_value_t<Q>* __restrict query, const skmeans_value_t<Q>* __restrict data,
-        const size_t n_vectors, uint32_t k, uint32_t* pruning_positions,
-        skmeans_distance_t<Q>* pruning_distances, skmeans_distance_t<Q>& pruning_threshold,
+        const skmeans_value_t<Q>* __restrict query,
+        const skmeans_value_t<Q>* __restrict data,
+        const size_t n_vectors,
+        uint32_t k,
+        uint32_t* pruning_positions,
+        skmeans_distance_t<Q>* pruning_distances,
+        skmeans_distance_t<Q>& pruning_threshold,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
             heap,
-        size_t& n_vectors_not_pruned, uint32_t& current_dimension_idx
+        size_t& n_vectors_not_pruned,
+        uint32_t& current_dimension_idx
     ) {
         GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
         InitPositionsArray<Q>(
@@ -333,8 +361,11 @@ class PDXearch {
 
     template <bool IS_PRUNING = false, Quantization Q = q>
     void MergeIntoHeap(
-        const uint32_t* vector_indices, size_t n_vectors, uint32_t k,
-        const uint32_t* pruning_positions, skmeans_distance_t<Q>* pruning_distances,
+        const uint32_t* vector_indices,
+        size_t n_vectors,
+        uint32_t k,
+        const uint32_t* pruning_positions,
+        skmeans_distance_t<Q>* pruning_distances,
         skmeans_distance_t<Q>* distances,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
             heap
@@ -388,9 +419,11 @@ class PDXearch {
     }
 
     void BuildResultSetCentroids(
-        uint32_t k, std::priority_queue<
-                        KNNCandidate<f32>, std::vector<KNNCandidate<f32>>, VectorComparator<f32>>&
-                        best_k_centroids
+        uint32_t k,
+        std::priority_queue<
+            KNNCandidate<f32>,
+            std::vector<KNNCandidate<f32>>,
+            VectorComparator<f32>>& best_k_centroids
     ) {
         for (int i = k - 1; i >= 0; --i) {
             const KNNCandidate<f32>& embedding = best_k_centroids.top();
@@ -429,7 +462,9 @@ class PDXearch {
     }
 
     void GetL1ClustersAccessOrderPDX(
-        const float* __restrict query, size_t n_buckets, bool safe_to_prune_space = true
+        const float* __restrict query,
+        size_t n_buckets,
+        bool safe_to_prune_space = true
     ) {
         alignas(64) thread_local skmeans_distance_t<f32> pruning_distances_l0[10240];
         alignas(64) thread_local uint32_t pruning_positions_l0[10240];
@@ -667,7 +702,9 @@ class PDXearch {
     // Avoid Start, go directly into the WARMUP/PRUNE cycle
     // MEASURE GAINS!!
     std::vector<KNNCandidate_t> Top1SearchWithThreshold(
-        const float* __restrict query, const float prev_pruning_threshold, const uint32_t prev_top_1
+        const float* __restrict query,
+        const float prev_pruning_threshold,
+        const uint32_t prev_top_1
     ) {
         alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
         // alignas(64) thread_local DISTANCES_TYPE distances[PDX_VECTOR_SIZE];
@@ -726,6 +763,7 @@ class PDXearch {
                 pruning_positions, pruning_distances, pruning_threshold, best_k,
                 current_dimension_idx
             );
+            // std::cout << "Jumping at: " << current_dimension_idx << std::endl;
             Prune(
                 query, cluster.data, cluster.num_embeddings, k, pruning_positions,
                 pruning_distances, pruning_threshold, best_k, n_vectors_not_pruned,
@@ -738,6 +776,7 @@ class PDXearch {
                 );
             }
         }
+        // std::cout << "--" << std::endl;
         std::vector<KNNCandidate_t> result = BuildResultSet(k, best_k);
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();

@@ -22,3 +22,9 @@ BreakTemplateDeclarations: Yes
 SpaceBeforeParens: ControlStatements
 SpaceAfterCStyleCast: true
 SpacesInParentheses: false
+
+
+BinPackParameters: OnePerLine
+AllowAllParametersOfDeclarationOnNextLine: false
+BreakAfterReturnType: None
+PenaltyReturnTypeOnItsOwnLine: 256

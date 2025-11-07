@@ -27,8 +27,13 @@ class SIMDComputer<l2, f32> {
     // Defer to the scalar kernel
     template <bool SKIP_PRUNED>
     static void VerticalPruning(
-        const data_t* SKM_RESTRICT query, const data_t* SKM_RESTRICT data, size_t n_vectors,
-        size_t total_vectors, size_t start_dimension, size_t end_dimension, distance_t* distances_p,
+        const data_t* SKM_RESTRICT query,
+        const data_t* SKM_RESTRICT data,
+        size_t n_vectors,
+        size_t total_vectors,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p,
         const uint32_t* pruning_positions = nullptr
     ) {
         size_t dimensions_jump_factor = total_vectors;
@@ -50,8 +55,11 @@ class SIMDComputer<l2, f32> {
 
     // Defer to the scalar kernel
     static void Vertical(
-        const data_t* SKM_RESTRICT query, const data_t* SKM_RESTRICT data, size_t start_dimension,
-        size_t end_dimension, distance_t* distances_p
+        const data_t* SKM_RESTRICT query,
+        const data_t* SKM_RESTRICT data,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p
     ) {
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
             size_t dimension_idx = dim_idx;
@@ -65,7 +73,8 @@ class SIMDComputer<l2, f32> {
     }
 
     static distance_t Horizontal(
-        const data_t* SKM_RESTRICT vector1, const data_t* SKM_RESTRICT vector2,
+        const data_t* SKM_RESTRICT vector1,
+        const data_t* SKM_RESTRICT vector2,
         size_t num_dimensions
     ) {
         __m256 d2_vec = _mm256_setzero_ps();
@@ -119,8 +128,13 @@ class SIMDComputer<dp, f32> {
     // Defer to the scalar kernel
     template <bool SKIP_PRUNED>
     static void VerticalPruning(
-        const data_t* SKM_RESTRICT query, const data_t* SKM_RESTRICT data, size_t n_vectors,
-        size_t total_vectors, size_t start_dimension, size_t end_dimension, distance_t* distances_p,
+        const data_t* SKM_RESTRICT query,
+        const data_t* SKM_RESTRICT data,
+        size_t n_vectors,
+        size_t total_vectors,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p,
         const uint32_t* pruning_positions = nullptr
     ) {
         // TODO
@@ -128,14 +142,18 @@ class SIMDComputer<dp, f32> {
 
     // Defer to the scalar kernel
     static void Vertical(
-        const data_t* SKM_RESTRICT query, const data_t* SKM_RESTRICT data, size_t start_dimension,
-        size_t end_dimension, distance_t* distances_p
+        const data_t* SKM_RESTRICT query,
+        const data_t* SKM_RESTRICT data,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p
     ) {
         // TODO
     }
 
     static distance_t Horizontal(
-        const data_t* SKM_RESTRICT vector1, const data_t* SKM_RESTRICT vector2,
+        const data_t* SKM_RESTRICT vector1,
+        const data_t* SKM_RESTRICT vector2,
         size_t num_dimensions
     ) {
         __m256 d2_vec = _mm256_setzero_ps();

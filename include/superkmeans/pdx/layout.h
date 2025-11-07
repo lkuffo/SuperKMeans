@@ -111,10 +111,12 @@ class PDXLayout {
      * @param d Number of dimensions (cols) in the data matrix
      * @return void
      */
-    template <bool FULLY_TRANSPOSED = false, size_t CHUNK_SIZE=VECTOR_CHUNK_SIZE>
+    template <bool FULLY_TRANSPOSED = false, size_t CHUNK_SIZE = VECTOR_CHUNK_SIZE>
     static inline void PDXify(
         const skmeans_value_t<q>* SKM_RESTRICT in_vectors,
-        skmeans_value_t<q>* SKM_RESTRICT out_pdx_vectors, const size_t n, const size_t d
+        skmeans_value_t<q>* SKM_RESTRICT out_pdx_vectors,
+        const size_t n,
+        const size_t d
     ) {
         using scalar_t = skmeans_value_t<q>;
         assert(n % CHUNK_SIZE == 0);
@@ -127,28 +129,25 @@ class PDXLayout {
             const scalar_t* SKM_RESTRICT chunk_p = in_vectors + chunk_offset;
             scalar_t* SKM_RESTRICT out_chunk_p = out_pdx_vectors + chunk_offset;
             if constexpr (FULLY_TRANSPOSED) {
-                Eigen::Map<const Eigen::Matrix<
-                    scalar_t, CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
-                    in(chunk_p, CHUNK_SIZE, d);
                 Eigen::Map<
-                    Eigen::Matrix<scalar_t, Eigen::Dynamic, CHUNK_SIZE, Eigen::RowMajor>>
+                    const Eigen::Matrix<scalar_t, CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
+                    in(chunk_p, CHUNK_SIZE, d);
+                Eigen::Map<Eigen::Matrix<scalar_t, Eigen::Dynamic, CHUNK_SIZE, Eigen::RowMajor>>
                     out(out_chunk_p, d, CHUNK_SIZE);
                 out.noalias() = in.transpose();
             } else {
                 // Vertical Block
-                Eigen::Map<const Eigen::Matrix<
-                    scalar_t, CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
-                    in(chunk_p, CHUNK_SIZE, d);
                 Eigen::Map<
-                    Eigen::Matrix<scalar_t, Eigen::Dynamic, CHUNK_SIZE, Eigen::RowMajor>>
+                    const Eigen::Matrix<scalar_t, CHUNK_SIZE, Eigen::Dynamic, Eigen::RowMajor>>
+                    in(chunk_p, CHUNK_SIZE, d);
+                Eigen::Map<Eigen::Matrix<scalar_t, Eigen::Dynamic, CHUNK_SIZE, Eigen::RowMajor>>
                     out(out_chunk_p, vertical_d, CHUNK_SIZE);
                 out.noalias() = in.leftCols(vertical_d).transpose();
                 out_chunk_p += CHUNK_SIZE * vertical_d;
 
                 // Horizontal Blocks
                 for (size_t j = 0; j < horizontal_d; j += H_DIM_SIZE) {
-                    Eigen::Map<
-                        Eigen::Matrix<scalar_t, H_DIM_SIZE, CHUNK_SIZE, Eigen::RowMajor>>
+                    Eigen::Map<Eigen::Matrix<scalar_t, H_DIM_SIZE, CHUNK_SIZE, Eigen::RowMajor>>
                         out_h(out_chunk_p, H_DIM_SIZE, CHUNK_SIZE);
                     out_h.noalias() = in.block(0, vertical_d + j, CHUNK_SIZE, H_DIM_SIZE);
                     out_chunk_p += CHUNK_SIZE * H_DIM_SIZE;
@@ -159,8 +158,13 @@ class PDXLayout {
 
     template <bool FULLY_TRANSPOSED = false>
     static inline void UpdateSum(
-        scalar_t* SKM_RESTRICT pdx_data, const scalar_t* SKM_RESTRICT vector, const size_t position,
-        const size_t n_points, const size_t d, const size_t horizontal_d, const size_t vertical_d
+        scalar_t* SKM_RESTRICT pdx_data,
+        const scalar_t* SKM_RESTRICT vector,
+        const size_t position,
+        const size_t n_points,
+        const size_t d,
+        const size_t horizontal_d,
+        const size_t vertical_d
     ) {
         // Calculate Position
         // Apply operand
@@ -168,7 +172,9 @@ class PDXLayout {
     }
 
     SKM_ALWAYS_INLINE static size_t OffsetCalculator(
-        const size_t vector_position, const size_t d, const size_t horizontal_d,
+        const size_t vector_position,
+        const size_t d,
+        const size_t horizontal_d,
         const size_t vertical_d
     ) {}
 
@@ -198,7 +204,11 @@ class PDXLayout {
 
     template <typename T>
     static bool CheckBlockTransposeNonFull(
-        const T* in_vectors, const T* out_vectors, size_t n, size_t d, size_t horizontal_d,
+        const T* in_vectors,
+        const T* out_vectors,
+        size_t n,
+        size_t d,
+        size_t horizontal_d,
         size_t vertical_d
     ) {
         static_assert(std::is_arithmetic<T>::value, "T must be arithmetic");

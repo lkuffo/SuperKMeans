@@ -20,8 +20,13 @@ class SIMDComputer<l2, u8> {
 
     template <bool SKIP_PRUNED>
     static void VerticalPruning(
-        const value_t* SKM_RESTRICT query, const value_t* SKM_RESTRICT data, size_t n_vectors,
-        size_t total_vectors, size_t start_dimension, size_t end_dimension, distance_t* distances_p,
+        const value_t* SKM_RESTRICT query,
+        const value_t* SKM_RESTRICT data,
+        size_t n_vectors,
+        size_t total_vectors,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p,
         const uint32_t* pruning_positions = nullptr
     ) {
         // TODO: Handle tail in dimension length, for now im not going to worry on that as all the
@@ -66,8 +71,11 @@ class SIMDComputer<l2, u8> {
     }
 
     static void Vertical(
-        const value_t* SKM_RESTRICT query, const value_t* SKM_RESTRICT data, size_t start_dimension,
-        size_t end_dimension, distance_t* distances_p
+        const value_t* SKM_RESTRICT query,
+        const value_t* SKM_RESTRICT data,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p
     ) {
         uint32x4_t res[16];
         // Load initial values
@@ -96,7 +104,8 @@ class SIMDComputer<l2, u8> {
     }
 
     static distance_t Horizontal(
-        const value_t* SKM_RESTRICT vector1, const value_t* SKM_RESTRICT vector2,
+        const value_t* SKM_RESTRICT vector1,
+        const value_t* SKM_RESTRICT vector2,
         size_t num_dimensions
     ) {
         uint32x4_t sum_vec = vdupq_n_u32(0);
@@ -126,8 +135,13 @@ class SIMDComputer<l2, f32> {
     // Defer to the scalar kernel
     template <bool SKIP_PRUNED>
     static void VerticalPruning(
-        const data_t* SKM_RESTRICT query, const data_t* SKM_RESTRICT data, size_t n_vectors,
-        size_t total_vectors, size_t start_dimension, size_t end_dimension, distance_t* distances_p,
+        const data_t* SKM_RESTRICT query,
+        const data_t* SKM_RESTRICT data,
+        size_t n_vectors,
+        size_t total_vectors,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p,
         const uint32_t* pruning_positions
     ) {
         size_t dimensions_jump_factor = total_vectors;
@@ -149,8 +163,11 @@ class SIMDComputer<l2, f32> {
 
     // Defer to the scalar kernel
     static void Vertical(
-        const data_t* SKM_RESTRICT query, const data_t* SKM_RESTRICT data, size_t start_dimension,
-        size_t end_dimension, distance_t* distances_p
+        const data_t* SKM_RESTRICT query,
+        const data_t* SKM_RESTRICT data,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p
     ) {
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
             size_t dimension_idx = dim_idx;
@@ -165,8 +182,11 @@ class SIMDComputer<l2, f32> {
 
     template <uint32_t BATCH_SIZE>
     static void VerticalBatch(
-        const data_t* SKM_RESTRICT queries, const data_t* SKM_RESTRICT data, size_t start_dimension,
-        size_t end_dimension, distance_t* distances_p
+        const data_t* SKM_RESTRICT queries,
+        const data_t* SKM_RESTRICT data,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p
     ) {
         auto queries_p = queries;
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
@@ -185,8 +205,11 @@ class SIMDComputer<l2, f32> {
 
     template <uint32_t BATCH_SIZE>
     static void VerticalBatchV2(
-        const data_t* SKM_RESTRICT queries, const data_t* SKM_RESTRICT data, size_t start_dimension,
-        size_t end_dimension, distance_t* distances_p
+        const data_t* SKM_RESTRICT queries,
+        const data_t* SKM_RESTRICT data,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p
     ) {
         auto queries_p = queries;
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
@@ -199,13 +222,16 @@ class SIMDComputer<l2, f32> {
                     dist_base[query_idx] += to_multiply * to_multiply;
                 }
             }
-            queries_p+=BATCH_SIZE;
+            queries_p += BATCH_SIZE;
         }
     }
 
     static void VerticalBatch64SIMD(
-        const data_t* SKM_RESTRICT queries, const data_t* SKM_RESTRICT data, size_t start_dimension,
-        size_t end_dimension, distance_t* distances_p
+        const data_t* SKM_RESTRICT queries,
+        const data_t* SKM_RESTRICT data,
+        size_t start_dimension,
+        size_t end_dimension,
+        distance_t* distances_p
     ) {
         // 1024 registers => 4KB, every query needs 16 registers to fit 64 accumulators
         constexpr size_t reg_n = 64 * 16;
@@ -218,7 +244,8 @@ class SIMDComputer<l2, f32> {
         for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
             const size_t offset_to_dimension_start = dim_idx * VECTOR_CHUNK_SIZE;
             for (int vector_idx = 0; vector_idx < 16; ++vector_idx) {
-                const float32x4_t vec2 = vld1q_f32(&data[offset_to_dimension_start + vector_idx * 4]);
+                const float32x4_t vec2 =
+                    vld1q_f32(&data[offset_to_dimension_start + vector_idx * 4]);
                 const auto dist_base = res_reg + vector_idx * 4 * 16;
                 for (size_t query_idx = 0; query_idx < 64; ++query_idx) {
                     const float32x4_t vec1 = vdupq_n_f32(queries_p[query_idx]);
@@ -235,7 +262,8 @@ class SIMDComputer<l2, f32> {
     }
 
     static distance_t Horizontal(
-        const data_t* SKM_RESTRICT vector1, const data_t* SKM_RESTRICT vector2,
+        const data_t* SKM_RESTRICT vector1,
+        const data_t* SKM_RESTRICT vector2,
         size_t num_dimensions
     ) {
 #if defined(__APPLE__)

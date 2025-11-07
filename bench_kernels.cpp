@@ -9,6 +9,7 @@
 #include "superkmeans/nanobench.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/pruners/adsampling.hpp"
+#include "superkmeans/distance_computers/batch_computers.hpp"
 #include "superkmeans/superkmeans.h"
 #include <Eigen/Eigen/Dense>
 
@@ -54,8 +55,8 @@ int main(int argc, char* argv[]) {
     float distance = 0.0f;
     constexpr size_t THREADS = 14;
     omp_set_num_threads(THREADS);
-    constexpr size_t EPOCHS = 1;
-    constexpr size_t ITERATIONS = 1;
+    constexpr size_t EPOCHS = 5;
+    constexpr size_t ITERATIONS = 5;
     const auto dims = skmeans::PDXLayout<skmeans::f32>::GetDimensionSplit(d);
     const size_t horizontal_d = dims.horizontal_d;
     const size_t vertical_d = dims.vertical_d;
@@ -67,11 +68,13 @@ int main(int argc, char* argv[]) {
     std::cout << "Eigen ISA: " << Eigen::SimdInstructionSetsInUse() << std::endl;
     std::cout << "Eigen # threads: " << Eigen::nbThreads() << " (note: it will always be 1 if BLAS is enabled)" << std::endl;
 
+    using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+    using MatrixC = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+
+
     //
     // Eigen
     //
-    using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-    using MatrixC = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
     std::vector<float> eigen_out_buf(n * centroids_n);
     Eigen::Map<const MatrixR> eigen_data(data.data(), n, d);
     Eigen::Map<MatrixR> eigen_centroids(centroids.data(), centroids_n, d);
@@ -82,13 +85,42 @@ int main(int argc, char* argv[]) {
         );
     });
 
-    Eigen::Map<MatrixC> eigen_data_t(data.data(), n, d);
-    Eigen::Map<MatrixC> eigen_centroids_t(centroids.data(), d, centroids_n);
-    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Eigen (NT)", [&]() {
-        ankerl::nanobench::doNotOptimizeAway(
-            eigen_out.noalias() = eigen_data_t * eigen_centroids_t
+    //
+    // Eigen Batch L2sqr
+    //
+    Eigen::Map<const MatrixR> b_eigen_X(data.data(), n, d);
+    Eigen::Map<MatrixR> b_eigen_Y(centroids.data(), centroids_n, d);
+    const Eigen::VectorXf norms_x = b_eigen_X.rowwise().squaredNorm();
+    const Eigen::VectorXf norms_y = b_eigen_Y.rowwise().squaredNorm();
+    std::vector<uint32_t> out_knn(n);
+    std::vector<float> out_distances(n);
+    std::vector<float> all_distances(n * centroids_n);
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Batch_XRowMajor_YColMajor", [&]() {
+        skmeans::BatchComputer<skmeans::l2, skmeans::f32>::Batch_XRowMajor_YColMajor(
+            data.data(),
+            centroids.data(),
+            n,
+            centroids_n,
+            d,
+            norms_x.data(),
+            norms_y.data(),
+            out_knn.data(),
+            out_distances.data(),
+            all_distances.data()
         );
     });
+
+
+    Eigen::Map<MatrixR> eigen_data_t(data.data(), n, d);
+    Eigen::Map<MatrixC> eigen_centroids_t(centroids.data(), d, centroids_n);
+    Eigen::Map<MatrixC> eigen_out_t(eigen_out_buf.data(), n, centroids_n);
+    ankerl::nanobench::Bench().epochs(EPOCHS).epochIterations(ITERATIONS).run("Eigen (NT)", [&]() {
+        ankerl::nanobench::doNotOptimizeAway(
+            eigen_out_t.noalias() = eigen_data_t * eigen_centroids_t
+        );
+    });
+
+    return 0;
 
     //
     // Horizontal Serial

@@ -16,6 +16,8 @@
 #include "avx512_computers.hpp"
 #endif
 
+#include "batch_computers.hpp"
+
 namespace skmeans {
 
 template <DistanceFunction alpha, Quantization q>
@@ -24,6 +26,7 @@ class DistanceComputer {};
 template <>
 class DistanceComputer<l2, f32> {
     using computer = SIMDComputer<l2, f32>;
+    using batch_computer = BatchComputer<l2, f32>;
 
   public:
     constexpr static auto VerticalPruning = computer::VerticalPruning<true>;
@@ -42,6 +45,9 @@ class DistanceComputer<l2, f32> {
     constexpr static auto VerticalBlockBatch64SIMD = computer::VerticalBatch64SIMD;
 
     constexpr static auto Horizontal = computer::Horizontal;
+
+    // CANT DO THIS FOR OVERLOADS!!
+    // constexpr static auto Batch_X_Row_Y_Col = batch_computer::Batch_XRowMajor_YColMajor;
 };
 
 template <>
