@@ -23,7 +23,7 @@ int main(int argc, char* argv[]) {
     const size_t n = 262144;
     const size_t d = 1024;
     size_t n_clusters = 1024;
-    uint32_t n_iters = 5;
+    uint32_t n_iters = 2;
     float sampling_fraction = 1.0;
 
     constexpr size_t THREADS = 14;

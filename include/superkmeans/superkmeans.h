@@ -2,11 +2,13 @@
 #ifndef SUPERKMEANS_H
 #define SUPERKMEANS_H
 
+#include <Eigen/Eigen/Dense>
 #include <omp.h>
 #include <random>
 
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.hpp"
+#include "superkmeans/distance_computers/batch_computers.hpp"
 #include "superkmeans/pdx/pdxearch.h"
 #include "superkmeans/pdx/utils.h"
 
@@ -20,6 +22,10 @@ class SuperKMeans {
     using layout_t = PDXLayout<q, alpha, Pruner>;
     using knn_candidate_t = KNNCandidate<q>;
     using distance_t = skmeans_distance_t<q>;
+    using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+    using MatrixC = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+    using VectorR = Eigen::VectorXf;
+    using batch_computer = BatchComputer<alpha, q>;
 
   public:
     // TODO(@lkuffo, high): N-threads should be controlled with a global function. By default
@@ -57,7 +63,9 @@ class SuperKMeans {
      * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
      */
     std::vector<skmeans_centroid_value_t<q>> Train(
-        const vector_value_t* SKM_RESTRICT data, const size_t n, uint32_t num_threads = -1
+        const vector_value_t* SKM_RESTRICT data,
+        const size_t n,
+        uint32_t num_threads = -1
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
         if (_trained) {
@@ -77,8 +85,6 @@ class SuperKMeans {
         _cluster_sizes.resize(_n_clusters);
         _reciprocal_cluster_sizes.resize(_n_clusters);
         _assignments.resize(n);
-        // TODO(@lkuffo, crit): Get norms from X and in each iteration get norms from Y
-        // X.rowwise().squaredNorm();
 
         // TODO(@lkuffo, med): If metric is dp, normalize the vectors so we can use l2
 
@@ -95,6 +101,16 @@ class SuperKMeans {
         auto data_to_cluster = SampleVectors(data_p, data_samples_buffer, n);
         std::cout << "Sampling data result: " << data_to_cluster[0] << std::endl;
 
+        // TODO(@lkuffo, low): I don't like this rotated_initial_centroids variable
+        std::vector<centroid_value_t> rotated_initial_centroids(_n_clusters * _d);
+        _pruner->Rotate(_tmp_centroids.data(), rotated_initial_centroids.data(), _n_clusters);
+        std::vector<vector_value_t> data_norms(_n_samples);
+        std::vector<vector_value_t> centroid_norms(_n_clusters);
+        data_norms.resize(_n_samples);
+        centroid_norms.resize(_n_clusters);
+        GetL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
+        GetL2NormsRowMajor(rotated_initial_centroids.data(), _n_clusters, centroid_norms.data());
+
         if (verbose) {
             std::cout << "Clustering..." << std::endl;
         }
@@ -102,7 +118,11 @@ class SuperKMeans {
         if (verbose) {
             std::cout << "Assigning (First)..." << std::endl;
         }
-        InitAssignAndUpdateCentroids(data_to_cluster, centroids_pdx_wrapper, _n_samples);
+        // TODO(@lkuffo, low): Clang.format: Each parameter in one line if it doesnt fit in one line
+        InitAssignAndUpdateCentroids(
+            data_to_cluster, rotated_initial_centroids.data(), data_norms.data(),
+            centroid_norms.data(), _n_samples
+        );
         ConsolidateCentroids();
         if (verbose)
             std::cout << "Iteration 1" << "/" << _iters << " | Objective: " << cost << std::endl;
@@ -226,9 +246,24 @@ class SuperKMeans {
      */
     void InitAssignAndUpdateCentroids(
         const vector_value_t* SKM_RESTRICT data,
-        const layout_t& pdx_centroids,
+        const vector_value_t* SKM_RESTRICT rotated_initial_centroids,
+        const vector_value_t* SKM_RESTRICT data_norms,
+        const vector_value_t* SKM_RESTRICT centroid_norms,
         const size_t n
     ) {
+        std::vector<distance_t> all_distances(n * _n_clusters);
+        std::vector<uint32_t> out_knn(n);
+        std::vector<distance_t> out_distances(n);
+        if (verbose) {
+            std::cout << "Batch Calculation [START]..." << std::endl;
+        }
+        batch_computer::Batch_XRowMajor_YRowMajor(
+            data, rotated_initial_centroids, n, _n_clusters, _d, data_norms, centroid_norms,
+            out_knn.data(), out_distances.data(), all_distances.data()
+        );
+        if (verbose) {
+            std::cout << "Batch Calculation [DONE]..." << std::endl;
+        }
         std::fill(_tmp_centroids.begin(), _tmp_centroids.end(), 0.0);
         std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
         // Create locks (once, outside frequent calls)
@@ -236,20 +271,15 @@ class SuperKMeans {
         for (size_t c = 0; c < _n_clusters; ++c)
             omp_init_lock(&centroid_locks[c]);
         cost = 0.0;
-        // float tt = 0.0;
-        // TODO(@lkuffo, crit): Fork Union
 #pragma omp parallel for if (N_THREADS > 1) num_threads(N_THREADS)
         for (size_t i = 0; i < n; ++i) {
             const auto data_p = data + i * _d;
-            // PDXearch per vector
-            std::vector<knn_candidate_t> assignment = pdx_centroids.searcher->Top1Search(data_p);
-            auto [assignment_idx, assignment_distance] = assignment[0];
-            // tt += pdx_centroids.searcher->end_to_end_clock.accum_time;
+            auto assignment_idx = out_knn[i];
+            auto assignment_distance = out_distances[i];
 #pragma omp atomic
             _cluster_sizes[assignment_idx] += 1;
 #pragma omp atomic
             cost += assignment_distance;
-
             _assignments[i] = assignment_idx;
             omp_set_lock(&centroid_locks[assignment_idx]);
             UpdateCentroid(data_p, assignment_idx);
@@ -257,13 +287,9 @@ class SuperKMeans {
         }
         for (size_t c = 0; c < _n_clusters; ++c)
             omp_destroy_lock(&centroid_locks[c]);
-        // std::cout << "Total time for search (ns): " << tt << std::endl;
-        // std::cout << "Total time for search (ms): " << tt / 1000000 << std::endl;
-        // std::cout << "Time per query (ms): " << (tt / 1000000) / n << std::endl;
     }
 
-    // TODO(@lkuffo, critical)
-    void SplitClusters() { // TODO(@lkuffo, med): Horrible parameter depth
+    void SplitClusters() {
         size_t nsplit = 0;
         std::default_random_engine rng;
         auto _tmp_centroids_p = _tmp_centroids.data();
@@ -305,8 +331,11 @@ class SuperKMeans {
         }
     }
 
-    SKM_ALWAYS_INLINE void
-    UpdateCentroid(const vector_value_t* SKM_RESTRICT vector, const uint32_t cluster_idx) {
+    // SKM_ALWAYS_INLINE
+    void UpdateCentroid(
+        const vector_value_t* SKM_RESTRICT vector,
+        const uint32_t cluster_idx
+    ) {
         // Potentially also store the information to quickly calculate the norms for DP
         // TODO(@lkuffo, low): This should be trivially auto-vectorized in any architecture
         for (size_t i = 0; i < _d; ++i) {
@@ -352,11 +381,13 @@ class SuperKMeans {
     inline bool IsTrained() const { return _trained; }
 
   protected:
-    // Equidistant sampling similar to DuckDB's
-    PDXLayout<q, alpha, Pruner>
-    GenerateCentroids(const vector_value_t* SKM_RESTRICT data, const size_t n) {
+    PDXLayout<q, alpha, Pruner> GenerateCentroids(
+        const vector_value_t* SKM_RESTRICT data,
+        const size_t n
+    ) {
         const auto jumps = static_cast<size_t>(std::floor(1.0 * n / _n_clusters));
         auto tmp_centroids_p = _tmp_centroids.data();
+        // Equidistant sampling similar to DuckDB's
         for (size_t i = 0; i < n; i += jumps) {
             // TODO(@lkuffo, low): What if centroid scalar_t are not the same size of vector ones
             memcpy(
@@ -382,6 +413,16 @@ class SuperKMeans {
         auto pdx_centroids =
             PDXLayout<q, alpha, Pruner>(_centroids.data(), *_pruner, _n_clusters, _d);
         return pdx_centroids;
+    }
+
+    void GetL2NormsRowMajor(
+        const vector_value_t* SKM_RESTRICT data,
+        const size_t n,
+        vector_value_t* SKM_RESTRICT out_norm
+    ) {
+        Eigen::Map<const MatrixR> e_data(data, n, _d);
+        Eigen::Map<VectorR> e_norms(out_norm, n);
+        e_norms.noalias() = e_data.rowwise().squaredNorm();
     }
 
     size_t GetNVectorsToSample(const size_t n) const {
@@ -451,6 +492,8 @@ class SuperKMeans {
     std::vector<centroid_value_t> _super_centroids;
     std::vector<uint32_t> _assignments;
     std::vector<uint32_t> _cluster_sizes;
+    std::vector<vector_value_t> data_norms;
+    std::vector<vector_value_t> centroid_norms;
     std::vector<float> _reciprocal_cluster_sizes;
 
     const uint32_t _iters;

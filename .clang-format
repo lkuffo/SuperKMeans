@@ -27,4 +27,7 @@ SpacesInParentheses: false
 BinPackParameters: OnePerLine
 AllowAllParametersOfDeclarationOnNextLine: false
 BreakAfterReturnType: None
-PenaltyReturnTypeOnItsOwnLine: 256
+PenaltyReturnTypeOnItsOwnLine: 1024
+
+BinPackArguments: false
+AllowAllArgumentsOnNextLine: true
