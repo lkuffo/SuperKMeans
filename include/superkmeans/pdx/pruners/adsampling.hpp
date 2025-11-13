@@ -32,8 +32,12 @@ class ADSamplingPruner {
             matrix.resize(1, num_dimensions);
             std::mt19937 gen(std::random_device{}());
             std::uniform_int_distribution<int> dist(0, 1);
-            for (int i = 0; i < num_dimensions; ++i) {
+            for (size_t i = 0; i < num_dimensions; ++i) {
                 matrix(i) = dist(gen) ? 1.0f : -1.0f;
+            }
+            flip_masks.resize(num_dimensions);
+            for (size_t i = 0; i < num_dimensions; ++i) {
+                flip_masks[i] = (flip_masks[i] < 0.0 ? 0x80000000u : 0u);
             }
             matrix_created = true;
         }
@@ -115,37 +119,50 @@ class ADSamplingPruner {
         Multiply(raw_query, query, num_dimensions);
     }
 
+    void FlipSign(const float* SKM_RESTRICT data, float* SKM_RESTRICT out, const size_t n) {
+#pragma omp parallel for num_threads(14)
+        for (size_t i = 0; i < n; ++i) {
+            const auto offset = i * num_dimensions;
+            size_t j = 0;
+            // TODO(@lkuffo, crit): Get this out of here
+            for (; j + 4 <= num_dimensions; j += 4) {
+                float32x4_t vec = vld1q_f32(data + offset + j);
+                const uint32x4_t mask = vld1q_u32(flip_masks.data() + j);
+                vec = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(vec), mask));
+                vst1q_f32(out + offset + j, vec);
+            }
+            // Tail
+            auto v = reinterpret_cast<const uint32_t*>(data + offset);
+            auto out_bits = reinterpret_cast<uint32_t*>(out + offset);
+            for (; j < num_dimensions; ++j) {
+                out_bits[j] = v[j] ^ flip_masks[j];
+            }
+        }
+    }
+
     // TODO(@lkuffo, high): Pararellize, use scalar_t
-    void Rotate(const float* SKM_RESTRICT vectors, float* SKM_RESTRICT out_buffer, uint32_t n) {
+    void Rotate(
+        const float* SKM_RESTRICT vectors,
+        float* SKM_RESTRICT out_buffer,
+        const uint32_t n
+    ) {
         TicToc m;
         m.Tic();
         Eigen::Map<const MatrixR> vectors_matrix(vectors, n, num_dimensions);
         Eigen::Map<MatrixR> out(out_buffer, n, num_dimensions);
 #ifdef HAS_FFTW
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
-            Eigen::RowVectorXf first_row = matrix.row(0);
-            MatrixR pre_output = vectors_matrix.array().rowwise() * first_row.array();
-
-            // fftwf_plan plan = fftwf_plan_r2r_1d(
-            //     num_dimensions, pre_output.data(), out.data(), FFTW_REDFT10, FFTW_ESTIMATE
-            // );
-            // #pragma omp parallel for num_threads(14)
-            //             for (int r = 0; r < n; ++r) {
-            //                 fftwf_execute_r2r(plan, pre_output.row(r).data(), out.row(r).data());
-            //             }
-            //             fftwf_destroy_plan(plan);
-
+            FlipSign(vectors, out_buffer, n);
             fftwf_init_threads();
-            fftwf_plan_with_nthreads(14);
-            int rank = 1;
+            fftwf_plan_with_nthreads(10);
             int n0 = static_cast<int>(num_dimensions); // length of each 1D transform
             int howmany = static_cast<int>(n);         // number of transforms (one per row)
             fftw_r2r_kind kind[1] = {FFTW_REDFT10};
             fftwf_plan plan = fftwf_plan_many_r2r(
-                rank,
+                1,
                 &n0,
                 howmany,
-                pre_output.data(), /*in*/
+                out.data(), /*in*/
                 NULL,
                 1,
                 n0,         /*inembed, istride, idist*/
@@ -158,11 +175,10 @@ class ADSamplingPruner {
             );
             fftwf_execute(plan);
             fftwf_destroy_plan(plan);
-
             const float s0 = std::sqrt(1.0f / (4.0f * num_dimensions));
             const float s = std::sqrt(1.0f / (2.0f * num_dimensions));
-            out.col(0).array() *= s0;
-            out.rightCols(num_dimensions - 1).array() *= s;
+            out.col(0) *= s0;
+            out.rightCols(num_dimensions - 1) *= s;
             m.Toc();
             std::cout << "Rot Time (s)" << m.accum_time / 1000000000.0 << std::endl;
             return;
@@ -176,6 +192,7 @@ class ADSamplingPruner {
   private:
     float epsilon0 = 2.1;
     MatrixR matrix;
+    std::vector<uint32_t> flip_masks;
 
     float GetRatio(const size_t& visited_dimensions) {
         if (visited_dimensions == 0) {

@@ -119,8 +119,10 @@ class SuperKMeans {
         auto data_to_cluster = SampleVectors(data_p, data_samples_buffer, n);
 
         // TODO(@lkuffo, low): I don't like this rotated_initial_centroids variable
-        _rotator_time.Tic();
+        _allocator_time.Tic();
         std::vector<centroid_value_t> rotated_initial_centroids(_n_clusters * _d);
+        _allocator_time.Toc();
+        _rotator_time.Tic();
         _pruner->Rotate(_tmp_centroids.data(), rotated_initial_centroids.data(), _n_clusters);
         _rotator_time.Toc();
         GetL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
@@ -463,23 +465,35 @@ class SuperKMeans {
 
     void ConsolidateCentroids() {
         _centroids_splitting.Tic();
+#pragma omp parallel for if (N_THREADS > 1) num_threads(N_THREADS)
         for (size_t i = 0; i < _n_clusters; ++i) {
-            _reciprocal_cluster_sizes[i] = 1.0 / _cluster_sizes[i];
-        }
-        auto _tmp_centroids_p = _tmp_centroids.data();
-        for (size_t i = 0; i < _n_clusters; ++i) {
+            auto _tmp_centroids_p = _tmp_centroids.data() + i * _d;
             if (_cluster_sizes[i] == 0) {
-                _tmp_centroids_p += _d;
                 continue;
             }
-            auto mult_factor = _reciprocal_cluster_sizes[i];
-            // TODO(@lkuffo, low): This should be trivially auto-vectorized in any architecture
+            float mult_factor = 1.0 / _cluster_sizes[i];
 #pragma clang loop vectorize(enable)
             for (size_t j = 0; j < _d; ++j) {
-                _tmp_centroids_p[j] = _tmp_centroids_p[j] * mult_factor;
+                _tmp_centroids_p[j] *= mult_factor;
             }
-            _tmp_centroids_p += _d;
         }
+//         for (size_t i = 0; i < _n_clusters; ++i) {
+//             _reciprocal_cluster_sizes[i] = 1.0 / _cluster_sizes[i];
+//         }
+//         auto _tmp_centroids_p = _tmp_centroids.data();
+//         for (size_t i = 0; i < _n_clusters; ++i) {
+//             if (_cluster_sizes[i] == 0) {
+//                 _tmp_centroids_p += _d;
+//                 continue;
+//             }
+//             auto mult_factor = _reciprocal_cluster_sizes[i];
+//             // TODO(@lkuffo, low): This should be trivially auto-vectorized in any architecture
+// #pragma clang loop vectorize(enable)
+//             for (size_t j = 0; j < _d; ++j) {
+//                 _tmp_centroids_p[j] = _tmp_centroids_p[j] * mult_factor;
+//             }
+//             _tmp_centroids_p += _d;
+//         }
         SplitClusters();
         _centroids_splitting.Toc();
         // memcpy and PDXify in one go?
@@ -540,8 +554,10 @@ class SuperKMeans {
         if constexpr (std::is_same_v<Pruner, ADSamplingPruner<q>>) {
             // TODO(@lkuffo, high): Implement a template bool for pruning or not, this would depend
             //    on the dimensionality of the data
-            _rotator_time.Tic();
+            _allocator_time.Tic();
             std::vector<centroid_value_t> rotated_centroids(_n_clusters * _d);
+            _allocator_time.Toc();
+            _rotator_time.Tic();
             _pruner->Rotate(_tmp_centroids.data(), rotated_centroids.data(), _n_clusters);
             _rotator_time.Toc();
             _pdxify_time.Tic();
@@ -651,9 +667,11 @@ class SuperKMeans {
 
         std::cout << "_n_samples: " << _n_samples << std::endl;
         if constexpr (std::is_same_v<Pruner, ADSamplingPruner<q>>) {
-            // TODO(@lkuffo, high): Try to remove temporary buffer for rotating the vectors (sad)
-            _rotator_time.Tic();
+            // TODO(@lkuffo, high): This buffer is a headache
+            _allocator_time.Tic();
             data_samples_buffer.resize(_n_samples * _d);
+            _allocator_time.Toc();
+            _rotator_time.Tic();
             _pruner->Rotate(tmp_data_buffer_p, data_samples_buffer.data(), _n_samples);
             _rotator_time.Toc();
             return data_samples_buffer.data();

@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
     uint32_t n_iters = 10;
     float sampling_fraction = 1.0;
 
-    constexpr size_t THREADS = 14;
+    constexpr size_t THREADS = 10;
     omp_set_num_threads(THREADS);
     std::cout << "Eigen # threads: " << Eigen::nbThreads()
               << " (note: it will always be 1 if BLAS is enabled)" << std::endl;
