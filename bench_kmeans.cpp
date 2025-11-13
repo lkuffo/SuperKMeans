@@ -22,8 +22,9 @@ int main(int argc, char* argv[]) {
 
     // SKMeans
     const size_t n = 262144;
+    // const size_t n = 720896;
     const size_t d = 1024;
-    size_t n_clusters = 1024;
+    size_t n_clusters = 2048;
     uint32_t n_iters = 10;
     float sampling_fraction = 1.0;
 

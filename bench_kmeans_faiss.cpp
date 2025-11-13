@@ -17,8 +17,9 @@ int main(int argc, char* argv[]) {
 
     // SKMeans
     const int n = 262144;
+    // const int n = 720896;
     const int d = 1024;
-    int n_clusters = 1024;
+    int n_clusters = 2048;
     int n_iters = 10;
     float sampling_fraction = 1.0;
 

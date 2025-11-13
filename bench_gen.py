@@ -24,8 +24,10 @@ if __name__ == "__main__":
     # data.tofile("data_random.bin")
 
     num_dimensions = 1024
+
     num_vectors = 262144
-    num_centroids = 1024
+    # num_vectors = 720896
+
     train, test = read_hdf5_data("agnews-mxbai-1024-euclidean")
     rng = np.random.default_rng()
     training_sample_idxs = rng.choice(len(train), size=num_vectors, replace=False)
