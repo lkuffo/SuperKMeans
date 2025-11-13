@@ -39,10 +39,11 @@ class SuperKMeans {
         uint32_t iters = 25,
         float sampling_fraction = 0.50,
         bool verbose = false,
-        uint32_t n_threads = 1
+        uint32_t n_threads = 1,
+        float tol = 1e-5
     )
         : _iters(iters), _n_clusters(n_clusters), _sampling_fraction(sampling_fraction),
-          _d(dimensionality), _trained(false), verbose(verbose), N_THREADS(n_threads) {
+          _d(dimensionality), _trained(false), verbose(verbose), N_THREADS(n_threads), tol(tol) {
         SKMEANS_ENSURE_POSITIVE(n_clusters);
         SKMEANS_ENSURE_POSITIVE(iters);
         SKMEANS_ENSURE_POSITIVE(sampling_fraction);
@@ -138,10 +139,11 @@ class SuperKMeans {
         size_t iter_idx = 1;
         ConsolidateCentroids();
         ComputeCost();
+        ComputeShift();
 
         if (verbose)
             std::cout << "Iteration 1" << "/" << _iters << " | Objective: " << cost
-                      << " | Split: " << _n_split << std::endl
+                      << " | Shift: " << shift << " | Split: " << _n_split << std::endl
                       << std::endl;
         GetL2NormsRowMajor(
             data_to_cluster, _n_samples, data_norms.data(), _partial_d
@@ -162,12 +164,14 @@ class SuperKMeans {
             );
             ConsolidateCentroids();
             ComputeCost();
+            ComputeShift();
             if (alpha == dp) {
                 PostprocessCentroids();
             }
             if (verbose)
                 std::cout << "Iteration " << iter_idx + 1 << "/" << _iters
-                          << " | Objective: " << cost << " | Split: " << _n_split << std::endl
+                          << " | Objective: " << cost << " | Shift: " << shift
+                          << " | Split: " << _n_split << std::endl
                           << std::endl;
         }
         //! I don't need proper assignments until the last iteration
@@ -211,11 +215,14 @@ class SuperKMeans {
                       << std::endl;
             std::cout << "TOTAL PDXIFYING TIME " << _pdxify_time.accum_time / 1000000000.0 << " ("
                       << _pdxify_time.accum_time / total_time * 100 << "%) " << std::endl;
+            std::cout << "TOTAL SHIFT TIME " << _shift_time.accum_time / 1000000000.0 << " ("
+                      << _shift_time.accum_time / total_time * 100 << "%) " << std::endl;
             std::cout << "TOTAL (s) "
                       << (_total_search_time.accum_time + _allocator_time.accum_time +
                           _rotator_time.accum_time + _norms_calc_time.accum_time +
                           _sampling_time.accum_time + _total_centroids_update_time.accum_time +
-                          _centroids_splitting.accum_time + _pdxify_time.accum_time) /
+                          _centroids_splitting.accum_time + _pdxify_time.accum_time +
+                          _shift_time.accum_time) /
                              1000000000.0
                       << std::endl;
         }
@@ -493,6 +500,19 @@ class SuperKMeans {
         }
     }
 
+    void ComputeShift() {
+        _shift_time.Tic();
+        Eigen::Map<const MatrixR> new_mat(_tmp_centroids.data(), _n_clusters, _d);
+        Eigen::Map<const MatrixR> prev_mat(_prev_centroids.data(), _n_clusters, _d);
+        MatrixR diff = new_mat - prev_mat;
+        shift = 0.0f;
+        for (size_t i = 0; i < _n_clusters; ++i) {
+            shift += diff.row(i).squaredNorm();
+        }
+        shift /= (_n_clusters * _d);
+        _shift_time.Toc();
+    }
+
     std::vector<skmeans_centroid_value_t<q>> GetCentroids() const { return _centroids; }
 
     inline size_t GetNClusters() const { return _n_clusters; }
@@ -561,8 +581,11 @@ class SuperKMeans {
             return;
         }
         Eigen::Map<MatrixR> hor_centroids(_tmp_centroids.data(), _n_clusters, _d);
-        Eigen::Map<MatrixR> out_aux_centroids(_aux_hor_centroids.data(), _n_clusters, (_vertical_d - _partial_d));
-        out_aux_centroids.noalias() = hor_centroids.middleCols(_partial_d, (_vertical_d - _partial_d));
+        Eigen::Map<MatrixR> out_aux_centroids(
+            _aux_hor_centroids.data(), _n_clusters, (_vertical_d - _partial_d)
+        );
+        out_aux_centroids.noalias() =
+            hor_centroids.middleCols(_partial_d, (_vertical_d - _partial_d));
     }
 
     void GetL2NormsRowMajor(
@@ -641,9 +664,9 @@ class SuperKMeans {
 
     std::unique_ptr<Pruner> _pruner;
 
-    std::vector<centroid_value_t> _centroids;
-    std::vector<centroid_value_t> _tmp_centroids;
-    std::vector<centroid_value_t> _prev_centroids;
+    std::vector<centroid_value_t> _centroids;     // Always keeps the PDX centroids
+    std::vector<centroid_value_t> _tmp_centroids; // Always keeps the horizontal centroids
+    std::vector<centroid_value_t> _prev_centroids; // Always keeps the previous iteration centroids
     std::vector<centroid_value_t> _aux_hor_centroids;
     std::vector<uint32_t> _assignments;
     std::vector<distance_t> _distances;
@@ -659,11 +682,13 @@ class SuperKMeans {
     bool _trained;
     bool verbose;
     float cost;
+    float shift;
     size_t _n_samples;
     size_t _n_split;
     uint32_t N_THREADS;
     uint32_t _partial_d = 128; // TODO(@lkuffo, crit): Dynamic
     uint32_t _vertical_d;
+    float tol;
 
     TicToc _search_time;
     TicToc _blas_search_time;
@@ -678,6 +703,7 @@ class SuperKMeans {
     TicToc _total_search_time;
     TicToc _pdxify_time;
     TicToc _pdx_search_time;
+    TicToc _shift_time;
     float _all_search_time = 0.0;
 };
 } // namespace skmeans
