@@ -129,24 +129,30 @@ class ADSamplingPruner {
             // fftwf_plan plan = fftwf_plan_r2r_1d(
             //     num_dimensions, pre_output.data(), out.data(), FFTW_REDFT10, FFTW_ESTIMATE
             // );
-// #pragma omp parallel for num_threads(14)
-//             for (int r = 0; r < n; ++r) {
-//                 fftwf_execute_r2r(plan, pre_output.row(r).data(), out.row(r).data());
-//             }
-//             fftwf_destroy_plan(plan);
+            // #pragma omp parallel for num_threads(14)
+            //             for (int r = 0; r < n; ++r) {
+            //                 fftwf_execute_r2r(plan, pre_output.row(r).data(), out.row(r).data());
+            //             }
+            //             fftwf_destroy_plan(plan);
 
             fftwf_init_threads();
             fftwf_plan_with_nthreads(14);
             int rank = 1;
             int n0 = static_cast<int>(num_dimensions); // length of each 1D transform
             int howmany = static_cast<int>(n);         // number of transforms (one per row)
-            fftw_r2r_kind kind[1] = { FFTW_REDFT10 };
+            fftw_r2r_kind kind[1] = {FFTW_REDFT10};
             fftwf_plan plan = fftwf_plan_many_r2r(
-                rank, &n0, howmany,
-                pre_output.data(),      /*in*/
-                NULL, 1, n0,     /*inembed, istride, idist*/
-                out.data(),      /*out*/
-                NULL, 1, n0,     /*onembed, ostride, odist*/
+                rank,
+                &n0,
+                howmany,
+                pre_output.data(), /*in*/
+                NULL,
+                1,
+                n0,         /*inembed, istride, idist*/
+                out.data(), /*out*/
+                NULL,
+                1,
+                n0, /*onembed, ostride, odist*/
                 kind,
                 FFTW_ESTIMATE
             );
@@ -154,7 +160,7 @@ class ADSamplingPruner {
             fftwf_destroy_plan(plan);
 
             const float s0 = std::sqrt(1.0f / (4.0f * num_dimensions));
-            const float s  = std::sqrt(1.0f / (2.0f * num_dimensions));
+            const float s = std::sqrt(1.0f / (2.0f * num_dimensions));
             out.col(0).array() *= s0;
             out.rightCols(num_dimensions - 1).array() *= s;
             m.Toc();

@@ -184,8 +184,11 @@ class SIMDComputer<l2, f32> {
 
     alignas(64) static distance_t pruning_distances_tmp[4096];
 
-    static void
-    GatherDistances(size_t n_vectors, distance_t* distances_p, const uint32_t* pruning_positions) {
+    static void GatherDistances(
+        size_t n_vectors,
+        distance_t* distances_p,
+        const uint32_t* pruning_positions
+    ) {
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
             auto true_vector_idx = pruning_positions[vector_idx];
             pruning_distances_tmp[vector_idx] = distances_p[true_vector_idx];

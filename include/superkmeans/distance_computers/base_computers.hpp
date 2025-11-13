@@ -42,7 +42,6 @@ class DistanceComputer<l2, f32> {
     constexpr static auto VerticalBlockBatch64SIMD = computer::VerticalBatch64SIMD;
 
     constexpr static auto Horizontal = computer::Horizontal;
-
 };
 
 template <>

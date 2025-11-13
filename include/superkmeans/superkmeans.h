@@ -91,7 +91,7 @@ class SuperKMeans {
         _distances.resize(n);
         std::vector<vector_value_t> data_norms(_n_samples);
         std::vector<vector_value_t> centroid_norms(_n_clusters);
-        std::vector<distance_t> all_distances(4096 * 1024);
+        std::vector<distance_t> all_distances(X_BATCH_SIZE * Y_BATCH_SIZE);
         std::vector<uint32_t> out_knn(n);
         std::vector<distance_t> out_distances(n);
         _allocator_time.Toc();
@@ -166,8 +166,8 @@ class SuperKMeans {
                 PostprocessCentroids();
             }
             if (verbose)
-                std::cout << "Iteration " << iter_idx + 1 << "/" << _iters << " | Objective: " << cost
-                          << " | Split: " << _n_split << std::endl
+                std::cout << "Iteration " << iter_idx + 1 << "/" << _iters
+                          << " | Objective: " << cost << " | Split: " << _n_split << std::endl
                           << std::endl;
         }
         //! I don't need proper assignments until the last iteration
@@ -379,8 +379,8 @@ class SuperKMeans {
         std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
         _sampling_time.Toc();
         if (verbose)
-            std::cout << "Total time for BLAS+PDX search (s): " << _search_time.accum_time / 1000000000.0
-                      << std::endl;
+            std::cout << "Total time for BLAS+PDX search (s): "
+                      << _search_time.accum_time / 1000000000.0 << std::endl;
         _all_search_time += _search_time.accum_time / 1000000000.0;
 
         _centroids_update_time.Reset();

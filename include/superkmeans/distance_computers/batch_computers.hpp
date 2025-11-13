@@ -20,8 +20,6 @@ class BatchComputer<l2, u8> {};
 template <>
 class BatchComputer<l2, f32> {
 
-    static constexpr size_t x_batch_size = 4096;
-    static constexpr size_t y_batch_size = 1024;
     static constexpr size_t serial_threshold = 20;
     using distance_t = skmeans_distance_t<f32>;
     using data_t = skmeans_value_t<f32>;
@@ -118,16 +116,16 @@ class BatchComputer<l2, f32> {
         TicToc tt;
         tt.Reset();
         tt.Tic();
-        for (size_t i = 0; i < n_x; i += x_batch_size) {
-            auto batch_n_x = x_batch_size;
+        for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
+            auto batch_n_x = X_BATCH_SIZE;
             auto batch_x_p = x + (i * d);
-            if (i + x_batch_size > n_x) {
+            if (i + X_BATCH_SIZE > n_x) {
                 batch_n_x = n_x - i;
             }
-            for (size_t j = 0; j < n_y; j += y_batch_size) {
-                auto batch_n_y = y_batch_size;
+            for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
+                auto batch_n_y = Y_BATCH_SIZE;
                 auto batch_y_p = y + (j * d);
-                if (j + y_batch_size > n_y) {
+                if (j + Y_BATCH_SIZE > n_y) {
                     batch_n_y = n_y - j;
                 }
                 // std::cout << batch_n_x << "," << batch_n_y << std::endl;
@@ -175,16 +173,16 @@ class BatchComputer<l2, f32> {
         TicToc tt;
         tt.Reset();
         tt.Tic();
-        for (size_t i = 0; i < n_x; i += x_batch_size) {
-            auto batch_n_x = x_batch_size;
+        for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
+            auto batch_n_x = X_BATCH_SIZE;
             auto batch_x_p = x + (i * d);
-            if (i + x_batch_size > n_x) {
+            if (i + X_BATCH_SIZE > n_x) {
                 batch_n_x = n_x - i;
             }
-            for (size_t j = 0; j < n_y; j += y_batch_size) {
-                auto batch_n_y = y_batch_size;
+            for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
+                auto batch_n_y = Y_BATCH_SIZE;
                 auto batch_y_p = y + (j * d);
-                if (j + y_batch_size > n_y) {
+                if (j + Y_BATCH_SIZE > n_y) {
                     batch_n_y = n_y - j;
                 }
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);

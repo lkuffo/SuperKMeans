@@ -6,13 +6,9 @@
 #include "superkmeans/pdx/pdxearch.h"
 #include <Eigen/Eigen/Dense>
 #include <cassert>
-#include <chrono>
-#include <fcntl.h>
-#include <fstream>
 #include <memory>
 #include <string>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 namespace skmeans {

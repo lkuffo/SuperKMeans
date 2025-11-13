@@ -56,9 +56,12 @@
 namespace skmeans {
 
 static inline constexpr float PROPORTION_HORIZONTAL_DIM = 0.75;
-static inline constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 4096; // TODO: For now, I don't want this to activate
+static inline constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION =
+    4096; // TODO: For now, I don't want this to activate
 static inline constexpr size_t VECTOR_CHUNK_SIZE = 64;
 static inline constexpr size_t H_DIM_SIZE = 64;
+static inline constexpr size_t X_BATCH_SIZE = 4096;
+static inline constexpr size_t Y_BATCH_SIZE = 1024;
 // Evaluating the pruning threshold is so fast that we can allow smaller fetching sizes
 // to avoid more data access. Super useful in architectures with low bandwidth at L3/DRAM like
 // Intel SPR
