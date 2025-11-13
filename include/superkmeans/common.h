@@ -130,6 +130,9 @@ struct Cluster {
     uint32_t num_embeddings{};
     uint32_t* indices = nullptr;
     skmeans_value_t<u8>* data = nullptr;
+    skmeans_value_t<u8>* aux_hor_data =
+        nullptr; // Contains the vertical dimensions minus partial_d in a horizontal layout, aka the
+                 // ones not visited by BLAS
 };
 
 template <>
@@ -137,6 +140,9 @@ struct Cluster<f32> {
     uint32_t num_embeddings{};
     uint32_t* indices = nullptr;
     skmeans_value_t<f32>* data = nullptr;
+    skmeans_value_t<f32>* aux_hor_data =
+        nullptr; // Contains the vertical dimensions minus partial_d in a horizontal layout, aka the
+                 // ones not visited by BLAS
 };
 
 }; // namespace skmeans

@@ -305,7 +305,8 @@ class PDXearch {
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
             heap,
         size_t& n_vectors_not_pruned,
-        uint32_t& current_dimension_idx
+        uint32_t& current_dimension_idx,
+        const skmeans_value_t<Q>* SKM_RESTRICT aux_data = nullptr
     ) {
         GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
         InitPositionsArray<Q>(
@@ -322,7 +323,7 @@ class PDXearch {
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
-                __builtin_prefetch(data + data_pos, 0, 0);
+                __builtin_prefetch(data + data_pos, 0, 2);
             }
             size_t offset_query = pdx_data.num_vertical_dimensions + current_horizontal_dimension;
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
@@ -351,25 +352,46 @@ class PDXearch {
         while (n_vectors_not_pruned && current_vertical_dimension < pdx_data.num_vertical_dimensions
         ) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
-            size_t last_dimension_to_test_idx = std::min(
-                current_vertical_dimension + H_DIM_SIZE, (size_t) pdx_data.num_vertical_dimensions
-            );
-            DistanceComputer<alpha, Q>::VerticalPruning(
-                query,
-                data,
-                cur_n_vectors_not_pruned,
-                n_vectors,
-                current_vertical_dimension,
-                last_dimension_to_test_idx,
-                pruning_distances,
-                pruning_positions
-            );
-            current_dimension_idx =
-                std::min(current_dimension_idx + H_DIM_SIZE, (size_t) pdx_data.num_dimensions);
-            current_vertical_dimension = std::min(
-                (uint32_t) (current_vertical_dimension + H_DIM_SIZE),
-                pdx_data.num_vertical_dimensions
-            );
+            if (aux_data == nullptr) {
+                size_t last_dimension_to_test_idx = std::min(
+                    current_vertical_dimension + H_DIM_SIZE,
+                    (size_t) pdx_data.num_vertical_dimensions
+                );
+                DistanceComputer<alpha, Q>::VerticalPruning(
+                    query,
+                    data,
+                    cur_n_vectors_not_pruned,
+                    n_vectors,
+                    current_vertical_dimension,
+                    last_dimension_to_test_idx,
+                    pruning_distances,
+                    pruning_positions
+                );
+                current_dimension_idx =
+                    std::min(current_dimension_idx + H_DIM_SIZE, (size_t) pdx_data.num_dimensions);
+                current_vertical_dimension = std::min(
+                    (uint32_t) (current_vertical_dimension + H_DIM_SIZE),
+                    pdx_data.num_vertical_dimensions
+                );
+            } else { // !We have the data also in the Horizontal layout
+                // We go till the end (TODO(@lkuffo, low): Should I do blocks of 64?)
+                size_t dimensions_left = pdx_data.num_vertical_dimensions - current_vertical_dimension;
+                size_t offset_query = current_vertical_dimension;
+                for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+                    size_t v_idx = pruning_positions[vector_idx];
+                    auto data_pos = aux_data + (v_idx * dimensions_left);
+                    __builtin_prefetch(data_pos, 0, 2);
+                }
+                for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+                    size_t v_idx = pruning_positions[vector_idx];
+                    auto data_pos = aux_data + (v_idx * dimensions_left);
+                    pruning_distances[v_idx] += DistanceComputer<alpha, Q>::Horizontal(
+                        query + offset_query, data_pos, dimensions_left
+                    );
+                }
+                current_dimension_idx = pdx_data.num_dimensions;
+                current_vertical_dimension = pdx_data.num_vertical_dimensions;
+            }
             assert(
                 current_dimension_idx == current_vertical_dimension + current_horizontal_dimension
             );
@@ -1017,7 +1039,8 @@ class PDXearch {
                 pruning_threshold,
                 best_k,
                 n_vectors_not_pruned,
-                current_dimension_idx
+                current_dimension_idx,
+                cluster.aux_hor_data
             );
             if (n_vectors_not_pruned) {
                 MergeIntoHeap<true>(

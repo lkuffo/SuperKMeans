@@ -113,9 +113,6 @@ class BatchComputer<l2, f32> {
         float* SKM_RESTRICT all_distances_buf
     ) {
         std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
-        TicToc tt;
-        tt.Reset();
-        tt.Tic();
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             auto batch_n_x = X_BATCH_SIZE;
             auto batch_x_p = x + (i * d);
@@ -138,6 +135,7 @@ class BatchComputer<l2, f32> {
                     const auto i_idx = i + r;
                     const float norm_x_i = norms_x[i_idx];
                     float* row_p = distances_matrix.data() + r * batch_n_y;
+#pragma clang loop vectorize(enable)
                     for (size_t c = 0; c < batch_n_y; ++c) {
                         row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
                     }
@@ -150,9 +148,6 @@ class BatchComputer<l2, f32> {
                 }
             }
         }
-        tt.Toc();
-        std::cout << "Total time for BLAS multiplication (s): " << tt.accum_time / 1000000000.0
-                  << std::endl;
     };
 
     static void Batched_XRowMajor_YRowMajor_PartialD(
@@ -168,11 +163,10 @@ class BatchComputer<l2, f32> {
         distance_t* SKM_RESTRICT out_distances,
         float* SKM_RESTRICT all_distances_buf,
         const layout_t& pdx_centroids,
-        const uint32_t partial_d
+        const uint32_t partial_d,
+        TicToc &blas_tt,
+        TicToc &pdx_tt
     ) {
-        TicToc tt;
-        tt.Reset();
-        tt.Tic();
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             auto batch_n_x = X_BATCH_SIZE;
             auto batch_x_p = x + (i * d);
@@ -185,6 +179,7 @@ class BatchComputer<l2, f32> {
                 if (j + Y_BATCH_SIZE > n_y) {
                     batch_n_y = n_y - j;
                 }
+                blas_tt.Tic();
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
                 Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, d);
                 Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);
@@ -195,10 +190,13 @@ class BatchComputer<l2, f32> {
                     const auto i_idx = i + r;
                     const float norm_x_i = norms_x[i_idx];
                     float* row_p = distances_matrix.data() + r * batch_n_y;
+#pragma clang loop vectorize(enable)
                     for (size_t c = 0; c < batch_n_y; ++c) {
                         row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
                     }
                 }
+                blas_tt.Toc();
+                pdx_tt.Tic();
 #pragma omp parallel for num_threads(14)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const auto i_idx = i + r;
@@ -224,76 +222,10 @@ class BatchComputer<l2, f32> {
                     out_knn[i_idx] = assignment_idx;
                     out_distances[i_idx] = assignment_distance;
                 }
-            }
-        }
-        tt.Toc();
-        std::cout << "Total time for BLAS+PDX (s): " << tt.accum_time / 1000000000.0 << std::endl;
-    };
-
-    static void Batch_XRowMajor_YRowMajor_PartialD(
-        const data_t* SKM_RESTRICT x,
-        const data_t* SKM_RESTRICT y,
-        const size_t n_x,
-        const size_t n_y,
-        const size_t d,
-        const norms_t* SKM_RESTRICT norms_x,
-        const norms_t* SKM_RESTRICT norms_y,
-        float* SKM_RESTRICT all_distances_buf,
-        const uint32_t partial_d
-    ) {
-        Eigen::Map<const MatrixR> x_matrix(x, n_x, d);
-        Eigen::Map<const MatrixR> y_matrix(y, n_y, d); // YRowMajor
-
-        Eigen::Map<MatrixR> distances_matrix(all_distances_buf, n_x, n_y);
-        TicToc tt;
-        tt.Reset();
-        tt.Tic();
-        distances_matrix.noalias() =
-            x_matrix.leftCols(partial_d) * y_matrix.leftCols(partial_d).transpose(); // YRowMajor
-        tt.Toc();
-        // std::cout << "Total time for BLAS multiplication (s): " << tt.accum_time / 1000000000.0
-        //           << std::endl;
-#pragma omp parallel for num_threads(14)
-        for (size_t i = 0; i < n_x; ++i) {
-            const float norm_x_i = norms_x[i];
-            float* row_p = distances_matrix.data() + i * n_y;
-            for (size_t j = 0; j < n_y; ++j) {
-                row_p[j] = -2.0f * row_p[j] + norm_x_i + norms_y[j];
+                pdx_tt.Toc();
             }
         }
     };
-
-    static void Batch_XRowMajor_YColMajor_Normalized(
-        const data_t* SKM_RESTRICT x,
-        const data_t* SKM_RESTRICT y,
-        const size_t n_x,
-        const size_t n_y,
-        const size_t d,
-        uint32_t* SKM_RESTRICT out_knn,
-        distance_t* SKM_RESTRICT out_distances
-    ) {
-        std::vector<float> all_distances(n_x * n_y);
-        Eigen::Map<const MatrixR> x_matrix(x, n_x, d);
-        Eigen::Map<const MatrixC> y_matrix(y, d, n_y);
-        Eigen::Map<MatrixR> distances_matrix(all_distances.data(), n_x, n_y);
-        distances_matrix.noalias() = x_matrix * y_matrix;
-#pragma omp parallel for num_threads(14)
-        for (size_t i = 0; i < n_x; ++i) {
-            float* row_p = distances_matrix.data() + i * n_y;
-            for (size_t j = 0; j < n_y; ++j) {
-                row_p[j] = 2.0f - 2.0f * row_p[j];
-            }
-            uint32_t knn_idx;
-            auto top_1 = distances_matrix.row(i).minCoeff(&knn_idx);
-            out_distances[i] = std::max(0.0f, top_1);
-            out_knn[i] = knn_idx;
-        }
-    };
-
-  private:
-    void GetTop1FromL2DistancesMatrix() {
-        // Just to modularize that last part...
-    }
 };
 
 } // namespace skmeans

@@ -33,8 +33,19 @@ class PDXLayout {
         searcher = std::make_unique<searcher_t>(*index, pruner);
     }
 
+    PDXLayout(scalar_t* pdx_data, Pruner& pruner, size_t n_points, size_t d, size_t partial_d, scalar_t* hor_data) {
+        index = std::make_unique<index_t>(); // PDXLayout is owner of the Index
+        FromBufferToPDXIndex(pdx_data, n_points, d, partial_d, hor_data);
+        searcher = std::make_unique<searcher_t>(*index, pruner);
+    }
+
+
     // TODO(@lkuffo, low): Support arbitrary cluster sizes rather than always 64
-    void FromBufferToPDXIndex(scalar_t* pdx_data, size_t n_points, size_t d) {
+    void FromBufferToPDXIndex(
+        scalar_t* SKM_RESTRICT pdx_data,
+        const size_t n_points,
+        const size_t d
+    ) {
         // TODO(@lkuffo, high): Support cluster sizes that are not multiples of 64
         assert(n_points % VECTOR_CHUNK_SIZE == 0);
 
@@ -48,8 +59,6 @@ class PDXLayout {
         index->num_horizontal_dimensions = horizontal_d;
         index->num_vertical_dimensions = vertical_d;
         index->num_dimensions = d;
-        // TODO(@lkuffo, medium): Support IVF within centroids
-        // This entails doing a mini-kmeans at the end of every iteration. Not sure if it is worth
         index->is_ivf = false;
         index->is_normalized = false;
         index->clusters.resize(n_pdx_clusters);
@@ -62,6 +71,48 @@ class PDXLayout {
             cluster.data = pdx_data_p;
             cluster.indices = centroid_ids.data() + cluster_offset;
             pdx_data_p += VECTOR_CHUNK_SIZE * d;
+            cluster_idx += 1;
+        }
+    }
+
+    void FromBufferToPDXIndex(
+        scalar_t* SKM_RESTRICT pdx_data,
+        const size_t n_points,
+        const size_t d,
+        const size_t partial_d,
+        scalar_t* SKM_RESTRICT hor_data
+    ) {
+        // TODO(@lkuffo, high): Support cluster sizes that are not multiples of 64
+        assert(n_points % VECTOR_CHUNK_SIZE == 0);
+
+        auto [horizontal_d, vertical_d] = GetDimensionSplit(d);
+        assert(vertical_d >= partial_d);
+        size_t n_pdx_clusters = n_points / VECTOR_CHUNK_SIZE;
+        index->num_clusters = n_pdx_clusters;
+        // TODO(@lkuffo, high): Does this belong here?
+        // Seems to important to define the centroid ids here
+        centroid_ids.resize(n_points);
+        std::iota(centroid_ids.begin(), centroid_ids.end(), 0);
+        index->num_horizontal_dimensions = horizontal_d;
+        index->num_vertical_dimensions = vertical_d;
+        index->num_dimensions = d;
+        index->is_ivf = false;
+        index->is_normalized = false;
+        index->clusters.resize(n_pdx_clusters);
+        auto pdx_data_p = pdx_data;
+        auto hor_data_p = hor_data;
+        size_t cluster_idx = 0;
+        for (size_t cluster_offset = 0; cluster_offset < n_points;
+             cluster_offset += VECTOR_CHUNK_SIZE) {
+            cluster_t& cluster = index->clusters[cluster_idx];
+            cluster.num_embeddings = VECTOR_CHUNK_SIZE;
+            cluster.data = pdx_data_p;
+            cluster.indices = centroid_ids.data() + cluster_offset;
+            cluster.aux_hor_data = hor_data_p;
+            pdx_data_p += VECTOR_CHUNK_SIZE * d;
+            hor_data_p +=
+                VECTOR_CHUNK_SIZE * (vertical_d - partial_d
+                                    ); // Contains only the vertical dimensions not visited by BLAS
             cluster_idx += 1;
         }
     }
