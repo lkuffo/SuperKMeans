@@ -166,18 +166,14 @@ class SuperKMeans {
         // End of First iteration
 
         // Second iteration: PDXearch to determine dimensions groupings
-        // I don't need the norms here since im going to do full PDXearch
-        // GetL2NormsRowMajor(
-        //     data_to_cluster, _n_samples, data_norms.data(), _initial_partial_d
-        // );
-        // GetL2NormsRowMajor(
-        //     _tmp_centroids.data(), _n_clusters, centroid_norms.data(), _initial_partial_d
-        // );
         // In our 2nd iteration we inspect only 16 dimensions with BLAS to determine the groupings
+        // TODO(@lkuffo, crit): But if you look at the code, because of the template variable we are not actually doing it
+        //    we should tho (check later)
         _pruning_groups.clear();
         _pruning_groups_partial_d.clear();
         _pruning_groups_ends.push_back(n);
         _pruning_groups_partial_d.push_back(16);
+        GetL2NormsRowMajor(_tmp_centroids.data(), _n_clusters, centroid_norms.data(), 16);
         AssignAndUpdateCentroidsPartialBatched<true>( // Record pruning_group
             data_to_cluster,
             _tmp_centroids.data(),
