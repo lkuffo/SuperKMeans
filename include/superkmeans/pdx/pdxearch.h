@@ -329,6 +329,7 @@ class PDXearch {
         InitPositionsArray<Q>(
             n_vectors, n_vectors_not_pruned, pruning_positions, pruning_threshold, pruning_distances
         );
+        // std::cout << "mmmm: " << n_vectors_not_pruned << "\n";
         size_t cur_n_vectors_not_pruned = 0;
         size_t current_vertical_dimension = current_dimension_idx;
         size_t current_horizontal_dimension = 0;
@@ -370,6 +371,7 @@ class PDXearch {
         ) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
             if (aux_data == nullptr) {
+                //std::cout << "huh?" << "\n";
                 size_t last_dimension_to_test_idx = std::min(
                     current_vertical_dimension + H_DIM_SIZE,
                     (size_t) pdx_data.num_vertical_dimensions
@@ -394,6 +396,10 @@ class PDXearch {
                 // We go till the end
                 size_t dimensions_left =
                     pdx_data.num_vertical_dimensions - current_vertical_dimension;
+                // std::cout << "CVD: " << current_vertical_dimension << "\n";
+                // std::cout << "Dims left: " << dimensions_left << "\n";
+                // std::cout << "NNP: " << n_vectors_not_pruned << "\n";
+                // std::cout << "PT: " << pruning_threshold << "\n";
                 size_t offset_query = current_vertical_dimension;
                 for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                     size_t v_idx = pruning_positions[vector_idx];
@@ -1051,6 +1057,7 @@ class PDXearch {
         size_t data_offset = 0;
         for (size_t cluster_idx = start_cluster; cluster_idx < end_cluster; ++cluster_idx) {
             current_dimension_idx = computed_distance_until;
+            // std::cout << computed_distance_until << std::endl;
             auto pruning_distances = partial_pruning_distances + data_offset;
             current_cluster = cluster_idx;
             CLUSTER_TYPE& cluster = pdx_data.clusters[current_cluster];

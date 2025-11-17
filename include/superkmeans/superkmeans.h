@@ -123,14 +123,6 @@ class SuperKMeans {
         std::vector<vector_value_t> data_samples_buffer;
         auto data_to_cluster = SampleVectors(data_p, data_samples_buffer, n);
 
-        _reordering_time.Tic();
-        // memcpy(
-        //     (void*) (data_p),
-        //     (void*) (data_samples_buffer.data()),
-        //     sizeof(centroid_value_t) * (_n_samples * _d)
-        // );
-        _reordering_time.Toc();
-
         // TODO(@lkuffo, low): I don't like this rotated_initial_centroids variable
         _allocator_time.Tic();
         std::vector<centroid_value_t> rotated_initial_centroids(_n_clusters * _d);
@@ -167,7 +159,8 @@ class SuperKMeans {
 
         // Second iteration: PDXearch to determine dimensions groupings
         // In our 2nd iteration we inspect only 16 dimensions with BLAS to determine the groupings
-        // TODO(@lkuffo, crit): But if you look at the code, because of the template variable we are not actually doing it
+        // TODO(@lkuffo, crit): But if you look at the code, because of the template variable we are
+        // not actually doing it
         //    we should tho (check later)
         _pruning_groups.clear();
         _pruning_groups_partial_d.clear();
@@ -207,7 +200,9 @@ class SuperKMeans {
         GetGroupsL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
         for (; iter_idx < _iters; ++iter_idx) {
             // BATCHED ITER
-            GetL2NormsRowMajorPerGroup(_tmp_centroids.data(), _n_clusters, centroid_partial_norms.data());
+            GetL2NormsRowMajorPerGroup(
+                _tmp_centroids.data(), _n_clusters, centroid_partial_norms.data()
+            );
             AssignAndUpdateCentroidsPartialBatched(
                 data_to_cluster,
                 _tmp_centroids.data(),
@@ -241,7 +236,8 @@ class SuperKMeans {
                                      _rotator_time.accum_time + _norms_calc_time.accum_time +
                                      _sampling_time.accum_time + _reordering_time.accum_time +
                                      _total_centroids_update_time.accum_time +
-                                     _centroids_splitting.accum_time + _pdxify_time.accum_time;
+                                     _grouping_time.accum_time + _centroids_splitting.accum_time +
+                                     _pdxify_time.accum_time;
             std::cout << std::fixed << std::setprecision(3);
             std::cout << std::endl;
             std::cout << "TOTAL SEARCH TIME " << _total_search_time.accum_time / 1000000000.0
@@ -275,6 +271,8 @@ class SuperKMeans {
             std::cout << "TOTAL REORDERING TIME " << _reordering_time.accum_time / 1000000000.0
                       << " (" << _reordering_time.accum_time / total_time * 100 << "%) "
                       << std::endl;
+            std::cout << "TOTAL GROUPING TIME " << _grouping_time.accum_time / 1000000000.0 << " ("
+                      << _grouping_time.accum_time / total_time * 100 << "%) " << std::endl;
             std::cout << "TOTAL (s) "
                       << (_total_search_time.accum_time + _allocator_time.accum_time +
                           _rotator_time.accum_time + _norms_calc_time.accum_time +
@@ -628,6 +626,7 @@ class SuperKMeans {
      * The pruning thresholds are found in `groups`
      */
     void CreatePruningGroups(float* SKM_RESTRICT data, const size_t n) {
+        _grouping_time.Tic();
         _pruning_groups_ends.clear();
         _pruning_groups_partial_d.clear();
         std::cout << "Creating pruning groups" << std::endl;
@@ -747,6 +746,7 @@ class SuperKMeans {
         assert(_pruning_groups_ends.size() == _pruning_groups_partial_d.size());
         assert(_pruning_groups_ends.back() == n);
 
+        _grouping_time.Toc();
         std::cout << "Permuting rows" << std::endl;
         _reordering_time.Tic();
         PermuteMatrixRows(data, n, new_ordering.data());
@@ -757,21 +757,29 @@ class SuperKMeans {
     void PermuteMatrixRows(float* SKM_RESTRICT data, const size_t n, const uint32_t* new_ordering) {
         std::vector<bool> visited(n, false);
         std::vector<float> tmp_row(_d); // temporary row buffer
+        auto tmp_assignment = _assignments[0];
+        auto tmp_distances = _distances[0];
         for (size_t i = 0; i < n; ++i) {
             if (visited[i] || new_ordering[i] == i)
                 continue; // already in place or processed
             size_t j = i;
             // copy the first row in the cycle
             memcpy(tmp_row.data(), data + j * _d, sizeof(vector_value_t) * _d);
+            tmp_assignment = _assignments[j];
+            tmp_distances = _distances[j];
             while (!visited[j]) {
                 visited[j] = true;
                 size_t next = new_ordering[j];
                 if (next == i) {
                     // end of cycle: put tmp_row into the final position
                     memcpy(data + j * _d, tmp_row.data(), sizeof(vector_value_t) * _d);
+                    _assignments[j] = tmp_assignment;
+                    _distances[j] = tmp_distances;
                 } else {
                     // move the row from `next` into position `j`
                     memcpy(data + j * _d, data + next * _d, sizeof(vector_value_t) * _d);
+                    _assignments[j] = _assignments[next];
+                    _distances[j] = _distances[next];
                 }
                 j = next;
             }
@@ -947,6 +955,7 @@ class SuperKMeans {
     uint32_t _vertical_d;
     float tol;
 
+    TicToc _grouping_time;
     TicToc _reordering_time;
     TicToc _search_time;
     TicToc _blas_search_time;

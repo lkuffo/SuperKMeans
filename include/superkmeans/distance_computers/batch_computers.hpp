@@ -235,6 +235,7 @@ class BatchComputer<l2, f32> {
                             (j + batch_n_y) / VECTOR_CHUNK_SIZE // end cluster_id
                         );
                     } else {
+                        // std::cout << "Why?" << dist_to_prev_centroid << "\n";
                         auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
                         assignment =
                             pdx_centroids.searcher->Top1PartialSearchWithThresholdAndPartialDistances(
