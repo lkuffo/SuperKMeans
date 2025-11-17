@@ -157,6 +157,10 @@ class SuperKMeans {
                       << std::endl;
         // End of First iteration
 
+        if (_iters <= 1) {
+            PrintTimes();
+            return _centroids;
+        }
         // Second iteration: PDXearch to determine dimensions groupings
         // In our 2nd iteration we inspect only 16 dimensions with BLAS to determine the groupings
         // TODO(@lkuffo, crit): But if you look at the code, because of the template variable we are
@@ -232,57 +236,56 @@ class SuperKMeans {
 
         _trained = true;
         if (verbose) {
-            const float total_time = _total_search_time.accum_time + _allocator_time.accum_time +
-                                     _rotator_time.accum_time + _norms_calc_time.accum_time +
-                                     _sampling_time.accum_time + _reordering_time.accum_time +
-                                     _total_centroids_update_time.accum_time +
-                                     _grouping_time.accum_time + _centroids_splitting.accum_time +
-                                     _pdxify_time.accum_time;
-            std::cout << std::fixed << std::setprecision(3);
-            std::cout << std::endl;
-            std::cout << "TOTAL SEARCH TIME " << _total_search_time.accum_time / 1000000000.0
-                      << " (" << _total_search_time.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << " - BLAS " << _blas_total_time.accum_time / 1000000000.0 << " ("
-                      << _blas_total_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << " - PDX  " << _pdx_search_time.accum_time / 1000000000.0 << " ("
-                      << _pdx_search_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL ALLOCATOR TIME " << _allocator_time.accum_time / 1000000000.0
-                      << " (" << _allocator_time.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << "TOTAL ROTATOR TIME " << _rotator_time.accum_time / 1000000000.0 << " ("
-                      << _rotator_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL NORMS CALCULATION TIME "
-                      << _norms_calc_time.accum_time / 1000000000.0 << " ("
-                      << _norms_calc_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL SAMPLING TIME " << _sampling_time.accum_time / 1000000000.0 << " ("
-                      << _sampling_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL UPDATE CENTROIDS TIME "
-                      << _total_centroids_update_time.accum_time / 1000000000.0 << " ("
-                      << _total_centroids_update_time.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << "TOTAL SPLITTING TIME " << _centroids_splitting.accum_time / 1000000000.0
-                      << " (" << _centroids_splitting.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << "TOTAL PDXIFYING TIME " << _pdxify_time.accum_time / 1000000000.0 << " ("
-                      << _pdxify_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL SHIFT TIME " << _shift_time.accum_time / 1000000000.0 << " ("
-                      << _shift_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL REORDERING TIME " << _reordering_time.accum_time / 1000000000.0
-                      << " (" << _reordering_time.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << "TOTAL GROUPING TIME " << _grouping_time.accum_time / 1000000000.0 << " ("
-                      << _grouping_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL (s) "
-                      << (_total_search_time.accum_time + _allocator_time.accum_time +
-                          _rotator_time.accum_time + _norms_calc_time.accum_time +
-                          _sampling_time.accum_time + _total_centroids_update_time.accum_time +
-                          _centroids_splitting.accum_time + _pdxify_time.accum_time +
-                          _shift_time.accum_time) /
-                             1000000000.0
-                      << std::endl;
+            PrintTimes();
         }
         return _centroids;
+    }
+
+    void PrintTimes() {
+        const float total_time =
+            _total_search_time.accum_time + _allocator_time.accum_time + _rotator_time.accum_time +
+            _norms_calc_time.accum_time + _sampling_time.accum_time + _reordering_time.accum_time +
+            _total_centroids_update_time.accum_time + _grouping_time.accum_time +
+            _centroids_splitting.accum_time + _pdxify_time.accum_time;
+        std::cout << std::fixed << std::setprecision(3);
+        std::cout << std::endl;
+        std::cout << "TOTAL SEARCH TIME " << _total_search_time.accum_time / 1000000000.0 << " ("
+                  << _total_search_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << " - BLAS " << _blas_total_time.accum_time / 1000000000.0 << " ("
+                  << _blas_total_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << " - PDX  " << _pdx_search_time.accum_time / 1000000000.0 << " ("
+                  << _pdx_search_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL ALLOCATOR TIME " << _allocator_time.accum_time / 1000000000.0 << " ("
+                  << _allocator_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL ROTATOR TIME " << _rotator_time.accum_time / 1000000000.0 << " ("
+                  << _rotator_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL NORMS CALCULATION TIME " << _norms_calc_time.accum_time / 1000000000.0
+                  << " (" << _norms_calc_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL SAMPLING TIME " << _sampling_time.accum_time / 1000000000.0 << " ("
+                  << _sampling_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL UPDATE CENTROIDS TIME "
+                  << _total_centroids_update_time.accum_time / 1000000000.0 << " ("
+                  << _total_centroids_update_time.accum_time / total_time * 100 << "%) "
+                  << std::endl;
+        std::cout << "TOTAL SPLITTING TIME " << _centroids_splitting.accum_time / 1000000000.0
+                  << " (" << _centroids_splitting.accum_time / total_time * 100 << "%) "
+                  << std::endl;
+        std::cout << "TOTAL PDXIFYING TIME " << _pdxify_time.accum_time / 1000000000.0 << " ("
+                  << _pdxify_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL SHIFT TIME " << _shift_time.accum_time / 1000000000.0 << " ("
+                  << _shift_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL REORDERING TIME " << _reordering_time.accum_time / 1000000000.0 << " ("
+                  << _reordering_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL GROUPING TIME " << _grouping_time.accum_time / 1000000000.0 << " ("
+                  << _grouping_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL (s) "
+                  << (_total_search_time.accum_time + _allocator_time.accum_time +
+                      _rotator_time.accum_time + _norms_calc_time.accum_time +
+                      _sampling_time.accum_time + _total_centroids_update_time.accum_time +
+                      _centroids_splitting.accum_time + _pdxify_time.accum_time +
+                      _shift_time.accum_time) /
+                         1000000000.0
+                  << std::endl;
     }
 
     /**

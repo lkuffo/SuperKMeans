@@ -20,7 +20,7 @@ int main(int argc, char* argv[]) {
     // const int n = 720896;
     const int d = 1024;
     int n_clusters = 1024;
-    int n_iters = 10;
+    int n_iters = 25;
     float sampling_fraction = 1.0;
 
     std::vector<float> data(n * d);
