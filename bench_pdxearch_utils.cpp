@@ -117,58 +117,59 @@ int main(int argc, char* argv[]) {
     constexpr size_t n_vectors = 64;
     volatile size_t n_clusters = 32;
     volatile size_t sub_work = 8;
-    float pruning_threshold = 0.03f;
     constexpr size_t epochs = 20;
     constexpr size_t iters = 200000;
     std::vector<skmeans::skmeans_value_t<skmeans::f32>> distances(n_vectors * n_clusters);
     for (float& x : distances)
         x = dist(gen);
-
-    ankerl::nanobench::Bench().epochs(epochs).epochIterations(iters).run("Mask", [&]() {
-        uint64_t mask = 0;
-        float* distances_p = distances.data();
-        for (size_t i = 0; i < n_clusters; ++i) {
-            size_t n_vectors_not_pruned = 0;
-            mask =
-                InitPositionsMask(n_vectors, n_vectors_not_pruned, pruning_threshold, distances_p);
-            float tot = 0.0f;
-            // std::cout << "mask " << n_vectors_not_pruned << std::endl;
-            for (size_t z = 0; z < sub_work; ++z) {
-                MaskWork(n_vectors_not_pruned, tot, distances_p, mask);
-                uint64_t prev_mask = mask;
-                mask = EvaluatePruningPredicateOnMask(
-                    n_vectors_not_pruned, n_vectors_not_pruned, pruning_threshold, distances_p, prev_mask
-                );
+    std::vector<float> pruning_thresholds = {0.01f, 0.02f, 0.05f, 0.1f, 0.2f, 0.3f, 0.5f, 0.8f};
+    for (float& pruning_threshold : pruning_thresholds) {
+        ankerl::nanobench::Bench().epochs(epochs).epochIterations(iters).run("Mask ("+ std::to_string(pruning_threshold) + ")", [&]() {
+            uint64_t mask = 0;
+            float* distances_p = distances.data();
+            for (size_t i = 0; i < n_clusters; ++i) {
+                size_t n_vectors_not_pruned = 0;
+                mask =
+                    InitPositionsMask(n_vectors, n_vectors_not_pruned, pruning_threshold, distances_p);
+                float tot = 0.0f;
+                // std::cout << "mask " << n_vectors_not_pruned << std::endl;
+                for (size_t z = 0; z < sub_work; ++z) {
+                    MaskWork(n_vectors_not_pruned, tot, distances_p, mask);
+                    uint64_t prev_mask = mask;
+                    mask = EvaluatePruningPredicateOnMask(
+                        n_vectors_not_pruned, n_vectors_not_pruned, pruning_threshold, distances_p, prev_mask
+                    );
+                }
+                // std::cout << "tot " << tot << std::endl;
+                distances_p += n_vectors;
             }
-            // std::cout << "tot " << tot << std::endl;
-            distances_p += n_vectors;
-        }
-    });
+        });
 
-    ankerl::nanobench::Bench().epochs(epochs).epochIterations(iters).run("Array", [&]() {
-        alignas(64) uint32_t pruning_positions[64];
-        float* distances_p = distances.data();
-        std::iota(pruning_positions, pruning_positions + n_vectors, 0);
-        for (size_t i = 0; i < n_clusters; ++i) {
-            size_t n_vectors_not_pruned = 0;
-            InitPositionsArray(
-                n_vectors, n_vectors_not_pruned, pruning_positions, pruning_threshold, distances_p
-            );
-            float tot = 0.0f;
-            // std::cout << "arr  " << n_vectors_not_pruned << std::endl;
-            for (size_t z = 0; z < sub_work; ++z) {
-                ArrayWork(n_vectors_not_pruned, tot, distances_p, pruning_positions);
-                uint32_t prev_n_vectors_not_pruned = n_vectors_not_pruned;
-                EvaluatePruningPredicateOnPositionsArray(
-                    prev_n_vectors_not_pruned,
-                    n_vectors_not_pruned,
-                    pruning_positions,
-                    pruning_threshold,
-                    distances_p
+        ankerl::nanobench::Bench().epochs(epochs).epochIterations(iters).run("Array("+ std::to_string(pruning_threshold) + ")", [&]() {
+            alignas(64) uint32_t pruning_positions[64];
+            float* distances_p = distances.data();
+            std::iota(pruning_positions, pruning_positions + n_vectors, 0);
+            for (size_t i = 0; i < n_clusters; ++i) {
+                size_t n_vectors_not_pruned = 0;
+                InitPositionsArray(
+                    n_vectors, n_vectors_not_pruned, pruning_positions, pruning_threshold, distances_p
                 );
+                float tot = 0.0f;
+                // std::cout << "arr  " << n_vectors_not_pruned << std::endl;
+                for (size_t z = 0; z < sub_work; ++z) {
+                    ArrayWork(n_vectors_not_pruned, tot, distances_p, pruning_positions);
+                    uint32_t prev_n_vectors_not_pruned = n_vectors_not_pruned;
+                    EvaluatePruningPredicateOnPositionsArray(
+                        prev_n_vectors_not_pruned,
+                        n_vectors_not_pruned,
+                        pruning_positions,
+                        pruning_threshold,
+                        distances_p
+                    );
+                }
+                // std::cout << "tot " << tot << std::endl;
+                distances_p += n_vectors;
             }
-            // std::cout << "tot " << tot << std::endl;
-            distances_p += n_vectors;
-        }
-    });
+        });
+    }
 }
