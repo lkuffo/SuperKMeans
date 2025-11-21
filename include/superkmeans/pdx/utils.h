@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <sys/stat.h>
+#include <ctime>
 
 #ifdef linux
 #include <linux/mman.h>
@@ -42,10 +43,29 @@ inline uint32_t FloorXToMultipleOfM(uint32_t x, uint32_t m) {
     return (m == 0) ? x : (x / m) * m;
 }
 
+struct TicToc {
+    uint64_t accum_time = 0;
+    struct timespec start{};
+
+    void Tic() {
+        clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+    }
+
+    void Toc() {
+        struct timespec end;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+        uint64_t d = (uint64_t)(end.tv_sec - start.tv_sec) * 1000000000ull
+                   + (uint64_t)(end.tv_nsec - start.tv_nsec);
+        accum_time += d;
+    }
+
+    void Reset() { accum_time = 0; }
+};
+
 /******************************************************************
  * Clock to benchmark algorithms runtime
  ******************************************************************/
-class TicToc {
+class TicToc2 {
   public:
     size_t accum_time = 0;
     std::chrono::high_resolution_clock::time_point start =

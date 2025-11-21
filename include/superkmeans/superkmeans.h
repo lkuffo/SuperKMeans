@@ -162,37 +162,41 @@ class SuperKMeans {
             return _centroids;
         }
         // Second iteration: PDXearch to determine dimensions groupings
-        // In our 2nd iteration we inspect only 16 dimensions with BLAS to determine the groupings
-        // TODO(@lkuffo, crit): But if you look at the code, because of the template variable we are
-        // not actually doing it
-        //    we should tho (check later)
         _pruning_groups.clear();
         _pruning_groups_partial_d.clear();
-        _pruning_groups_ends.push_back(n);
-        _pruning_groups_partial_d.push_back(16);
-        GetL2NormsRowMajor(_tmp_centroids.data(), _n_clusters, centroid_norms.data(), 16);
-        AssignAndUpdateCentroidsPartialBatched<true>( // Record pruning_group
-            data_to_cluster,
-            _tmp_centroids.data(),
-            data_norms.data(),
-            centroid_norms.data(),
-            all_distances.data(),
-            centroids_pdx_wrapper,
-            _n_samples
-        );
-        ConsolidateCentroids();
-        ComputeCost();
-        ComputeShift();
-        if (alpha == dp) {
-            PostprocessCentroids();
+        if (_n_pruning_groups > 1) {
+            _pruning_groups_ends.push_back(n);
+            _pruning_groups_partial_d.push_back(_initial_partial_d);
+            GetGroupsL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
+            GetL2NormsRowMajor(
+                _tmp_centroids.data(), _n_clusters, centroid_norms.data(), _initial_partial_d
+            );
+            AssignAndUpdateCentroidsPartialBatched<true>( // Record pruning_group
+                data_to_cluster,
+                _tmp_centroids.data(),
+                data_norms.data(),
+                centroid_norms.data(),
+                all_distances.data(),
+                centroids_pdx_wrapper,
+                _n_samples
+            );
+            ConsolidateCentroids();
+            ComputeCost();
+            ComputeShift();
+            if (alpha == dp) {
+                PostprocessCentroids();
+            }
+            iter_idx += 1;
+            if (verbose)
+                std::cout << "Iteration 2" << "/" << _iters << " | Objective: " << cost
+                          << " | Shift: " << shift << " | Split: " << _n_split << std::endl
+                          << std::endl;
+            // End of second iteration
+            CreatePruningGroups(data_to_cluster, n);
+        } else {
+            _pruning_groups_ends.push_back(n);
+            _pruning_groups_partial_d.push_back(_initial_partial_d);
         }
-        iter_idx += 1;
-        if (verbose)
-            std::cout << "Iteration 2" << "/" << _iters << " | Objective: " << cost
-                      << " | Shift: " << shift << " | Split: " << _n_split << std::endl
-                      << std::endl;
-        // End of second iteration
-        CreatePruningGroups(data_to_cluster, n);
 
         // Rest of iterations
         // We need as many buffers with norms as groups
@@ -246,7 +250,7 @@ class SuperKMeans {
             _total_search_time.accum_time + _allocator_time.accum_time + _rotator_time.accum_time +
             _norms_calc_time.accum_time + _sampling_time.accum_time + _reordering_time.accum_time +
             _total_centroids_update_time.accum_time + _grouping_time.accum_time +
-            _centroids_splitting.accum_time + _pdxify_time.accum_time;
+            _centroids_splitting.accum_time + _pdxify_time.accum_time + _shift_time.accum_time;
         std::cout << std::fixed << std::setprecision(3);
         std::cout << std::endl;
         std::cout << "TOTAL SEARCH TIME " << _total_search_time.accum_time / 1000000000.0 << " ("
@@ -256,7 +260,7 @@ class SuperKMeans {
         std::cout << " - PDX  " << _pdx_search_time.accum_time / 1000000000.0 << " ("
                   << _pdx_search_time.accum_time / total_time * 100 << "%) " << std::endl;
         std::cout << " - NORMS  " << _blas_norms_time.accum_time / 1000000000.0 << " ("
-          << _blas_norms_time.accum_time / total_time * 100 << "%) " << std::endl;
+                  << _blas_norms_time.accum_time / total_time * 100 << "%) " << std::endl;
         std::cout << "TOTAL ALLOCATOR TIME " << _allocator_time.accum_time / 1000000000.0 << " ("
                   << _allocator_time.accum_time / total_time * 100 << "%) " << std::endl;
         std::cout << "TOTAL ROTATOR TIME " << _rotator_time.accum_time / 1000000000.0 << " ("
@@ -285,7 +289,8 @@ class SuperKMeans {
                       _rotator_time.accum_time + _norms_calc_time.accum_time +
                       _sampling_time.accum_time + _total_centroids_update_time.accum_time +
                       _centroids_splitting.accum_time + _pdxify_time.accum_time +
-                      _shift_time.accum_time) /
+                      _shift_time.accum_time + _grouping_time.accum_time +
+                      _reordering_time.accum_time) /
                          1000000000.0
                   << std::endl;
     }
@@ -430,7 +435,8 @@ class SuperKMeans {
             pdx_centroids,
             _blas_total_time,
             _pdx_search_time,
-            _blas_norms_time
+            _blas_norms_time,
+            _initial_partial_d
         );
         _search_time.Toc();
         _total_search_time.Toc();
@@ -637,7 +643,8 @@ class SuperKMeans {
         _pruning_groups_partial_d.clear();
         std::cout << "Creating pruning groups" << std::endl;
         std::cout << "N: " << n << std::endl;
-        const uint32_t approx_group_size = CeilXToMultipleOfM((n + 4) / 5, X_BATCH_SIZE);
+        const uint32_t approx_group_size =
+            CeilXToMultipleOfM((n + (_n_pruning_groups - 1)) / _n_pruning_groups, X_BATCH_SIZE);
         std::cout << "Approx group size: " << approx_group_size << std::endl;
         constexpr float allowed_deviation_factor = 0.25f;
         const uint32_t min_group_size =
@@ -645,7 +652,7 @@ class SuperKMeans {
         std::cout << "Minimum group size: " << min_group_size << std::endl;
 
         // If we have less than a certain amount of tuples, we just go with one group
-        if (n < X_BATCH_SIZE * 5) {
+        if (n < X_BATCH_SIZE * _n_pruning_groups) {
             _pruning_groups_ends.push_back(n);
             _pruning_groups_partial_d.push_back(_vertical_d);
             return;
@@ -800,17 +807,21 @@ class SuperKMeans {
         _norms_calc_time.Tic();
         Eigen::Map<const MatrixR> e_data(data, n, _d);
         Eigen::Map<VectorR> e_norms(out_norm, n);
-
-        size_t start = 0;
         const auto n_groups = _pruning_groups_partial_d.size();
-        for (size_t i = 0; i < n_groups; ++i) {
-            const size_t end = _pruning_groups_ends[i];
-            const size_t count = end - start;
-            const uint32_t pd = _pruning_groups_partial_d[i];
-            assert(end <= n);
-            auto block = e_data.block(start, 0, count, pd);
-            e_norms.segment(start, count).noalias() = block.rowwise().squaredNorm();
-            start = end; // move to next group
+        if (n_groups == 1) {
+            const uint32_t pd = _pruning_groups_partial_d[0];
+            e_norms.noalias() = e_data.leftCols(pd).rowwise().squaredNorm();
+        } else {
+            size_t start = 0;
+            for (size_t i = 0; i < n_groups; ++i) {
+                const size_t end = _pruning_groups_ends[i];
+                const size_t count = end - start;
+                const uint32_t pd = _pruning_groups_partial_d[i];
+                assert(end <= n);
+                auto block = e_data.block(start, 0, count, pd);
+                e_norms.segment(start, count).noalias() = block.rowwise().squaredNorm();
+                start = end; // move to next group
+            }
         }
         _norms_calc_time.Toc();
     }
@@ -956,8 +967,8 @@ class SuperKMeans {
     size_t _n_samples;
     size_t _n_split;
     uint32_t N_THREADS;
-    uint32_t _partial_d = 256; // TODO(@lkuffo, crit): Dynamic
-    uint32_t _initial_partial_d = 16;
+    uint32_t _initial_partial_d = 128;
+    uint32_t _n_pruning_groups = 1;
     uint32_t _vertical_d;
     float tol;
 

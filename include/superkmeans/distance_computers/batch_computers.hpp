@@ -20,7 +20,6 @@ class BatchComputer<l2, u8> {};
 template <>
 class BatchComputer<l2, f32> {
 
-    static constexpr size_t serial_threshold = 20;
     using distance_t = skmeans_distance_t<f32>;
     using data_t = skmeans_value_t<f32>;
     using norms_t = skmeans_value_t<f32>;
@@ -169,17 +168,20 @@ class BatchComputer<l2, f32> {
         const layout_t& pdx_centroids,
         TicToc& blas_tt,
         TicToc& pdx_tt,
-        TicToc& norms_tt
+        TicToc& norms_tt,
+        uint32_t init_partial_d
     ) {
+        TicToc cur_blas_tt;
+        TicToc cur_pdx_tt;
         size_t cur_group_idx = 0;
         uint32_t partial_d = pruning_groups_partial_d[cur_group_idx];
-        std::cout << "New partial_d: " << partial_d << " at 0" << std::endl;
+        // std::cout << "New partial_d: " << partial_d << " at 0" << std::endl;
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             if (i >= pruning_groups_ranges[cur_group_idx]) {
                 assert(i == pruning_groups_ranges[cur_group_idx]); // TODO(@lkuffo, crit): delete
                 cur_group_idx++;
                 partial_d = pruning_groups_partial_d[cur_group_idx];
-                std::cout << "New partial_d: " << partial_d << " at " << i << std::endl;
+                // std::cout << "New partial_d: " << partial_d << " at " << i << std::endl;
                 norms_y += n_y;
             }
             auto batch_n_x = X_BATCH_SIZE;
@@ -194,29 +196,29 @@ class BatchComputer<l2, f32> {
                     batch_n_y = n_y - j;
                 }
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
-                if constexpr (!RECORD_PRUNING_GROUP) {
-                    blas_tt.Tic();
-                    Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, d);
-                    Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);
-                    distances_matrix.noalias() =
-                        x_matrix.leftCols(partial_d) * y_matrix.leftCols(partial_d).transpose();
-                    blas_tt.Toc();
-                    norms_tt.Tic();
+
+                cur_blas_tt.Tic();
+                blas_tt.Tic();
+                Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, d);
+                Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);
+                distances_matrix.noalias() =
+                    x_matrix.leftCols(partial_d) * y_matrix.leftCols(partial_d).transpose();
+                blas_tt.Toc();
+                cur_blas_tt.Toc();
+                norms_tt.Tic();
 #pragma omp parallel for num_threads(10)
-                    for (size_t r = 0; r < batch_n_x; ++r) {
-                        const auto i_idx = i + r;
-                        const float norm_x_i = norms_x[i_idx];
-                        float* row_p = distances_matrix.data() + r * batch_n_y;
+                for (size_t r = 0; r < batch_n_x; ++r) {
+                    const auto i_idx = i + r;
+                    const float norm_x_i = norms_x[i_idx];
+                    float* row_p = distances_matrix.data() + r * batch_n_y;
 #pragma clang loop vectorize(enable)
-                        for (size_t c = 0; c < batch_n_y; ++c) {
-                            row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
-                        }
+                    for (size_t c = 0; c < batch_n_y; ++c) {
+                        row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
                     }
-                    norms_tt.Toc();
                 }
-                if constexpr (!RECORD_PRUNING_GROUP) {
-                    pdx_tt.Tic();
-                }
+                norms_tt.Toc();
+                cur_pdx_tt.Tic();
+                pdx_tt.Tic();
 #pragma omp parallel for num_threads(10)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const auto i_idx = i + r;
@@ -231,29 +233,19 @@ class BatchComputer<l2, f32> {
                     std::vector<knn_candidate_t> assignment;
                     if constexpr (RECORD_PRUNING_GROUP) {
                         auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
-                        // assignment =
-                        //     pdx_centroids.searcher->Top1PartialSearchWithThresholdAndPartialDistances(
-                        //         data_p,
-                        //         dist_to_prev_centroid,
-                        //         prev_assignment,
-                        //         r,
-                        //         out_pruning_groups[i_idx],
-                        //         partial_distances_p,
-                        //         partial_d,
-                        //         j / VECTOR_CHUNK_SIZE,              // start cluster_id
-                        //         (j + batch_n_y) / VECTOR_CHUNK_SIZE // end cluster_id
-                        //     );
-                        assignment = pdx_centroids.searcher->Top1SearchWithThreshold(
-                            data_p,
-                            dist_to_prev_centroid,
-                            prev_assignment,
-                            r,
-                            out_pruning_groups[i_idx],
-                            j / VECTOR_CHUNK_SIZE,              // start cluster_id
-                            (j + batch_n_y) / VECTOR_CHUNK_SIZE // end cluster_id
-                        );
+                        assignment =
+                            pdx_centroids.searcher->Top1PartialSearchWithThresholdAndPartialDistances(
+                                data_p,
+                                dist_to_prev_centroid,
+                                prev_assignment,
+                                r,
+                                out_pruning_groups[i_idx],
+                                partial_distances_p,
+                                partial_d,
+                                j / VECTOR_CHUNK_SIZE,              // start cluster_id
+                                (j + batch_n_y) / VECTOR_CHUNK_SIZE // end cluster_id
+                            );
                     } else {
-                        // std::cout << "Why?" << dist_to_prev_centroid << "\n";
                         auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
                         assignment =
                             pdx_centroids.searcher->Top1PartialSearchWithThresholdAndPartialDistances(
@@ -271,9 +263,8 @@ class BatchComputer<l2, f32> {
                     out_knn[i_idx] = assignment_idx;
                     out_distances[i_idx] = assignment_distance;
                 }
-                if constexpr (!RECORD_PRUNING_GROUP) {
-                    pdx_tt.Toc();
-                }
+                pdx_tt.Toc();
+                cur_pdx_tt.Toc();
 
             }
             if constexpr(RECORD_PRUNING_GROUP) {
@@ -281,11 +272,13 @@ class BatchComputer<l2, f32> {
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const auto i_idx = i + r;
                     out_pruning_groups[i_idx] *= num_centroids_norm;
-                    out_pruning_groups[i_idx] = static_cast<uint32_t>(std::ceil(out_pruning_groups[i_idx] / 16.0f) * 16.0f);
-                    // std::cout << out_pruning_groups[i_idx] << std::endl;
+                    out_pruning_groups[i_idx] =  CeilXToMultipleOfM(out_pruning_groups[i_idx], 32);
+                    //std::cout << out_pruning_groups[i_idx] << std::endl;
                 }
             }
         }
+        std::cout << " - BLAS  " << cur_blas_tt.accum_time / 1000000000.0 << std::endl;
+        std::cout << " - PDX  " << cur_pdx_tt.accum_time / 1000000000.0 << std::endl;
         // pdx_centroids.searcher->PrintPrunedPositions();
     }
 

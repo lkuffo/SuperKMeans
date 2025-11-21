@@ -105,7 +105,7 @@ class ADSamplingPruner {
     void SetMatrix(const Eigen::MatrixXf& matrix) { ADSamplingPruner::matrix = matrix; }
 
     template <Quantization Q = q>
-    skmeans_distance_t<Q> GetPruningThreshold(
+    __attribute__((noinline)) skmeans_distance_t<Q> GetPruningThreshold(
         uint32_t k,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
             heap,
