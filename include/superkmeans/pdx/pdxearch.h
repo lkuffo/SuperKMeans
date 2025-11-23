@@ -78,16 +78,13 @@ class PDXearch {
         memset((void*) pruning_distances, 0, n_vectors * sizeof(skmeans_distance_t<Q>));
     }
 
-    // The pruning threshold by default is the top of the heap
     template <Quantization Q = q>
     SKM_NO_INLINE void GetPruningThreshold(
-        uint32_t k,
-        std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
-            heap,
+        KNNCandidate<Q>& best_candidate,
         skmeans_distance_t<Q>& pruning_threshold,
         uint32_t current_dimension_idx
     ) {
-        pruning_threshold = pruner.template GetPruningThreshold<Q>(k, heap, current_dimension_idx);
+        pruning_threshold = pruner.template GetPruningThreshold<Q>(best_candidate, current_dimension_idx);
     };
 
     template <Quantization Q = q>
@@ -140,13 +137,11 @@ class PDXearch {
         const skmeans_value_t<Q>* SKM_RESTRICT query,
         const skmeans_value_t<Q>* SKM_RESTRICT data,
         const size_t n_vectors,
-        uint32_t k,
         float tuples_threshold,
         uint32_t* pruning_positions,
         skmeans_distance_t<Q>* pruning_distances,
         skmeans_distance_t<Q>& pruning_threshold,
-        std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
-            heap,
+        KNNCandidate<Q>& best_candidate,
         uint32_t& current_dimension_idx
     ) {
         thread_local size_t cur_subgrouping_size_idx = 0;
@@ -155,7 +150,7 @@ class PDXearch {
         // current_dimension_idx = 0;
         // ResetPruningDistances<Q>(n_vectors, pruning_distances);
         uint32_t n_tuples_to_prune = 0;
-        GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
+        GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
         EvaluatePruningPredicateScalar<Q>(
             n_tuples_to_prune, n_vectors, pruning_distances, pruning_threshold
         );
@@ -178,7 +173,7 @@ class PDXearch {
             current_dimension_idx = last_dimension_to_fetch;
             cur_subgrouping_size_idx += 1;
             if (is_adsampling)
-                GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
+                GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
             n_tuples_to_prune = 0;
             EvaluatePruningPredicateScalar<Q>(
                 n_tuples_to_prune, n_vectors, pruning_distances, pruning_threshold
@@ -193,23 +188,21 @@ class PDXearch {
         const skmeans_value_t<Q>* SKM_RESTRICT query,
         const skmeans_value_t<Q>* SKM_RESTRICT data,
         const size_t n_vectors,
-        uint32_t k,
         uint32_t* pruning_positions,
         skmeans_distance_t<Q>* pruning_distances,
         skmeans_distance_t<Q>& pruning_threshold,
-        std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
-            heap,
+        KNNCandidate<Q>& best_candidate,
         size_t& n_vectors_not_pruned,
         uint32_t& current_dimension_idx,
         const uint32_t* vector_indices,
         const uint32_t prev_top_1,
         const skmeans_value_t<Q>* SKM_RESTRICT aux_data = nullptr
     ) {
-        GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
+        GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
         InitPositionsArray<Q>(
             n_vectors, n_vectors_not_pruned, pruning_positions, pruning_threshold, pruning_distances
         );
-        // Early exit if the only remaining point is the one that was initially in the heap
+        // Early exit if the only remaining point is the one that was initially the best candidate
         if (n_vectors_not_pruned == 1 && vector_indices[pruning_positions[0]] == prev_top_1) {
             n_vectors_not_pruned = 0;
             return;
@@ -238,7 +231,7 @@ class PDXearch {
             current_horizontal_dimension += H_DIM_SIZE;
             current_dimension_idx += H_DIM_SIZE;
             if (is_adsampling)
-                GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
+                GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
             // assert(
             //     current_dimension_idx == current_vertical_dimension +
             //     current_horizontal_dimension
@@ -306,7 +299,7 @@ class PDXearch {
                 current_dimension_idx == current_vertical_dimension + current_horizontal_dimension
             );
             if (is_adsampling)
-                GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
+                GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
             EvaluatePruningPredicateOnPositionsArray<Q>(
                 cur_n_vectors_not_pruned,
                 n_vectors_not_pruned,
@@ -320,15 +313,13 @@ class PDXearch {
     }
 
     template <bool IS_PRUNING = false, Quantization Q = q>
-    void MergeIntoHeap(
+    void SetBestCandidate(
         const uint32_t* vector_indices,
         size_t n_vectors,
-        uint32_t k,
         const uint32_t* pruning_positions,
         skmeans_distance_t<Q>* pruning_distances,
         skmeans_distance_t<Q>* distances,
-        std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
-            heap
+        KNNCandidate<Q>& best_candidate
     ) {
         for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
             size_t index = position_idx;
@@ -340,49 +331,35 @@ class PDXearch {
             } else {
                 current_distance = distances[index];
             }
-            if (heap.size() < k || current_distance < heap.top().distance) {
-                KNNCandidate<Q> embedding{};
-                embedding.distance = current_distance;
-                embedding.index = vector_indices[index];
-                if (heap.size() >= k) {
-                    heap.pop();
-                }
-                heap.push(embedding);
+            if (current_distance < best_candidate.distance) {
+                best_candidate.distance = current_distance;
+                best_candidate.index = vector_indices[index];
             }
         }
     }
 
-    std::vector<KNNCandidate_t> BuildResultSet(
-        uint32_t k,
-        std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>& best_k
+    void BuildResultSet(
+        KNNCandidate_t& best_candidate
     ) {
-        size_t result_set_size = std::min(best_k.size(), (size_t) k);
-        std::vector<KNNCandidate_t> result;
-        result.resize(result_set_size);
-        // We return distances in the original domain (do we need it?)
+        // We return distances in the original domain
         float inverse_scale_factor;
         if constexpr (q == u8) {
             inverse_scale_factor = 1.0f / pdx_data.scale_factor;
             inverse_scale_factor = inverse_scale_factor * inverse_scale_factor;
         }
-        for (int i = result_set_size - 1; i >= 0; --i) {
-            const KNNCandidate_t& embedding = best_k.top();
-            if constexpr (q == u8) {
-                result[i].distance = embedding.distance * inverse_scale_factor;
-            } else if constexpr (q == f32) {
-                result[i].distance = embedding.distance;
-            }
-            result[i].index = embedding.index;
-            best_k.pop();
+        if constexpr (q == u8) {
+            best_candidate.distance = best_candidate.distance * inverse_scale_factor;
+        } else if constexpr (q == f32) {
+            best_candidate.distance = best_candidate.distance;
         }
-        return result;
+        best_candidate.index = best_candidate.index;
     }
 
   public:
     /******************************************************************
      * Search methods
      ******************************************************************/
-    std::vector<KNNCandidate_t> Top1SearchWithThreshold(
+    KNNCandidate_t Top1SearchWithThreshold(
         const float* SKM_RESTRICT query,
         const float prev_pruning_threshold,
         const uint32_t prev_top_1,
@@ -394,13 +371,10 @@ class PDXearch {
         alignas(64) thread_local DISTANCES_TYPE pruning_distances[PDX_VECTOR_SIZE];
         alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
         DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
-        thread_local auto best_k =
-            std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         thread_local size_t n_vectors_not_pruned = 0;
         thread_local uint32_t current_dimension_idx = 0;
         thread_local size_t current_cluster = 0;
 
-        best_k = {};
         // size_t pruned_at = 0;
 
         // Setup previous top1
@@ -408,7 +382,6 @@ class PDXearch {
         auto top_embedding = KNNCandidate<q>{};
         top_embedding.index = prev_top_1;
         top_embedding.distance = prev_pruning_threshold;
-        best_k.push(top_embedding);
 
         current_dimension_idx = 0;
         n_vectors_not_pruned = 0;
@@ -417,7 +390,6 @@ class PDXearch {
         this->ResetClocks();
         this->end_to_end_clock.Tic();
 #endif
-        constexpr uint32_t k = 1;
         size_t clusters_to_visit = pdx_data.num_clusters;
         // PDXearch core
         current_dimension_idx = 0;
@@ -428,12 +400,11 @@ class PDXearch {
                 query,
                 cluster.data,
                 cluster.num_embeddings,
-                k,
                 selectivity_threshold,
                 pruning_positions,
                 pruning_distances,
                 pruning_threshold,
-                best_k,
+                top_embedding,
                 current_dimension_idx
             );
             pruned_at_accum += current_dimension_idx;
@@ -441,11 +412,10 @@ class PDXearch {
                 query,
                 cluster.data,
                 cluster.num_embeddings,
-                k,
                 pruning_positions,
                 pruning_distances,
                 pruning_threshold,
-                best_k,
+                top_embedding,
                 n_vectors_not_pruned,
                 current_dimension_idx,
                 cluster.indices,
@@ -453,26 +423,25 @@ class PDXearch {
                 cluster.aux_hor_data
             );
             if (n_vectors_not_pruned) {
-                MergeIntoHeap<true>(
+                SetBestCandidate<true>(
                     cluster.indices,
                     n_vectors_not_pruned,
-                    k,
                     pruning_positions,
                     pruning_distances,
                     nullptr,
-                    best_k
+                    top_embedding
                 );
             }
         }
-        std::vector<KNNCandidate_t> result = BuildResultSet(k, best_k);
+        BuildResultSet(top_embedding);
 #ifdef BENCHMARK_TIME
         this->end_to_end_clock.Toc();
 #endif
-        return result;
+        return top_embedding;
     }
 
     SKM_NO_INLINE
-    std::vector<KNNCandidate_t> Top1PartialSearchWithThresholdAndPartialDistances(
+    KNNCandidate_t Top1PartialSearchWithThresholdAndPartialDistances(
         const float* SKM_RESTRICT query,
         const float prev_pruning_threshold,
         const uint32_t prev_top_1,
@@ -484,13 +453,10 @@ class PDXearch {
     ) {
         alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
         DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
-        thread_local auto best_k =
-            std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         thread_local size_t n_vectors_not_pruned = 0;
         thread_local uint32_t current_dimension_idx = 0;
         thread_local size_t current_cluster = 0;
 
-        best_k = {};
         size_t pruned_at = 0;
 
         // Setup previous top1
@@ -498,12 +464,10 @@ class PDXearch {
         auto top_embedding = KNNCandidate<q>{};
         top_embedding.index = prev_top_1;
         top_embedding.distance = prev_pruning_threshold;
-        best_k.push(top_embedding);
 
         current_dimension_idx = computed_distance_until;
         n_vectors_not_pruned = 0;
         current_cluster = 0;
-        constexpr uint32_t k = 1;
         // PDXearch core
         size_t data_offset = 0;
         for (size_t cluster_idx = start_cluster; cluster_idx < end_cluster; ++cluster_idx) {
@@ -517,11 +481,10 @@ class PDXearch {
                 query,
                 cluster.data,
                 cluster.num_embeddings,
-                k,
                 pruning_positions,
                 pruning_distances,
                 pruning_threshold,
-                best_k,
+                top_embedding,
                 n_vectors_not_pruned,
                 current_dimension_idx,
                 cluster.indices,
@@ -529,14 +492,13 @@ class PDXearch {
                 cluster.aux_hor_data
             );
             if (n_vectors_not_pruned) {
-                MergeIntoHeap<true>(
+                SetBestCandidate<true>(
                     cluster.indices,
                     n_vectors_not_pruned,
-                    k,
                     pruning_positions,
                     pruning_distances,
                     nullptr,
-                    best_k
+                    top_embedding
                 );
             }
         }
@@ -545,12 +507,12 @@ class PDXearch {
         //               << "Pruned At Avg.: " << (1.0 * pruned_at) / clusters_to_visit <<
         //               std::endl;
         // }
-        std::vector<KNNCandidate_t> result = BuildResultSet(k, best_k);
-        return result;
+        BuildResultSet(top_embedding);
+        return top_embedding;
     }
 
     SKM_NO_INLINE
-    std::vector<KNNCandidate_t> Top1PartialSearchWithThresholdAndPartialDistances(
+    KNNCandidate_t Top1PartialSearchWithThresholdAndPartialDistances(
         const float* SKM_RESTRICT query,
         const float prev_pruning_threshold,
         const uint32_t prev_top_1,
@@ -563,13 +525,10 @@ class PDXearch {
     ) {
         alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
         DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
-        thread_local auto best_k =
-            std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
         thread_local size_t n_vectors_not_pruned = 0;
         thread_local uint32_t current_dimension_idx = 0;
         thread_local size_t current_cluster = 0;
 
-        best_k = {};
         size_t pruned_at = 0;
 
         // Setup previous top1
@@ -577,12 +536,10 @@ class PDXearch {
         auto top_embedding = KNNCandidate<q>{};
         top_embedding.index = prev_top_1;
         top_embedding.distance = prev_pruning_threshold;
-        best_k.push(top_embedding);
 
         current_dimension_idx = computed_distance_until;
         n_vectors_not_pruned = 0;
         current_cluster = 0;
-        constexpr uint32_t k = 1;
         // PDXearch core
         size_t data_offset = 0;
         for (size_t cluster_idx = start_cluster; cluster_idx < end_cluster; ++cluster_idx) {
@@ -596,12 +553,11 @@ class PDXearch {
                 query,
                 cluster.data,
                 cluster.num_embeddings,
-                k,
                 selectivity_threshold,
                 pruning_positions,
                 pruning_distances,
                 pruning_threshold,
-                best_k,
+                top_embedding,
                 current_dimension_idx
             );
             pruned_at_accum += current_dimension_idx;
@@ -609,11 +565,10 @@ class PDXearch {
                 query,
                 cluster.data,
                 cluster.num_embeddings,
-                k,
                 pruning_positions,
                 pruning_distances,
                 pruning_threshold,
-                best_k,
+                top_embedding,
                 n_vectors_not_pruned,
                 current_dimension_idx,
                 cluster.indices,
@@ -621,14 +576,13 @@ class PDXearch {
                 cluster.aux_hor_data
             );
             if (n_vectors_not_pruned) {
-                MergeIntoHeap<true>(
+                SetBestCandidate<true>(
                     cluster.indices,
                     n_vectors_not_pruned,
-                    k,
                     pruning_positions,
                     pruning_distances,
                     nullptr,
-                    best_k
+                    top_embedding
                 );
             }
         }
@@ -637,8 +591,8 @@ class PDXearch {
         //               << "Pruned At Avg.: " << (1.0 * pruned_at) / clusters_to_visit <<
         //               std::endl;
         // }
-        std::vector<KNNCandidate_t> result = BuildResultSet(k, best_k);
-        return result;
+        BuildResultSet(top_embedding);
+        return top_embedding;
     }
 };
 

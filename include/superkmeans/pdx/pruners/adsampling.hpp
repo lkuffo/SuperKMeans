@@ -77,8 +77,9 @@ class ADSamplingPruner {
     }
 
     void InitializeRatios() {
-        ratios.resize(num_dimensions);
-        for (size_t i = 0; i < num_dimensions; ++i) {
+        // + 1 to be able to map n_dims to 1.0f, avoiding a branch in GetPruningThreshold
+        ratios.resize(num_dimensions + 1);
+        for (size_t i = 0; i < num_dimensions + 1; ++i) {
             ratios[i] = GetRatio(i);
         }
     }
@@ -97,7 +98,7 @@ class ADSamplingPruner {
 
     void SetEpsilon0(float epsilon0) {
         ADSamplingPruner::epsilon0 = epsilon0;
-        for (size_t i = 0; i < num_dimensions; ++i) {
+        for (size_t i = 0; i < num_dimensions + 1; ++i) {
             ratios[i] = GetRatio(i);
         }
     }
@@ -107,13 +108,10 @@ class ADSamplingPruner {
     template <Quantization Q = q>
     SKM_NO_INLINE
     skmeans_distance_t<Q> GetPruningThreshold(
-        uint32_t k,
-        std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
-            heap,
+        const KNNCandidate<Q>& best_candidate,
         const uint32_t current_dimension_idx
     ) {
-        float ratio = current_dimension_idx == num_dimensions ? 1 : ratios[current_dimension_idx];
-        return heap.top().distance * ratio;
+        return best_candidate.distance * ratios[current_dimension_idx];
     }
 
     void PreprocessQuery(const float* raw_query, float* query) {

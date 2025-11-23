@@ -230,7 +230,7 @@ class BatchComputer<l2, f32> {
                         prev_y + (prev_assignment * d), data_p, d
                     );
                     // PDXearch per vector
-                    std::vector<knn_candidate_t> assignment;
+                    knn_candidate_t assignment;
                     if constexpr (RECORD_PRUNING_GROUP) {
                         auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
                         assignment =
@@ -259,7 +259,7 @@ class BatchComputer<l2, f32> {
                                 (j + batch_n_y) / VECTOR_CHUNK_SIZE // end cluster_id
                             );
                     }
-                    auto [assignment_idx, assignment_distance] = assignment[0];
+                    auto [assignment_idx, assignment_distance] = assignment;
                     out_knn[i_idx] = assignment_idx;
                     out_distances[i_idx] = assignment_distance;
                 }
@@ -344,7 +344,7 @@ class BatchComputer<l2, f32> {
                         prev_y + (prev_assignment * d), data_p, d
                     );
                     // PDXearch per vector
-                    std::vector<knn_candidate_t> assignment;
+                    knn_candidate_t assignment;
                     if constexpr (RECORD_PRUNING_GROUP) {
                         assignment = pdx_centroids.searcher->Top1SearchWithThreshold(
                             data_p,
@@ -369,7 +369,7 @@ class BatchComputer<l2, f32> {
                                 (j + batch_n_y) / VECTOR_CHUNK_SIZE // end cluster_id
                             );
                     }
-                    auto [assignment_idx, assignment_distance] = assignment[0];
+                    auto [assignment_idx, assignment_distance] = assignment;
                     out_knn[i_idx] = assignment_idx;
                     out_distances[i_idx] = assignment_distance;
                 }

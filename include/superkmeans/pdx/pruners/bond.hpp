@@ -25,13 +25,10 @@ class BondPruner {
 
     template <Quantization Q = q>
     skmeans_distance_t<Q> GetPruningThreshold(
-        uint32_t k,
-        std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
-            heap,
+        const KNNCandidate<Q>& best_candidate,
         const uint32_t current_dimension_idx
     ) {
-        return heap.size() == k ? heap.top().distance
-                                : std::numeric_limits<skmeans_distance_t<Q>>::max();
+        return best_candidate.distance;
     }
 };
 
