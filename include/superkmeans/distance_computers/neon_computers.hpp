@@ -27,7 +27,7 @@ class SIMDComputer<l2, u8> {
         size_t start_dimension,
         size_t end_dimension,
         distance_t* distances_p,
-        uint64_t pruning_mask
+        const uint32_t* pruning_positions
     ) {
         // TODO: Handle tail in dimension length, for now im not going to worry on that as all the
         // datasets are divisible by 4
@@ -49,12 +49,10 @@ class SIMDComputer<l2, u8> {
                     vst1q_u32(&distances_p[i], vdotq_u32(res, diff_u8, diff_u8));
                 }
             }
-            auto tmp_pruning_mask = pruning_mask;
             for (; i < n_vectors; ++i) {
                 size_t vector_idx = i;
                 if constexpr (SKIP_PRUNED) {
-                    vector_idx = __builtin_ctzll(tmp_pruning_mask);
-                    tmp_pruning_mask &= tmp_pruning_mask - 1;
+                    vector_idx = pruning_positions[vector_idx];
                 }
                 // l2
                 int to_multiply_a =
@@ -144,19 +142,17 @@ class SIMDComputer<l2, f32> {
         size_t start_dimension,
         size_t end_dimension,
         distance_t* distances_p,
-        const uint64_t pruning_mask
+        const uint32_t* pruning_positions
     ) {
         size_t dimensions_jump_factor = total_vectors;
         for (size_t dimension_idx = start_dimension; dimension_idx < end_dimension;
              ++dimension_idx) {
             uint32_t true_dimension_idx = dimension_idx;
             size_t offset_to_dimension_start = true_dimension_idx * dimensions_jump_factor;
-            auto tmp_pruning_mask = pruning_mask;
             for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
                 auto true_vector_idx = vector_idx;
                 if constexpr (SKIP_PRUNED) {
-                    true_vector_idx = __builtin_ctzll(tmp_pruning_mask);
-                    tmp_pruning_mask &= tmp_pruning_mask - 1;
+                    true_vector_idx = pruning_positions[vector_idx];
                 }
                 float to_multiply =
                     query[true_dimension_idx] - data[offset_to_dimension_start + true_vector_idx];

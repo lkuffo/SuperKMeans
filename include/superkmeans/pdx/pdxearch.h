@@ -104,49 +104,34 @@ class PDXearch {
     };
 
     template <Quantization Q = q>
-    SKM_NO_INLINE void EvaluatePruningPredicateVectorized(
-        uint32_t& n_pruned,
+    SKM_NO_INLINE void EvaluatePruningPredicateOnPositionsArray(
+        size_t n_vectors,
+        size_t& n_vectors_not_pruned,
+        uint32_t* pruning_positions,
         skmeans_distance_t<Q> pruning_threshold,
         skmeans_distance_t<Q>* pruning_distances
     ) {
-        for (size_t vector_idx = 0; vector_idx < PDX_VECTOR_SIZE; ++vector_idx) {
-            n_pruned += pruning_distances[vector_idx] >= pruning_threshold;
+        n_vectors_not_pruned = 0;
+        for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
+            pruning_positions[n_vectors_not_pruned] = pruning_positions[vector_idx];
+            n_vectors_not_pruned +=
+                pruning_distances[pruning_positions[vector_idx]] < pruning_threshold;
         }
     };
 
     template <Quantization Q = q>
-    SKM_NO_INLINE uint64_t EvaluatePruningPredicateOnPositionsArray(
+    SKM_NO_INLINE void InitPositionsArray(
         size_t n_vectors,
         size_t& n_vectors_not_pruned,
-        skmeans_distance_t<Q> pruning_threshold,
-        skmeans_distance_t<Q>* pruning_distances,
-        uint64_t previous_mask
-    ) {
-        uint64_t mask = 0;
-        __builtin_assume(n_vectors <= 64);
-        for (size_t i = 0; i < n_vectors; ++i) {
-            size_t v_idx = __builtin_ctzll(previous_mask);
-            mask |= (uint64_t) (pruning_distances[v_idx] < pruning_threshold) << v_idx;
-            previous_mask &= previous_mask - 1;
-        }
-        n_vectors_not_pruned = __builtin_popcountll(mask);
-        return mask;
-    };
-
-    template <Quantization Q = q>
-    SKM_NO_INLINE uint64_t InitPositionsArray(
-        size_t n_vectors,
-        size_t& n_vectors_not_pruned,
+        uint32_t* pruning_positions,
         skmeans_distance_t<Q> pruning_threshold,
         skmeans_distance_t<Q>* pruning_distances
     ) {
-        uint64_t mask = 0;
-        __builtin_assume(n_vectors <= 64);
-        for (size_t i = 0; i < n_vectors; ++i) {
-            mask |= (uint64_t) (pruning_distances[i] < pruning_threshold) << i;
+        n_vectors_not_pruned = 0;
+        for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
+            pruning_positions[n_vectors_not_pruned] = vector_idx;
+            n_vectors_not_pruned += pruning_distances[vector_idx] < pruning_threshold;
         }
-        n_vectors_not_pruned = __builtin_popcountll(mask);
-        return mask;
     };
 
     // On the warmup phase, we keep scanning dimensions until the amount of not-yet pruned vectors
@@ -158,6 +143,7 @@ class PDXearch {
         const size_t n_vectors,
         uint32_t k,
         float tuples_threshold,
+        uint32_t* pruning_positions,
         skmeans_distance_t<Q>* pruning_distances,
         skmeans_distance_t<Q>& pruning_threshold,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
@@ -188,7 +174,7 @@ class PDXearch {
                 current_dimension_idx,
                 last_dimension_to_fetch,
                 pruning_distances,
-                0
+                pruning_positions
             );
             current_dimension_idx = last_dimension_to_fetch;
             cur_subgrouping_size_idx += 1;
@@ -204,11 +190,12 @@ class PDXearch {
     // We scan only the not-yet pruned vectors
     template <Quantization Q = q>
     SKM_NO_INLINE
-    uint64_t Prune(
+    void Prune(
         const skmeans_value_t<Q>* SKM_RESTRICT query,
         const skmeans_value_t<Q>* SKM_RESTRICT data,
         const size_t n_vectors,
         uint32_t k,
+        uint32_t* pruning_positions,
         skmeans_distance_t<Q>* pruning_distances,
         skmeans_distance_t<Q>& pruning_threshold,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
@@ -218,42 +205,29 @@ class PDXearch {
         const skmeans_value_t<Q>* SKM_RESTRICT aux_data = nullptr
     ) {
         GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
-        uint64_t original_pruning_mask = InitPositionsArray<Q>(
-            n_vectors, n_vectors_not_pruned, pruning_threshold, pruning_distances
+        InitPositionsArray<Q>(
+            n_vectors, n_vectors_not_pruned, pruning_positions, pruning_threshold, pruning_distances
         );
-        uint64_t tmp_pruning_mask;
         size_t cur_n_vectors_not_pruned = 0;
         size_t current_vertical_dimension = current_dimension_idx;
         size_t current_horizontal_dimension = 0;
-        // if (n_vectors_not_pruned > 32) {
-        //     std::cout << "PT:    " << pruning_threshold << std::endl;
-        //     std::cout << "NNNP:  " << n_vectors_not_pruned << std::endl;
-        //     std::cout << "PD[0]: " << pruning_distances[0] << std::endl;
-        // }
-
         while (pdx_data.num_horizontal_dimensions && n_vectors_not_pruned &&
                current_horizontal_dimension < pdx_data.num_horizontal_dimensions) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
             size_t offset_data = (pdx_data.num_vertical_dimensions * n_vectors) +
                                  (current_horizontal_dimension * n_vectors);
-            tmp_pruning_mask = original_pruning_mask;
-            assert(__builtin_popcountll(tmp_pruning_mask) == n_vectors_not_pruned);
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
-                size_t v_idx = __builtin_ctzll(tmp_pruning_mask);
+                size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
                 __builtin_prefetch(data + data_pos, 0, 2);
-                tmp_pruning_mask &= tmp_pruning_mask - 1;
             }
-            tmp_pruning_mask = original_pruning_mask;
-            assert(__builtin_popcountll(tmp_pruning_mask) == n_vectors_not_pruned);
             size_t offset_query = pdx_data.num_vertical_dimensions + current_horizontal_dimension;
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
-                size_t v_idx = __builtin_ctzll(tmp_pruning_mask);
+                size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
                 pruning_distances[v_idx] += DistanceComputer<alpha, Q>::Horizontal(
                     query + offset_query, data + data_pos, H_DIM_SIZE
                 );
-                tmp_pruning_mask &= tmp_pruning_mask - 1;
             }
             current_horizontal_dimension += H_DIM_SIZE;
             current_dimension_idx += H_DIM_SIZE;
@@ -263,15 +237,13 @@ class PDXearch {
             //     current_dimension_idx == current_vertical_dimension +
             //     current_horizontal_dimension
             // );
-            tmp_pruning_mask = original_pruning_mask;
-            original_pruning_mask = EvaluatePruningPredicateOnPositionsArray<Q>(
+            EvaluatePruningPredicateOnPositionsArray<Q>(
                 cur_n_vectors_not_pruned,
                 n_vectors_not_pruned,
+                pruning_positions,
                 pruning_threshold,
-                pruning_distances,
-                tmp_pruning_mask
+                pruning_distances
             );
-            assert(__builtin_popcountll(original_pruning_mask) == n_vectors_not_pruned);
         }
         // std::cout << current_vertical_dimension << std::endl;
         // GO THROUGH THE REST IN THE VERTICAL
@@ -293,7 +265,7 @@ class PDXearch {
                     current_vertical_dimension,
                     last_dimension_to_test_idx,
                     pruning_distances,
-                    original_pruning_mask
+                    pruning_positions
                 );
                 current_dimension_idx =
                     std::min(current_dimension_idx + H_DIM_SIZE, (size_t) pdx_data.num_dimensions);
@@ -307,25 +279,19 @@ class PDXearch {
                     pdx_data.num_vertical_dimensions - current_vertical_dimension;
                 // std::cout << dimensions_left << std::endl;
                 size_t offset_query = current_vertical_dimension;
-                tmp_pruning_mask = original_pruning_mask;
-                assert(__builtin_popcountll(tmp_pruning_mask) == n_vectors_not_pruned);
                 for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
-                    size_t v_idx = __builtin_ctzll(tmp_pruning_mask);
+                    size_t v_idx = pruning_positions[vector_idx];
                     auto data_pos = aux_data + (v_idx * pdx_data.num_vertical_dimensions) +
                                     current_vertical_dimension;
                     __builtin_prefetch(data_pos, 0, 1);
-                    tmp_pruning_mask &= tmp_pruning_mask - 1;
                 }
-                tmp_pruning_mask = original_pruning_mask;
-                assert(__builtin_popcountll(tmp_pruning_mask) == n_vectors_not_pruned);
                 for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
-                    size_t v_idx = __builtin_ctzll(tmp_pruning_mask);
+                    size_t v_idx = pruning_positions[vector_idx];
                     auto data_pos = aux_data + (v_idx * pdx_data.num_vertical_dimensions) +
                                     current_vertical_dimension;
                     pruning_distances[v_idx] += DistanceComputer<alpha, Q>::Horizontal(
                         query + offset_query, data_pos, dimensions_left
                     );
-                    tmp_pruning_mask &= tmp_pruning_mask - 1;
                 }
                 current_dimension_idx = pdx_data.num_dimensions;
                 current_vertical_dimension = pdx_data.num_vertical_dimensions;
@@ -335,22 +301,16 @@ class PDXearch {
             );
             if (is_adsampling)
                 GetPruningThreshold<Q>(k, heap, pruning_threshold, current_dimension_idx);
-            tmp_pruning_mask = original_pruning_mask;
-            original_pruning_mask = EvaluatePruningPredicateOnPositionsArray<Q>(
+            EvaluatePruningPredicateOnPositionsArray<Q>(
                 cur_n_vectors_not_pruned,
                 n_vectors_not_pruned,
+                pruning_positions,
                 pruning_threshold,
-                pruning_distances,
-                tmp_pruning_mask
+                pruning_distances
             );
-            assert(__builtin_popcountll(original_pruning_mask) == n_vectors_not_pruned);
             if (current_dimension_idx == pdx_data.num_dimensions)
                 break;
         }
-
-        // std::cout << "Here" << std::endl;
-        assert(__builtin_popcountll(original_pruning_mask) == n_vectors_not_pruned);
-        return original_pruning_mask;
     }
 
     template <bool IS_PRUNING = false, Quantization Q = q>
@@ -358,21 +318,19 @@ class PDXearch {
         const uint32_t* vector_indices,
         size_t n_vectors,
         uint32_t k,
+        const uint32_t* pruning_positions,
         skmeans_distance_t<Q>* pruning_distances,
         skmeans_distance_t<Q>* distances,
         std::priority_queue<KNNCandidate<Q>, std::vector<KNNCandidate<Q>>, VectorComparator<Q>>&
-            heap,
-        uint64_t pruning_mask
+            heap
     ) {
-        assert(__builtin_popcountll(pruning_mask) == n_vectors);
         for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
             size_t index = position_idx;
             // DISTANCES_TYPE current_distance;
             float current_distance;
             if constexpr (IS_PRUNING) {
-                index = __builtin_ctzll(pruning_mask);
+                index = pruning_positions[position_idx];
                 current_distance = pruning_distances[index];
-                pruning_mask &= pruning_mask - 1;
             } else {
                 current_distance = distances[index];
             }
@@ -428,6 +386,7 @@ class PDXearch {
         const size_t end_cluster
     ) {
         alignas(64) thread_local DISTANCES_TYPE pruning_distances[PDX_VECTOR_SIZE];
+        alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
         DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
         thread_local auto best_k =
             std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
@@ -465,17 +424,19 @@ class PDXearch {
                 cluster.num_embeddings,
                 k,
                 selectivity_threshold,
+                pruning_positions,
                 pruning_distances,
                 pruning_threshold,
                 best_k,
                 current_dimension_idx
             );
             pruned_at_accum += current_dimension_idx;
-            uint64_t pruning_mask = Prune(
+            Prune(
                 query,
                 cluster.data,
                 cluster.num_embeddings,
                 k,
+                pruning_positions,
                 pruning_distances,
                 pruning_threshold,
                 best_k,
@@ -488,10 +449,10 @@ class PDXearch {
                     cluster.indices,
                     n_vectors_not_pruned,
                     k,
+                    pruning_positions,
                     pruning_distances,
                     nullptr,
-                    best_k,
-                    pruning_mask
+                    best_k
                 );
             }
         }
@@ -513,6 +474,7 @@ class PDXearch {
         const size_t start_cluster,
         const size_t end_cluster
     ) {
+        alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
         DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
         thread_local auto best_k =
             std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
@@ -543,11 +505,12 @@ class PDXearch {
             current_cluster = cluster_idx;
             CLUSTER_TYPE& cluster = pdx_data.clusters[current_cluster];
             data_offset += cluster.num_embeddings;
-            uint64_t pruning_mask = Prune(
+            Prune(
                 query,
                 cluster.data,
                 cluster.num_embeddings,
                 k,
+                pruning_positions,
                 pruning_distances,
                 pruning_threshold,
                 best_k,
@@ -560,10 +523,10 @@ class PDXearch {
                     cluster.indices,
                     n_vectors_not_pruned,
                     k,
+                    pruning_positions,
                     pruning_distances,
                     nullptr,
-                    best_k,
-                    pruning_mask
+                    best_k
                 );
             }
         }
@@ -588,6 +551,7 @@ class PDXearch {
         const size_t start_cluster,
         const size_t end_cluster
     ) {
+        alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
         DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
         thread_local auto best_k =
             std::priority_queue<KNNCandidate_t, std::vector<KNNCandidate_t>, VectorComparator_t>{};
@@ -624,17 +588,19 @@ class PDXearch {
                 cluster.num_embeddings,
                 k,
                 selectivity_threshold,
+                pruning_positions,
                 pruning_distances,
                 pruning_threshold,
                 best_k,
                 current_dimension_idx
             );
             pruned_at_accum += current_dimension_idx;
-            uint64_t pruning_mask = Prune(
+            Prune(
                 query,
                 cluster.data,
                 cluster.num_embeddings,
                 k,
+                pruning_positions,
                 pruning_distances,
                 pruning_threshold,
                 best_k,
@@ -647,10 +613,10 @@ class PDXearch {
                     cluster.indices,
                     n_vectors_not_pruned,
                     k,
+                    pruning_positions,
                     pruning_distances,
                     nullptr,
-                    best_k,
-                    pruning_mask
+                    best_k
                 );
             }
         }
