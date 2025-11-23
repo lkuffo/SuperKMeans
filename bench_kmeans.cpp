@@ -35,6 +35,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<skmeans::skmeans_value_t<skmeans::f32>> data(n * d);
     std::ifstream file(std::string{CMAKE_SOURCE_DIR} + "/data_mxbai.bin", std::ios::binary);
+    //std::ifstream file(std::string{CMAKE_SOURCE_DIR} + "/data_random.bin", std::ios::binary);
     if (!file) {
         std::cerr << "Failed to open " << std::endl;
         return 1;

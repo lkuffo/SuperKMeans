@@ -27,7 +27,7 @@ class SIMDComputer<l2, u8> {
         size_t start_dimension,
         size_t end_dimension,
         distance_t* distances_p,
-        const uint32_t* pruning_positions = nullptr
+        const uint32_t* pruning_positions
     ) {
         // TODO: Handle tail in dimension length, for now im not going to worry on that as all the
         // datasets are divisible by 4
@@ -162,6 +162,7 @@ class SIMDComputer<l2, f32> {
     }
 
     // Defer to the scalar kernel
+    SKM_NO_INLINE
     static void Vertical(
         const data_t* SKM_RESTRICT query,
         const data_t* SKM_RESTRICT data,
@@ -180,87 +181,7 @@ class SIMDComputer<l2, f32> {
         }
     }
 
-    template <uint32_t BATCH_SIZE>
-    static void VerticalBatch(
-        const data_t* SKM_RESTRICT queries,
-        const data_t* SKM_RESTRICT data,
-        size_t start_dimension,
-        size_t end_dimension,
-        distance_t* distances_p
-    ) {
-        auto queries_p = queries;
-        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
-            const size_t offset_to_dimension_start = dim_idx * VECTOR_CHUNK_SIZE;
-            for (size_t query_idx = 0; query_idx < BATCH_SIZE; ++query_idx) {
-                const size_t q_offset = query_idx * VECTOR_CHUNK_SIZE;
-                for (size_t vector_idx = 0; vector_idx < VECTOR_CHUNK_SIZE; ++vector_idx) {
-                    const float to_multiply =
-                        *queries_p - data[offset_to_dimension_start + vector_idx];
-                    distances_p[q_offset + vector_idx] += to_multiply * to_multiply;
-                }
-                queries_p++;
-            }
-        }
-    }
-
-    template <uint32_t BATCH_SIZE>
-    static void VerticalBatchV2(
-        const data_t* SKM_RESTRICT queries,
-        const data_t* SKM_RESTRICT data,
-        size_t start_dimension,
-        size_t end_dimension,
-        distance_t* distances_p
-    ) {
-        auto queries_p = queries;
-        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
-            const size_t offset_to_dimension_start = dim_idx * VECTOR_CHUNK_SIZE;
-            for (size_t vector_idx = 0; vector_idx < VECTOR_CHUNK_SIZE; ++vector_idx) {
-                const auto data_v = data[offset_to_dimension_start + vector_idx];
-                const auto dist_base = distances_p + vector_idx * BATCH_SIZE;
-                for (size_t query_idx = 0; query_idx < BATCH_SIZE; ++query_idx) {
-                    const float to_multiply = *(queries_p + query_idx) - data_v;
-                    dist_base[query_idx] += to_multiply * to_multiply;
-                }
-            }
-            queries_p += BATCH_SIZE;
-        }
-    }
-
-    static void VerticalBatch64SIMD(
-        const data_t* SKM_RESTRICT queries,
-        const data_t* SKM_RESTRICT data,
-        size_t start_dimension,
-        size_t end_dimension,
-        distance_t* distances_p
-    ) {
-        // 1024 registers => 4KB, every query needs 16 registers to fit 64 accumulators
-        constexpr size_t reg_n = 64 * 16;
-        float32x4_t res_reg[reg_n];
-        for (size_t i = 0; i < reg_n; ++i) {
-            res_reg[i] = vdupq_n_f32(0.0f);
-        }
-        // Compute l2
-        auto queries_p = queries;
-        for (size_t dim_idx = start_dimension; dim_idx < end_dimension; dim_idx++) {
-            const size_t offset_to_dimension_start = dim_idx * VECTOR_CHUNK_SIZE;
-            for (int vector_idx = 0; vector_idx < 16; ++vector_idx) {
-                const float32x4_t vec2 =
-                    vld1q_f32(&data[offset_to_dimension_start + vector_idx * 4]);
-                const auto dist_base = res_reg + vector_idx * 4 * 16;
-                for (size_t query_idx = 0; query_idx < 64; ++query_idx) {
-                    const float32x4_t vec1 = vdupq_n_f32(queries_p[query_idx]);
-                    const float32x4_t diff = vsubq_f32(vec1, vec2);
-                    dist_base[query_idx] = vfmaq_f32(dist_base[query_idx], diff, diff);
-                }
-            }
-            queries_p += 64;
-        }
-        // Store results back
-        for (int i = 0; i < reg_n; ++i) {
-            vst1q_f32(&distances_p[i * 4], res_reg[i]);
-        }
-    }
-
+    SKM_NO_INLINE
     static distance_t Horizontal(
         const data_t* SKM_RESTRICT vector1,
         const data_t* SKM_RESTRICT vector2,

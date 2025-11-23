@@ -33,12 +33,17 @@ class PDXLayout {
         searcher = std::make_unique<searcher_t>(*index, pruner);
     }
 
-    PDXLayout(scalar_t* pdx_data, Pruner& pruner, size_t n_points, size_t d, size_t partial_d, scalar_t* hor_data) {
+    PDXLayout(
+        scalar_t* pdx_data,
+        Pruner& pruner,
+        size_t n_points,
+        size_t d,
+        scalar_t* hor_data
+    ) {
         index = std::make_unique<index_t>(); // PDXLayout is owner of the Index
-        FromBufferToPDXIndex(pdx_data, n_points, d, partial_d, hor_data);
+        FromBufferToPDXIndex(pdx_data, n_points, d, hor_data);
         searcher = std::make_unique<searcher_t>(*index, pruner);
     }
-
 
     // TODO(@lkuffo, low): Support arbitrary cluster sizes rather than always 64
     void FromBufferToPDXIndex(
@@ -79,14 +84,12 @@ class PDXLayout {
         scalar_t* SKM_RESTRICT pdx_data,
         const size_t n_points,
         const size_t d,
-        const size_t partial_d,
         scalar_t* SKM_RESTRICT hor_data
     ) {
         // TODO(@lkuffo, high): Support cluster sizes that are not multiples of 64
         assert(n_points % VECTOR_CHUNK_SIZE == 0);
 
         auto [horizontal_d, vertical_d] = GetDimensionSplit(d);
-        assert(vertical_d >= partial_d);
         size_t n_pdx_clusters = n_points / VECTOR_CHUNK_SIZE;
         index->num_clusters = n_pdx_clusters;
         // TODO(@lkuffo, high): Does this belong here?
@@ -110,9 +113,7 @@ class PDXLayout {
             cluster.indices = centroid_ids.data() + cluster_offset;
             cluster.aux_hor_data = hor_data_p;
             pdx_data_p += VECTOR_CHUNK_SIZE * d;
-            hor_data_p +=
-                VECTOR_CHUNK_SIZE * (vertical_d - partial_d
-                                    ); // Contains only the vertical dimensions not visited by BLAS
+            hor_data_p += VECTOR_CHUNK_SIZE * (vertical_d); // Contains only the vertical dimensions
             cluster_idx += 1;
         }
     }

@@ -92,6 +92,10 @@ class SuperKMeans {
         _reciprocal_cluster_sizes.resize(_n_clusters);
         _assignments.resize(n);
         _distances.resize(n);
+
+        // Pruning groups logic
+        _pruning_groups.resize(n);
+
         std::vector<vector_value_t> data_norms(_n_samples);
         std::vector<vector_value_t> centroid_norms(_n_clusters);
         std::vector<distance_t> all_distances(X_BATCH_SIZE * Y_BATCH_SIZE);
@@ -106,9 +110,8 @@ class SuperKMeans {
         }
         //! _centroids and _aux_hor_centroids are always wrapped with the PDXLayout object
         _vertical_d = PDXLayout<q, alpha, Pruner>::GetDimensionSplit(_d).vertical_d;
-        assert(_vertical_d >= _partial_d); // Otherwise there is a bug
         _allocator_time.Tic();
-        _aux_hor_centroids.resize(_n_clusters * (_vertical_d - _partial_d));
+        _aux_hor_centroids.resize(_n_clusters * _vertical_d);
         _allocator_time.Toc();
         auto centroids_pdx_wrapper = GenerateCentroids(data_p, n);
         if (verbose) {
@@ -120,14 +123,6 @@ class SuperKMeans {
         std::vector<vector_value_t> data_samples_buffer;
         auto data_to_cluster = SampleVectors(data_p, data_samples_buffer, n);
 
-        _reordering_time.Tic();
-        // memcpy(
-        //     (void*) (data_p),
-        //     (void*) (data_samples_buffer.data()),
-        //     sizeof(centroid_value_t) * (_n_samples * _d)
-        // );
-        _reordering_time.Toc();
-
         // TODO(@lkuffo, low): I don't like this rotated_initial_centroids variable
         _allocator_time.Tic();
         std::vector<centroid_value_t> rotated_initial_centroids(_n_clusters * _d);
@@ -135,9 +130,10 @@ class SuperKMeans {
         _rotator_time.Tic();
         _pruner->Rotate(_tmp_centroids.data(), rotated_initial_centroids.data(), _n_clusters);
         _rotator_time.Toc();
+
+        // First iteration: Only Blas
         GetL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
         GetL2NormsRowMajor(rotated_initial_centroids.data(), _n_clusters, centroid_norms.data());
-
         InitAssignAndUpdateCentroids(
             data_to_cluster,
             rotated_initial_centroids.data(),
@@ -148,28 +144,78 @@ class SuperKMeans {
             out_distances.data(),
             _n_samples
         );
-        size_t iter_idx = 1;
         ConsolidateCentroids();
         ComputeCost();
         ComputeShift();
-
+        if (alpha == dp) {
+            PostprocessCentroids();
+        }
+        size_t iter_idx = 1;
         if (verbose)
             std::cout << "Iteration 1" << "/" << _iters << " | Objective: " << cost
                       << " | Shift: " << shift << " | Split: " << _n_split << std::endl
                       << std::endl;
-        GetL2NormsRowMajor(
-            data_to_cluster, _n_samples, data_norms.data(), _partial_d
-        ); // BATCHED ITER
+        // End of First iteration
+
+        if (_iters <= 1) {
+            PrintTimes();
+            return _centroids;
+        }
+        // Second iteration: PDXearch to determine dimensions groupings
+        _pruning_groups.clear();
+        _pruning_groups_partial_d.clear();
+        if (_n_pruning_groups > 1) {
+            _pruning_groups_ends.push_back(n);
+            _pruning_groups_partial_d.push_back(_initial_partial_d);
+            GetGroupsL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
+            GetL2NormsRowMajor(
+                _tmp_centroids.data(), _n_clusters, centroid_norms.data(), _initial_partial_d
+            );
+            AssignAndUpdateCentroidsPartialBatched<true>( // Record pruning_group
+                data_to_cluster,
+                _tmp_centroids.data(),
+                data_norms.data(),
+                centroid_norms.data(),
+                all_distances.data(),
+                centroids_pdx_wrapper,
+                _n_samples
+            );
+            ConsolidateCentroids();
+            ComputeCost();
+            ComputeShift();
+            if (alpha == dp) {
+                PostprocessCentroids();
+            }
+            iter_idx += 1;
+            if (verbose)
+                std::cout << "Iteration 2" << "/" << _iters << " | Objective: " << cost
+                          << " | Shift: " << shift << " | Split: " << _n_split << std::endl
+                          << std::endl;
+            // End of second iteration
+            CreatePruningGroups(data_to_cluster, n);
+        } else {
+            _pruning_groups_ends.push_back(n);
+            _pruning_groups_partial_d.push_back(_initial_partial_d);
+        }
+
+        // Rest of iterations
+        // We need as many buffers with norms as groups
+        _allocator_time.Tic();
+        std::vector<vector_value_t> centroid_partial_norms(
+            _n_clusters * _pruning_groups_partial_d.size()
+        );
+        _allocator_time.Toc();
+        GetGroupsL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
         for (; iter_idx < _iters; ++iter_idx) {
             // BATCHED ITER
-            GetL2NormsRowMajor(
-                _tmp_centroids.data(), _n_clusters, centroid_norms.data(), _partial_d
+            GetL2NormsRowMajorPerGroup(
+                _tmp_centroids.data(), _n_clusters, centroid_partial_norms.data()
             );
             AssignAndUpdateCentroidsPartialBatched(
                 data_to_cluster,
                 _tmp_centroids.data(),
                 data_norms.data(),
-                centroid_norms.data(),
+                centroid_partial_norms.data(),
                 all_distances.data(),
                 centroids_pdx_wrapper,
                 _n_samples
@@ -194,54 +240,59 @@ class SuperKMeans {
 
         _trained = true;
         if (verbose) {
-            const float total_time = _total_search_time.accum_time + _allocator_time.accum_time +
-                                     _rotator_time.accum_time + _norms_calc_time.accum_time +
-                                     _sampling_time.accum_time + _reordering_time.accum_time +
-                                     _total_centroids_update_time.accum_time +
-                                     _centroids_splitting.accum_time + _pdxify_time.accum_time;
-            std::cout << std::fixed << std::setprecision(3);
-            std::cout << std::endl;
-            std::cout << "TOTAL SEARCH TIME " << _total_search_time.accum_time / 1000000000.0
-                      << " (" << _total_search_time.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << " - BLAS " << _blas_total_time.accum_time / 1000000000.0 << " ("
-                      << _blas_total_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << " - PDX  " << _pdx_search_time.accum_time / 1000000000.0 << " ("
-                      << _pdx_search_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL ALLOCATOR TIME " << _allocator_time.accum_time / 1000000000.0
-                      << " (" << _allocator_time.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << "TOTAL ROTATOR TIME " << _rotator_time.accum_time / 1000000000.0 << " ("
-                      << _rotator_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL NORMS CALCULATION TIME "
-                      << _norms_calc_time.accum_time / 1000000000.0 << " ("
-                      << _norms_calc_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL SAMPLING TIME " << _sampling_time.accum_time / 1000000000.0 << " ("
-                      << _sampling_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL UPDATE CENTROIDS TIME "
-                      << _total_centroids_update_time.accum_time / 1000000000.0 << " ("
-                      << _total_centroids_update_time.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << "TOTAL SPLITTING TIME " << _centroids_splitting.accum_time / 1000000000.0
-                      << " (" << _centroids_splitting.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << "TOTAL PDXIFYING TIME " << _pdxify_time.accum_time / 1000000000.0 << " ("
-                      << _pdxify_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL SHIFT TIME " << _shift_time.accum_time / 1000000000.0 << " ("
-                      << _shift_time.accum_time / total_time * 100 << "%) " << std::endl;
-            std::cout << "TOTAL REORDERING TIME " << _reordering_time.accum_time / 1000000000.0
-                      << " (" << _reordering_time.accum_time / total_time * 100 << "%) "
-                      << std::endl;
-            std::cout << "TOTAL (s) "
-                      << (_total_search_time.accum_time + _allocator_time.accum_time +
-                          _rotator_time.accum_time + _norms_calc_time.accum_time +
-                          _sampling_time.accum_time + _total_centroids_update_time.accum_time +
-                          _centroids_splitting.accum_time + _pdxify_time.accum_time +
-                          _shift_time.accum_time) /
-                             1000000000.0
-                      << std::endl;
+            PrintTimes();
         }
         return _centroids;
+    }
+
+    void PrintTimes() {
+        const float total_time =
+            _total_search_time.accum_time + _allocator_time.accum_time + _rotator_time.accum_time +
+            _norms_calc_time.accum_time + _sampling_time.accum_time + _reordering_time.accum_time +
+            _total_centroids_update_time.accum_time + _grouping_time.accum_time +
+            _centroids_splitting.accum_time + _pdxify_time.accum_time + _shift_time.accum_time;
+        std::cout << std::fixed << std::setprecision(3);
+        std::cout << std::endl;
+        std::cout << "TOTAL SEARCH TIME " << _total_search_time.accum_time / 1000000000.0 << " ("
+                  << _total_search_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << " - BLAS " << _blas_total_time.accum_time / 1000000000.0 << " ("
+                  << _blas_total_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << " - PDX  " << _pdx_search_time.accum_time / 1000000000.0 << " ("
+                  << _pdx_search_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << " - NORMS  " << _blas_norms_time.accum_time / 1000000000.0 << " ("
+                  << _blas_norms_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL ALLOCATOR TIME " << _allocator_time.accum_time / 1000000000.0 << " ("
+                  << _allocator_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL ROTATOR TIME " << _rotator_time.accum_time / 1000000000.0 << " ("
+                  << _rotator_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL NORMS CALCULATION TIME " << _norms_calc_time.accum_time / 1000000000.0
+                  << " (" << _norms_calc_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL SAMPLING TIME " << _sampling_time.accum_time / 1000000000.0 << " ("
+                  << _sampling_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL UPDATE CENTROIDS TIME "
+                  << _total_centroids_update_time.accum_time / 1000000000.0 << " ("
+                  << _total_centroids_update_time.accum_time / total_time * 100 << "%) "
+                  << std::endl;
+        std::cout << "TOTAL SPLITTING TIME " << _centroids_splitting.accum_time / 1000000000.0
+                  << " (" << _centroids_splitting.accum_time / total_time * 100 << "%) "
+                  << std::endl;
+        std::cout << "TOTAL PDXIFYING TIME " << _pdxify_time.accum_time / 1000000000.0 << " ("
+                  << _pdxify_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL SHIFT TIME " << _shift_time.accum_time / 1000000000.0 << " ("
+                  << _shift_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL REORDERING TIME " << _reordering_time.accum_time / 1000000000.0 << " ("
+                  << _reordering_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL GROUPING TIME " << _grouping_time.accum_time / 1000000000.0 << " ("
+                  << _grouping_time.accum_time / total_time * 100 << "%) " << std::endl;
+        std::cout << "TOTAL (s) "
+                  << (_total_search_time.accum_time + _allocator_time.accum_time +
+                      _rotator_time.accum_time + _norms_calc_time.accum_time +
+                      _sampling_time.accum_time + _total_centroids_update_time.accum_time +
+                      _centroids_splitting.accum_time + _pdxify_time.accum_time +
+                      _shift_time.accum_time + _grouping_time.accum_time +
+                      _reordering_time.accum_time) /
+                         1000000000.0
+                  << std::endl;
     }
 
     /**
@@ -348,6 +399,7 @@ class SuperKMeans {
                       << _centroids_update_time.accum_time / 1000000000.0 << std::endl;
     }
 
+    template <bool RECORD_PRUNING_GROUP = false>
     void AssignAndUpdateCentroidsPartialBatched(
         const vector_value_t* SKM_RESTRICT data,
         const vector_value_t* SKM_RESTRICT partial_rotated_centroids,
@@ -365,7 +417,7 @@ class SuperKMeans {
         _search_time.Reset();
         _search_time.Tic();
         _total_search_time.Tic();
-        batch_computer::Batched_XRowMajor_YRowMajor_PartialD(
+        batch_computer::template Batched_XRowMajor_YRowMajor_MultiplePartialD<RECORD_PRUNING_GROUP>(
             data,
             partial_rotated_centroids,
             _prev_centroids.data(),
@@ -376,11 +428,15 @@ class SuperKMeans {
             partial_centroid_norms,
             _assignments.data(),
             _distances.data(),
+            _pruning_groups.data(),
+            _pruning_groups_partial_d.data(),
+            _pruning_groups_ends.data(),
             all_distances,
             pdx_centroids,
-            _partial_d,
             _blas_total_time,
-            _pdx_search_time
+            _pdx_search_time,
+            _blas_norms_time,
+            _initial_partial_d
         );
         _search_time.Toc();
         _total_search_time.Toc();
@@ -570,10 +626,222 @@ class SuperKMeans {
         //! We wrap _centroids and _aux_hor_centroids in the PDXLayout wrapper
         //! Any updates to these objects is reflected in the PDXLayout
         auto pdx_centroids = PDXLayout<q, alpha, Pruner>(
-            _centroids.data(), *_pruner, _n_clusters, _d, _partial_d, _aux_hor_centroids.data()
+            _centroids.data(), *_pruner, _n_clusters, _d, _aux_hor_centroids.data()
         );
         _sampling_time.Toc();
         return pdx_centroids;
+    }
+
+    /*
+     * This function creates groups with a similar pruning thresholds.
+     * For now, we aim for 5 or 6 groups with around the same amount of items
+     * The pruning thresholds are found in `groups`
+     */
+    void CreatePruningGroups(float* SKM_RESTRICT data, const size_t n) {
+        _grouping_time.Tic();
+        _pruning_groups_ends.clear();
+        _pruning_groups_partial_d.clear();
+        std::cout << "Creating pruning groups" << std::endl;
+        std::cout << "N: " << n << std::endl;
+        const uint32_t approx_group_size =
+            CeilXToMultipleOfM((n + (_n_pruning_groups - 1)) / _n_pruning_groups, X_BATCH_SIZE);
+        std::cout << "Approx group size: " << approx_group_size << std::endl;
+        constexpr float allowed_deviation_factor = 0.25f;
+        const uint32_t min_group_size =
+            CeilXToMultipleOfM(approx_group_size * (1 - allowed_deviation_factor), X_BATCH_SIZE);
+        std::cout << "Minimum group size: " << min_group_size << std::endl;
+
+        // If we have less than a certain amount of tuples, we just go with one group
+        if (n < X_BATCH_SIZE * _n_pruning_groups) {
+            _pruning_groups_ends.push_back(n);
+            _pruning_groups_partial_d.push_back(_vertical_d);
+            return;
+        }
+
+        std::vector<uint32_t> new_ordering(n);
+        std::iota(new_ordering.begin(), new_ordering.end(), 0);
+
+        // Sort both _pruning_groups values and the indices for later _memcpy
+        std::stable_sort(new_ordering.begin(), new_ordering.end(), [&](uint32_t a, uint32_t b) {
+            return _pruning_groups[a] < _pruning_groups[b];
+        });
+        std::vector<uint32_t> _pruning_groups_sorted(n);
+        for (size_t i = 0; i < n; ++i) {
+            _pruning_groups_sorted[i] = _pruning_groups[new_ordering[i]];
+        }
+        std::copy(
+            _pruning_groups_sorted.begin(), _pruning_groups_sorted.end(), _pruning_groups.begin()
+        );
+
+        uint32_t running_group_size = 0;
+        uint32_t running_group_d = _pruning_groups[0];
+        uint32_t cur_group = running_group_d;
+        for (size_t i = 0; i < n; ++i) {
+            cur_group = _pruning_groups[i];
+            if (running_group_size >= approx_group_size) { // We have a full group
+                _pruning_groups_ends.push_back(i);
+                _pruning_groups_partial_d.push_back(running_group_d);
+                running_group_size = 0;
+                // !The next group could still have the same `d`, that is fine
+                running_group_d = cur_group;
+            }
+            if (cur_group == running_group_d) { // Same group, still not full
+                running_group_size += 1;
+            } else { // Group has changed
+                // Check if current group is approximately full
+                if (running_group_size > min_group_size) {
+                    _pruning_groups_ends.push_back(i);
+                    _pruning_groups_partial_d.push_back(running_group_d);
+                    running_group_d = cur_group;
+                    running_group_size = 1;
+                } else {
+                    // We fuse the current group to the next `d`
+                    running_group_d = cur_group;
+                    running_group_size += 1;
+                }
+            }
+        }
+        std::cout << "Pruning Groups before Last correction" << std::endl;
+        for (size_t i = 0; i < _pruning_groups_ends.size(); ++i) {
+            std::cout << _pruning_groups_partial_d[i] << ": " << _pruning_groups_ends[i]
+                      << std::endl;
+        }
+        // Remaining group
+        if (running_group_size > 0) {
+            running_group_d = _pruning_groups_partial_d.back();
+            std::cout << "Cur group" << ": " << cur_group << std::endl;
+            std::cout << "Last running group" << ": " << running_group_d << std::endl;
+            // We don't want to fuse a `d` group with a `d*2` group and redefine them under `d*2`
+            // If the remainder is small or the last group is still running we fuse with previous
+            if (running_group_size <= X_BATCH_SIZE || cur_group == running_group_d) {
+                _pruning_groups_ends.back() = static_cast<uint32_t>(n);
+            } else { // Otherwise, we create a new group. This would be the tail of the plot
+                _pruning_groups_ends.push_back(n);
+                std::cout << "N: " << n << std::endl;
+                std::cout << "N? " << _pruning_groups_ends.back() << std::endl;
+                _pruning_groups_partial_d.push_back(cur_group);
+                running_group_size = 0;
+            }
+        }
+
+        // Make sure every group except the last one is of a size multiple of X_BATCH_SIZE
+        if (_pruning_groups_ends.size() <= 1) {
+            assert(_pruning_groups_ends.size() == _pruning_groups_partial_d.size());
+            assert(_pruning_groups_ends.back() == n);
+            return;
+        }
+        std::cout << "Pruning Groups Before correction" << std::endl;
+        for (size_t i = 0; i < _pruning_groups_ends.size(); ++i) {
+            std::cout << _pruning_groups_partial_d[i] << ": " << _pruning_groups_ends[i]
+                      << std::endl;
+        }
+        for (size_t i = 0; i + 1 < _pruning_groups_ends.size(); ++i) {
+            size_t cur_end = _pruning_groups_ends[i];
+            size_t prev_end = (i == 0) ? 0 : _pruning_groups_ends[i - 1];
+            size_t cur_group_size = cur_end - prev_end;
+            if (cur_group_size % X_BATCH_SIZE != 0) {
+                // We want to send lower pruning groups to higher pruning groups, not the other way
+                auto new_group_size = FloorXToMultipleOfM(cur_group_size, X_BATCH_SIZE);
+                assert(new_group_size < cur_group_size);
+                auto n_send_to_next = cur_group_size - new_group_size;
+                _pruning_groups_ends[i] = (prev_end + new_group_size);
+                if (i + 1 == _pruning_groups_ends.size()) { // We don't want to change the last val
+                    _pruning_groups_ends[i + 1] = (_pruning_groups_ends[i + 1] + n_send_to_next);
+                }
+            }
+        }
+        std::cout << "Pruning Groups" << std::endl;
+        for (size_t i = 0; i < _pruning_groups_ends.size(); ++i) {
+            std::cout << _pruning_groups_partial_d[i] << ": " << _pruning_groups_ends[i]
+                      << std::endl;
+        }
+
+        assert(_pruning_groups_ends.size() == _pruning_groups_partial_d.size());
+        assert(_pruning_groups_ends.back() == n);
+
+        _grouping_time.Toc();
+        std::cout << "Permuting rows" << std::endl;
+        _reordering_time.Tic();
+        PermuteMatrixRows(data, n, new_ordering.data());
+        _reordering_time.Toc();
+        std::cout << "End Permuting rows" << std::endl;
+    }
+
+    void PermuteMatrixRows(float* SKM_RESTRICT data, const size_t n, const uint32_t* new_ordering) {
+        std::vector<bool> visited(n, false);
+        std::vector<float> tmp_row(_d); // temporary row buffer
+        auto tmp_assignment = _assignments[0];
+        auto tmp_distances = _distances[0];
+        for (size_t i = 0; i < n; ++i) {
+            if (visited[i] || new_ordering[i] == i)
+                continue; // already in place or processed
+            size_t j = i;
+            // copy the first row in the cycle
+            memcpy(tmp_row.data(), data + j * _d, sizeof(vector_value_t) * _d);
+            tmp_assignment = _assignments[j];
+            tmp_distances = _distances[j];
+            while (!visited[j]) {
+                visited[j] = true;
+                size_t next = new_ordering[j];
+                if (next == i) {
+                    // end of cycle: put tmp_row into the final position
+                    memcpy(data + j * _d, tmp_row.data(), sizeof(vector_value_t) * _d);
+                    _assignments[j] = tmp_assignment;
+                    _distances[j] = tmp_distances;
+                } else {
+                    // move the row from `next` into position `j`
+                    memcpy(data + j * _d, data + next * _d, sizeof(vector_value_t) * _d);
+                    _assignments[j] = _assignments[next];
+                    _distances[j] = _distances[next];
+                }
+                j = next;
+            }
+        }
+    }
+
+    void GetGroupsL2NormsRowMajor(
+        const vector_value_t* SKM_RESTRICT data,
+        const size_t n,
+        vector_value_t* SKM_RESTRICT out_norm
+    ) {
+        _norms_calc_time.Tic();
+        Eigen::Map<const MatrixR> e_data(data, n, _d);
+        Eigen::Map<VectorR> e_norms(out_norm, n);
+        const auto n_groups = _pruning_groups_partial_d.size();
+        if (n_groups == 1) {
+            const uint32_t pd = _pruning_groups_partial_d[0];
+            e_norms.noalias() = e_data.leftCols(pd).rowwise().squaredNorm();
+        } else {
+            size_t start = 0;
+            for (size_t i = 0; i < n_groups; ++i) {
+                const size_t end = _pruning_groups_ends[i];
+                const size_t count = end - start;
+                const uint32_t pd = _pruning_groups_partial_d[i];
+                assert(end <= n);
+                auto block = e_data.block(start, 0, count, pd);
+                e_norms.segment(start, count).noalias() = block.rowwise().squaredNorm();
+                start = end; // move to next group
+            }
+        }
+        _norms_calc_time.Toc();
+    }
+
+    void GetL2NormsRowMajorPerGroup(
+        const vector_value_t* SKM_RESTRICT data,
+        const size_t n,
+        vector_value_t* SKM_RESTRICT out_norm
+    ) {
+        _norms_calc_time.Tic();
+        const auto n_groups = _pruning_groups_partial_d.size();
+        auto out_norm_p = out_norm;
+        Eigen::Map<const MatrixR> e_data(data, n, _d);
+        for (size_t i = 0; i < n_groups; ++i) {
+            const auto partial_d = _pruning_groups_partial_d[i];
+            Eigen::Map<VectorR> e_norms(out_norm_p, n);
+            e_norms.noalias() = e_data.leftCols(partial_d).rowwise().squaredNorm();
+            out_norm_p += n;
+        }
+        _norms_calc_time.Toc();
     }
 
     void GetL2NormsRowMajor(
@@ -589,15 +857,9 @@ class SuperKMeans {
     }
 
     void CentroidsToAuxiliaryHorizontal() {
-        if (_vertical_d - _partial_d == 0) {
-            return;
-        }
         Eigen::Map<MatrixR> hor_centroids(_tmp_centroids.data(), _n_clusters, _d);
-        Eigen::Map<MatrixR> out_aux_centroids(
-            _aux_hor_centroids.data(), _n_clusters, (_vertical_d - _partial_d)
-        );
-        out_aux_centroids.noalias() =
-            hor_centroids.middleCols(_partial_d, (_vertical_d - _partial_d));
+        Eigen::Map<MatrixR> out_aux_centroids(_aux_hor_centroids.data(), _n_clusters, _vertical_d);
+        out_aux_centroids.noalias() = hor_centroids.leftCols(_vertical_d);
     }
 
     void GetL2NormsRowMajor(
@@ -685,6 +947,11 @@ class SuperKMeans {
     std::vector<uint32_t> _assignments;
     std::vector<distance_t> _distances;
     std::vector<uint32_t> _cluster_sizes;
+
+    std::vector<uint32_t> _pruning_groups;
+    std::vector<uint32_t> _pruning_groups_ends;
+    std::vector<uint32_t> _pruning_groups_partial_d;
+
     std::vector<vector_value_t> data_norms;
     std::vector<vector_value_t> centroid_norms;
     std::vector<float> _reciprocal_cluster_sizes;
@@ -700,10 +967,12 @@ class SuperKMeans {
     size_t _n_samples;
     size_t _n_split;
     uint32_t N_THREADS;
-    uint32_t _partial_d = 128; // TODO(@lkuffo, crit): Dynamic
+    uint32_t _initial_partial_d = 128;
+    uint32_t _n_pruning_groups = 1;
     uint32_t _vertical_d;
     float tol;
 
+    TicToc _grouping_time;
     TicToc _reordering_time;
     TicToc _search_time;
     TicToc _blas_search_time;
@@ -719,6 +988,7 @@ class SuperKMeans {
     TicToc _pdxify_time;
     TicToc _pdx_search_time;
     TicToc _shift_time;
+    TicToc _blas_norms_time;
     float _all_search_time = 0.0;
 };
 } // namespace skmeans
