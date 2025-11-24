@@ -20,7 +20,7 @@ int main(int argc, char* argv[]) {
     const int n = 150000;
     // const int n = 720896;
     const int d = 1024;
-    int n_clusters = 1500;
+    int n_clusters = 5000;
     int n_iters = 25;
     float sampling_fraction = 1.0;
 

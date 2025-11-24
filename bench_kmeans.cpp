@@ -25,7 +25,7 @@ int main(int argc, char* argv[]) {
     const size_t n = 150000;
     // const size_t n = 720896;
     const size_t d = 1024;
-    size_t n_clusters = 1500;
+    size_t n_clusters = 5000;
     uint32_t n_iters = 25;
     float sampling_fraction = 1.0;
 

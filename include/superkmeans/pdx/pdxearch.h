@@ -475,8 +475,6 @@ class PDXearch {
             auto pruning_distances = partial_pruning_distances + data_offset;
             current_cluster = cluster_idx;
             CLUSTER_TYPE& cluster = pdx_data.clusters[current_cluster];
-            // std::cout << "Cluster IDX: " << cluster_idx << std::endl;
-            // std::cout << cluster.num_embeddings << std::endl;
             data_offset += cluster.num_embeddings;
             Prune(
                 query,

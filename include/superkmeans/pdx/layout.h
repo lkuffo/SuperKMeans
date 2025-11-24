@@ -186,7 +186,6 @@ class PDXLayout {
         const size_t full_chunks = n / CHUNK_SIZE;
         const size_t n_remaining = n % CHUNK_SIZE;
         // TODO(@lkuffo, high): Parallelize
-        //for (size_t i = 0; i + CHUNK_SIZE <= n; i += CHUNK_SIZE) {
         for (size_t i = 0; i < full_chunks; ++i) {
             auto chunk_offset = (i * CHUNK_SIZE) * d; // Chunk offset is the same in both layouts
             const scalar_t* SKM_RESTRICT chunk_p = in_vectors + chunk_offset;
