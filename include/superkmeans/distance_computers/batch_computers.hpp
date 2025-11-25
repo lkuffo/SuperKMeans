@@ -48,7 +48,7 @@ class BatchComputer<l2, f32> {
         Eigen::Map<MatrixR> distances_matrix(all_distances_buf, n_x, n_y);
         distances_matrix.noalias() = x_matrix * y_matrix;
         // distances_matrix.noalias() = x_matrix * y_matrix.transpose(); // YRowMajor
-#pragma omp parallel for num_threads(14)
+#pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n_x; ++i) {
             const float norm_x_i = norms_x[i];
             float* row_p = distances_matrix.data() + i * n_y;
@@ -85,7 +85,7 @@ class BatchComputer<l2, f32> {
         tt.Toc();
         // std::cout << "Total time for BLAS multiplication (s): " << tt.accum_time / 1000000000.0
         //           << std::endl;
-#pragma omp parallel for num_threads(14)
+#pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n_x; ++i) {
             const float norm_x_i = norms_x[i];
             float* row_p = distances_matrix.data() + i * n_y;
@@ -127,9 +127,9 @@ class BatchComputer<l2, f32> {
                 // std::cout << batch_n_x << "," << batch_n_y << std::endl;
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
                 Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, d);
-                Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);  // YRowMajor
-                distances_matrix.noalias() = x_matrix * y_matrix.transpose(); // YRowMajor
-#pragma omp parallel for num_threads(14)
+                Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);
+                distances_matrix.noalias() = x_matrix * y_matrix.transpose();
+#pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const auto i_idx = i + r;
                     const float norm_x_i = norms_x[i_idx];
@@ -206,7 +206,7 @@ class BatchComputer<l2, f32> {
                 blas_tt.Toc();
                 cur_blas_tt.Toc();
                 norms_tt.Tic();
-#pragma omp parallel for num_threads(10)
+#pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const auto i_idx = i + r;
                     const float norm_x_i = norms_x[i_idx];
@@ -219,7 +219,7 @@ class BatchComputer<l2, f32> {
                 norms_tt.Toc();
                 cur_pdx_tt.Tic();
                 pdx_tt.Tic();
-#pragma omp parallel for num_threads(10) schedule(dynamic, 8)
+#pragma omp parallel for num_threads(g_n_threads) schedule(dynamic, 8)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const auto i_idx = i + r;
                     auto data_p = x + (i_idx * d);

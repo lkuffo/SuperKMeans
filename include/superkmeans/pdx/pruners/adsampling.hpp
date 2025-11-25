@@ -121,7 +121,7 @@ class ADSamplingPruner {
     }
 
     void FlipSign(const float* SKM_RESTRICT data, float* SKM_RESTRICT out, const size_t n) {
-#pragma omp parallel for num_threads(10)
+#pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const auto offset = i * num_dimensions;
             size_t j = 0;
@@ -155,7 +155,7 @@ class ADSamplingPruner {
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
             FlipSign(vectors, out_buffer, n);
             fftwf_init_threads();
-            fftwf_plan_with_nthreads(10);
+            fftwf_plan_with_nthreads(g_n_threads);
             int n0 = static_cast<int>(num_dimensions); // length of each 1D transform
             int howmany = static_cast<int>(n); // number of transforms (one per row)
             fftw_r2r_kind kind[1] = {FFTW_REDFT10};

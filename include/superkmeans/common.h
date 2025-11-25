@@ -66,11 +66,18 @@ static inline constexpr size_t X_BATCH_SIZE = 4096;
 static inline constexpr size_t Y_BATCH_SIZE = 1024;
 static inline constexpr size_t VECTOR_CHUNK_SIZE = 1024; // Same as Y_BATCH_SIZE
 static inline constexpr uint16_t PDX_VECTOR_SIZE = 1024; // Same as Y_BATCH_SIZE
+static inline constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
+static inline constexpr float PRUNER_INITIAL_THRESHOLD = 1.5f;
+static inline constexpr float PRUNING_GROUP_DEVIATION_FACTOR = 0.25f;
+static inline constexpr uint32_t DEFAULT_INITIAL_PARTIAL_D = 128;
 // Evaluating the pruning threshold is so fast that we can allow smaller fetching sizes
 // to avoid more data access. Super useful in architectures with low bandwidth at L3/DRAM like
 // Intel SPR
 static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[19] =
     {16, 16, 32, 32, 32, 32, 64, 64, 64, 64, 128, 128, 128, 128, 256, 256, 512, 1024, 2048};
+
+// Global thread count for OpenMP parallel regions
+inline uint32_t g_n_threads = 1;
 
 template <class T, T val = 8>
 static constexpr uint32_t AlignValue(T n) {

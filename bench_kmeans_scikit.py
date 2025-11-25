@@ -18,9 +18,7 @@ import fastkmeans
 from fastkmeans import FastKMeans
 
 if __name__ == "__main__":
-    print(np.show_config())
-
-    dataset = sys.argv[1] if len(sys.argv) > 1 else "sift"
+    dataset = sys.argv[1] if len(sys.argv) > 1 else "mxbai"
     dataset_params = {
         "mxbai": (769_382, 1024),
         "openai": (999_000, 1536),

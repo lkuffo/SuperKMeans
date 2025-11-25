@@ -1,6 +1,4 @@
 #pragma once
-#ifndef SUPERKMEANS_H
-#define SUPERKMEANS_H
 
 #include <Eigen/Eigen/Dense>
 #include <iomanip>
@@ -12,8 +10,6 @@
 #include "superkmeans/distance_computers/batch_computers.hpp"
 #include "superkmeans/pdx/pdxearch.h"
 #include "superkmeans/pdx/utils.h"
-
-#define EPS (1 / 1024.)
 
 namespace skmeans {
 template <Quantization q = f32, DistanceFunction alpha = l2, class Pruner = ADSamplingPruner<q>>
@@ -29,8 +25,6 @@ class SuperKMeans {
     using batch_computer = BatchComputer<alpha, q>;
 
   public:
-    // TODO(@lkuffo, high): N-threads should be controlled with a global function. By default
-    //   it is set to all threads
     // TODO(lkuffo, high): If less than 128 dimensions, then do not even attempt to prune.
     //   Just send everything to batched queries
     SuperKMeans(
@@ -51,7 +45,9 @@ class SuperKMeans {
         if (sampling_fraction > 1.0) {
             throw std::invalid_argument("sampling_fraction must be smaller than 1");
         }
-        _pruner = std::make_unique<Pruner>(dimensionality, 1.5); // TODO(@lkuffo, crit): Remove magic number
+        // Set global thread count
+        g_n_threads = n_threads;
+        _pruner = std::make_unique<Pruner>(dimensionality, PRUNER_INITIAL_THRESHOLD);
     }
 
     /**
@@ -66,8 +62,7 @@ class SuperKMeans {
      */
     std::vector<skmeans_centroid_value_t<q>> Train(
         const vector_value_t* SKM_RESTRICT data,
-        const size_t n,
-        uint32_t num_threads = -1
+        const size_t n
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
         if (_trained) {
@@ -94,11 +89,9 @@ class SuperKMeans {
         // Pruning groups logic
         _pruning_groups.resize(n);
 
-        std::vector<vector_value_t> data_norms(_n_samples);
-        std::vector<vector_value_t> centroid_norms(_n_clusters);
+        data_norms.resize(_n_samples);
+        centroid_norms.resize(_n_clusters);
         std::vector<distance_t> all_distances(X_BATCH_SIZE * Y_BATCH_SIZE);
-        std::vector<uint32_t> out_knn(n);
-        std::vector<distance_t> out_distances(n);
         _allocator_time.Toc();
 
         // TODO(@lkuffo, med): If metric is dp, normalize the vectors so we can use l2
@@ -143,8 +136,6 @@ class SuperKMeans {
             data_norms.data(),
             centroid_norms.data(),
             all_distances.data(),
-            out_knn.data(),
-            out_distances.data(),
             _n_samples
         );
         ConsolidateCentroids();
@@ -346,8 +337,6 @@ class SuperKMeans {
         const vector_value_t* SKM_RESTRICT data_norms,
         const vector_value_t* SKM_RESTRICT centroid_norms,
         distance_t* SKM_RESTRICT all_distances,
-        uint32_t* SKM_RESTRICT out_knn,
-        distance_t* SKM_RESTRICT out_distances,
         const size_t n
     ) {
         if (verbose) {
@@ -365,8 +354,8 @@ class SuperKMeans {
             _d,
             data_norms,
             centroid_norms,
-            out_knn,
-            out_distances,
+            _assignments.data(),
+            _distances.data(),
             all_distances
         );
         _blas_search_time.Toc();
@@ -387,13 +376,6 @@ class SuperKMeans {
         _centroids_update_time.Reset();
         _centroids_update_time.Tic();
         _total_centroids_update_time.Tic();
-#pragma omp parallel for if (N_THREADS > 1) num_threads(N_THREADS)
-        for (size_t i = 0; i < n; ++i) {
-            auto assignment_idx = out_knn[i];
-            auto assignment_distance = out_distances[i];
-            _assignments[i] = assignment_idx;
-            _distances[i] = assignment_distance;
-        }
         UpdateCentroids(data, n);
         _centroids_update_time.Toc();
         _total_centroids_update_time.Toc();
@@ -464,7 +446,7 @@ class SuperKMeans {
     }
 
     void UpdateCentroids(const vector_value_t* SKM_RESTRICT data, const size_t n) {
-#pragma omp parallel num_threads(N_THREADS)
+#pragma omp parallel num_threads(g_n_threads)
         {
             uint32_t nt = N_THREADS;
             uint32_t rank = omp_get_thread_num();
@@ -519,11 +501,11 @@ class SuperKMeans {
                 // Small symmetric perturbation
                 for (size_t j = 0; j < _d; j++) {
                     if (j % 2 == 0) {
-                        _tmp_centroids_p[ci * _d + j] *= 1 + EPS;
-                        _tmp_centroids_p[cj * _d + j] *= 1 - EPS;
+                        _tmp_centroids_p[ci * _d + j] *= 1 + CENTROID_PERTURBATION_EPS;
+                        _tmp_centroids_p[cj * _d + j] *= 1 - CENTROID_PERTURBATION_EPS;
                     } else {
-                        _tmp_centroids_p[ci * _d + j] *= 1 - EPS;
-                        _tmp_centroids_p[cj * _d + j] *= 1 + EPS;
+                        _tmp_centroids_p[ci * _d + j] *= 1 - CENTROID_PERTURBATION_EPS;
+                        _tmp_centroids_p[cj * _d + j] *= 1 + CENTROID_PERTURBATION_EPS;
                     }
                 }
 
@@ -537,7 +519,7 @@ class SuperKMeans {
 
     void ConsolidateCentroids() {
         _centroids_splitting.Tic();
-#pragma omp parallel for if (N_THREADS > 1) num_threads(N_THREADS)
+#pragma omp parallel for if (g_n_threads > 1) num_threads(g_n_threads)
         for (size_t i = 0; i < _n_clusters; ++i) {
             auto _tmp_centroids_p = _tmp_centroids.data() + i * _d;
             if (_cluster_sizes[i] == 0) {
@@ -657,9 +639,8 @@ class SuperKMeans {
         const uint32_t approx_group_size =
             CeilXToMultipleOfM((n + (_n_pruning_groups - 1)) / _n_pruning_groups, X_BATCH_SIZE);
         std::cout << "Approx group size: " << approx_group_size << std::endl;
-        constexpr float allowed_deviation_factor = 0.25f;
         const uint32_t min_group_size =
-            CeilXToMultipleOfM(approx_group_size * (1 - allowed_deviation_factor), X_BATCH_SIZE);
+            CeilXToMultipleOfM(approx_group_size * (1 - PRUNING_GROUP_DEVIATION_FACTOR), X_BATCH_SIZE);
         std::cout << "Minimum group size: " << min_group_size << std::endl;
 
         // If we have less than a certain amount of tuples, we just go with one group
@@ -899,11 +880,11 @@ class SuperKMeans {
         for (size_t i = 0; i < _n_clusters; ++i) {
             float sum = 0.0f;
             for (size_t j = 0; j < _d; ++j) {
-                sum += centroids_p[j] * centroids_p[j];
+                sum += centroids_p[i * _d + j] * centroids_p[i * _d + j];
             }
             float norm = std::sqrt(sum);
-            for (size_t j = 0; j < _d; ++i) {
-                centroids_p[j] = centroids_p[j] / norm;
+            for (size_t j = 0; j < _d; ++j) {
+                centroids_p[i * _d + j] = centroids_p[i * _d + j] / norm;
             }
         }
     }
@@ -979,7 +960,7 @@ class SuperKMeans {
     size_t _n_samples;
     size_t _n_split;
     uint32_t N_THREADS;
-    uint32_t _initial_partial_d = 32;
+    uint32_t _initial_partial_d = DEFAULT_INITIAL_PARTIAL_D;
     uint32_t _n_pruning_groups = 1;
     uint32_t _vertical_d;
     float tol;
@@ -1004,5 +985,3 @@ class SuperKMeans {
     float _all_search_time = 0.0;
 };
 } // namespace skmeans
-
-#endif // SUPERKMEANS_H

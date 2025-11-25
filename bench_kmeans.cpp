@@ -19,7 +19,7 @@
 
 int main(int argc, char* argv[]) {
     // Choose dataset by name. You can also pass the dataset name as the first CLI argument.
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("sift");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
 
     const std::unordered_map<std::string, std::pair<size_t, size_t>> dataset_params = {
         {"mxbai", {769382, 1024}}, // pd: 128
