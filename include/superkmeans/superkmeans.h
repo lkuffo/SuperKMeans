@@ -201,7 +201,6 @@ class SuperKMeans {
         _allocator_time.Toc();
         GetGroupsL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
         for (; iter_idx < _iters; ++iter_idx) {
-            // BATCHED ITER
             GetL2NormsRowMajorPerGroup(
                 _tmp_centroids.data(), _n_clusters, centroid_partial_norms.data()
             );
@@ -226,11 +225,11 @@ class SuperKMeans {
                           << " | Split: " << _n_split << std::endl
                           << std::endl;
         }
-        //! I don't need proper assignments until the last iteration
-        if (_sampling_fraction == 1) {
+        //! I only need assignments if sampling_faction < 1
+        if (_sampling_fraction < 1.0f) {
+            // TODO(@lkuffo, critical): Create proper assignments
+            // Assign(data, centroids_pdx_wrapper, n);
         }
-        // TODO(@lkuffo, critical): Create proper assignments
-        // Assign(data, centroids_pdx_wrapper, n);
 
         _trained = true;
         if (verbose) {
@@ -448,7 +447,7 @@ class SuperKMeans {
     void UpdateCentroids(const vector_value_t* SKM_RESTRICT data, const size_t n) {
 #pragma omp parallel num_threads(g_n_threads)
         {
-            uint32_t nt = N_THREADS;
+            uint32_t nt = g_n_threads;
             uint32_t rank = omp_get_thread_num();
             // This thread is taking care of centroids c0:c1
             size_t c0 = (_n_clusters * rank) / nt;
@@ -469,8 +468,6 @@ class SuperKMeans {
         const vector_value_t* SKM_RESTRICT vector,
         const uint32_t cluster_idx
     ) {
-        // Potentially also store the information to quickly calculate the norms for DP
-        // TODO(@lkuffo, low): This should be trivially auto-vectorized in any architecture
 #pragma clang loop vectorize(enable)
         for (size_t i = 0; i < _d; ++i) {
             _tmp_centroids[cluster_idx * _d + i] += vector[i];
@@ -533,8 +530,6 @@ class SuperKMeans {
         }
         SplitClusters();
         _centroids_splitting.Toc();
-        // memcpy and PDXify in one go?
-        // TODO(@lkuffo, high): Pruning flag false/true
         _pdxify_time.Tic();
         //! This updates the object within the pdx_layout wrapper
         PDXLayout<q, alpha, Pruner>::template PDXify<false>(
@@ -557,6 +552,7 @@ class SuperKMeans {
         Eigen::Map<const MatrixR> prev_mat(_prev_centroids.data(), _n_clusters, _d);
         MatrixR diff = new_mat - prev_mat;
         shift = 0.0f;
+#pragma omp parallel for reduction(+:shift) num_threads(g_n_threads)
         for (size_t i = 0; i < _n_clusters; ++i) {
             shift += diff.row(i).squaredNorm();
         }
@@ -576,9 +572,9 @@ class SuperKMeans {
         const size_t n
     ) {
         _sampling_time.Tic();
-        const auto jumps = static_cast<size_t>(std::floor(1.0 * n / _n_clusters));
         auto tmp_centroids_p = _tmp_centroids.data();
         // Equidistant sampling similar to DuckDB's
+        // const auto jumps = static_cast<size_t>(std::floor(1.0 * n / _n_clusters));
         // for (size_t i = 0; i < n; i += jumps) {
         //     // TODO(@lkuffo, low): What if centroid scalar_t are not the same size of vector ones
         //     memcpy(
@@ -596,25 +592,17 @@ class SuperKMeans {
         }
         _sampling_time.Toc();
         // We populate the _centroids buffer with the centroids in the PDX layout
-        if constexpr (std::is_same_v<Pruner, ADSamplingPruner<q>>) {
-            // TODO(@lkuffo, high): Implement a template bool for pruning or not, this would depend
-            //    on the dimensionality of the data
-            _allocator_time.Tic();
-            std::vector<centroid_value_t> rotated_centroids(_n_clusters * _d);
-            _allocator_time.Toc();
-            _rotator_time.Tic();
-            _pruner->Rotate(_tmp_centroids.data(), rotated_centroids.data(), _n_clusters);
-            _rotator_time.Toc();
-            _pdxify_time.Tic();
-            PDXLayout<q, alpha, Pruner>::template PDXify<false>(
-                rotated_centroids.data(), _centroids.data(), _n_clusters, _d
-            );
-            _pdxify_time.Toc();
-        } else {
-            PDXLayout<q, alpha, Pruner>::template PDXify<true>(
-                tmp_centroids_p.data(), _centroids.data(), _n_clusters, _d
-            );
-        }
+        _allocator_time.Tic();
+        std::vector<centroid_value_t> rotated_centroids(_n_clusters * _d);
+        _allocator_time.Toc();
+        _rotator_time.Tic();
+        _pruner->Rotate(_tmp_centroids.data(), rotated_centroids.data(), _n_clusters);
+        _rotator_time.Toc();
+        _pdxify_time.Tic();
+        PDXLayout<q, alpha, Pruner>::template PDXify<false>(
+            rotated_centroids.data(), _centroids.data(), _n_clusters, _d
+        );
+        _pdxify_time.Toc();
         _sampling_time.Tic();
         //! We wrap _centroids and _aux_hor_centroids in the PDXLayout wrapper
         //! Any updates to these objects is reflected in the PDXLayout
@@ -868,13 +856,13 @@ class SuperKMeans {
     }
 
     size_t GetNVectorsToSample(const size_t n) const {
-        if (_sampling_fraction == 1.0) { // Needed?
+        if (_sampling_fraction == 1.0) {
             return n;
         }
         return std::floor(n * _sampling_fraction);
     }
 
-    // TODO(@lkuffo, high): Centroids are on PDX, I cant do this... but TMP centroids are not!
+    // TODO(@lkuffo, low): Centroids are on PDX, I cant do this... but TMP centroids are not!
     void PostprocessCentroids() {
         auto centroids_p = _centroids.data();
         for (size_t i = 0; i < _n_clusters; ++i) {
@@ -916,19 +904,17 @@ class SuperKMeans {
         _sampling_time.Toc();
 
         std::cout << "_n_samples: " << _n_samples << std::endl;
-        if constexpr (std::is_same_v<Pruner, ADSamplingPruner<q>>) {
-            // TODO(@lkuffo, crit): This buffer is a headache
-            _allocator_time.Tic();
-            data_samples_buffer.resize(_n_samples * _d);
-            _allocator_time.Toc();
-            _rotator_time.Tic();
-            std::cout << "Rotating 1..." << std::endl;
-            _pruner->Rotate(tmp_data_buffer_p, data_samples_buffer.data(), _n_samples);
-            _rotator_time.Toc();
-            return data_samples_buffer.data();
-        } else {                      // Flat
-            return tmp_data_buffer_p; // Zero-copy
-        }
+
+        // TODO(@lkuffo, crit): This buffer is a headache
+            // Sometimes I would not need to rotate
+        _allocator_time.Tic();
+        data_samples_buffer.resize(_n_samples * _d);
+        _allocator_time.Toc();
+        _rotator_time.Tic();
+        std::cout << "Rotating 1..." << std::endl;
+        _pruner->Rotate(tmp_data_buffer_p, data_samples_buffer.data(), _n_samples);
+        _rotator_time.Toc();
+        return data_samples_buffer.data();
     }
 
     std::unique_ptr<Pruner> _pruner;
