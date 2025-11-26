@@ -19,7 +19,7 @@
 
 int main(int argc, char* argv[]) {
     // Choose dataset by name. You can also pass the dataset name as the first CLI argument.
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("arxiv");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
 
     const std::unordered_map<std::string, std::pair<size_t, size_t>> dataset_params = {
         {"mxbai", {769382, 1024}}, // pd: 128
@@ -88,7 +88,10 @@ int main(int argc, char* argv[]) {
     // ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans", [&]() {
     //     auto centroids = kmeans_state.Train(data.data(), n);
     // });
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans Queries", [&]() {
-        auto centroids = kmeans_state.Train(data.data(), n, queries.data(), n_queries);
+    // ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans Queries", [&]() {
+    //     auto centroids = kmeans_state.Train(data.data(), n, queries.data(), n_queries);
+    // });
+    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans Queries Sampled", [&]() {
+        auto centroids = kmeans_state.Train(data.data(), n, nullptr, n_queries, true);
     });
 }

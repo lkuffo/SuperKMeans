@@ -65,6 +65,7 @@ class SuperKMeans {
         const size_t n,
         const vector_value_t* SKM_RESTRICT queries = nullptr,
         const size_t n_queries = 0,
+        const bool sample_queries = false,
         const size_t objective_k = 100
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
@@ -76,6 +77,9 @@ class SuperKMeans {
             throw std::runtime_error(
                 "The number of points should be at least as large as the number of clusters"
             );
+        }
+        if (n_queries > 0 && queries == nullptr && !sample_queries) {
+            throw std::invalid_argument("Queries must be provided if n_queries > 0 and sample_queries is false");
         }
         const vector_value_t* SKM_RESTRICT data_p = data;
         _n_samples = GetNVectorsToSample(n);
@@ -118,7 +122,7 @@ class SuperKMeans {
         // TODO: This is bad because data_to_cluster may have one buffer or the other, objects
         // life span is not clear
         std::vector<vector_value_t> data_samples_buffer;
-        auto data_to_cluster = SampleVectors(data_p, data_samples_buffer, n);
+        auto data_to_cluster = SampleVectors(data_p, data_samples_buffer, n, _n_samples);
 
         // TODO(@lkuffo, low): I don't like this rotated_initial_centroids variable
         _allocator_time.Tic();
@@ -148,7 +152,18 @@ class SuperKMeans {
             _rotator_time.Tic();
             // Create temporary buffer for rotated queries and rotate them
             rotated_queries.resize(n_queries * _d);
-            _pruner->Rotate(queries, rotated_queries.data(), n_queries);
+            if (sample_queries) {
+                std::cout << "Sampling queries from data..." << std::endl;
+                _sampling_time.Tic();
+                SampleVectors<false>(data_to_cluster, rotated_queries, _n_samples, n_queries);
+                _sampling_time.Toc();
+            } else {
+                // We already did a validation step to ensure that queries is not nullptr
+                _rotator_time.Tic();
+                _pruner->Rotate(queries, rotated_queries.data(), n_queries);
+                _rotator_time.Toc();
+            }
+
             _rotator_time.Toc();
             _gt_assignments_time.Tic();
             GetGTAssignmentsAndDistances(data_to_cluster, _n_samples, rotated_queries.data(), n_queries, objective_k);
@@ -1004,22 +1019,25 @@ class SuperKMeans {
     }
 
     // Equidistant sampling similar to DuckDB's
+    template <bool ROTATE = true>
     vector_value_t* SampleVectors(
         const vector_value_t* SKM_RESTRICT data,
         std::vector<vector_value_t>& data_samples_buffer,
-        const size_t n
+        const size_t n,
+        const size_t n_samples
     ) { // TODO(@lkuffo, med): can be const function
         const vector_value_t* tmp_data_buffer_p = nullptr;
         std::vector<vector_value_t> samples_tmp;
         // TODO(@lkuffo, medium): If DP, normalize here while taking the samples
         _sampling_time.Tic();
-        if (_n_samples < n) {
-            samples_tmp.resize(_n_samples * _d);
-            const auto jumps = static_cast<size_t>(std::floor((1.0 * n) / _n_samples));
-            for (size_t i = 0; i < _n_samples; i += jumps) {
+        if (n_samples < n) {
+            samples_tmp.resize(n_samples * _d);
+            const auto jumps = static_cast<size_t>(std::floor((1.0 * n) / n_samples));
+            for (size_t i = 0; i < n_samples; i++) {
+                size_t src_vector_idx = i * jumps;
                 memcpy(
-                    (void*) (samples_tmp.data() + (_d * i)),
-                    (void*) (data + i),
+                    (void*) (samples_tmp.data() + i * _d),
+                    (void*) (data + src_vector_idx * _d),
                     sizeof(vector_value_t) * _d
                 );
             }
@@ -1029,16 +1047,24 @@ class SuperKMeans {
         }
         _sampling_time.Toc();
 
-        std::cout << "_n_samples: " << _n_samples << std::endl;
+        std::cout << "n_samples: " << n_samples << std::endl;
 
         // TODO(@lkuffo, crit): This buffer is a headache
             // Sometimes I would not need to rotate
         _allocator_time.Tic();
-        data_samples_buffer.resize(_n_samples * _d);
+        data_samples_buffer.resize(n_samples * _d);
         _allocator_time.Toc();
         _rotator_time.Tic();
         std::cout << "Rotating 1..." << std::endl;
-        _pruner->Rotate(tmp_data_buffer_p, data_samples_buffer.data(), _n_samples);
+        if (ROTATE) {
+            _pruner->Rotate(tmp_data_buffer_p, data_samples_buffer.data(), n_samples);
+        } else {
+            memcpy(
+                (void*) data_samples_buffer.data(),
+                (void*) tmp_data_buffer_p,
+                sizeof(vector_value_t) * n_samples * _d
+            );
+        }
         _rotator_time.Toc();
         return data_samples_buffer.data();
     }
