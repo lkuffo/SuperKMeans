@@ -215,6 +215,46 @@ class SuperKMeans {
             PrintTimes();
             return _centroids;
         }
+
+        // Special path for low-dimensional data: use BLAS-only for all iterations
+        if (_d < 128) {
+            std::cout << " !!!!!!!!!!!!! BLAS-only path" << std::endl;
+            for (; iter_idx < _iters; ++iter_idx) {
+                // Recompute centroid norms for the updated centroids
+                GetL2NormsRowMajor(_tmp_centroids.data(), _n_clusters, centroid_norms.data());
+                InitAssignAndUpdateCentroids(
+                    data_to_cluster,
+                    _tmp_centroids.data(),
+                    data_norms.data(),
+                    centroid_norms.data(),
+                    all_distances.data(),
+                    _n_samples
+                );
+                ConsolidateCentroids();
+                ComputeCost();
+                ComputeShift();
+                if (alpha == dp) {
+                    PostprocessCentroids();
+                }
+                if (n_queries) {
+                    _recall_time.Tic();
+                    float cur_recall = ComputeRecall(rotated_queries.data(), n_queries, objective_k, _centroids_to_explore);
+                    _recall_time.Toc();
+                    _recall = cur_recall;
+                }
+                if (verbose)
+                    std::cout << "Iteration " << iter_idx + 1 << "/" << _iters
+                              << " | Objective: " << cost << " | Shift: " << shift
+                              << " | Split: " << _n_split
+                              << " | Recall: " << _recall << " [BLAS-only]" << std::endl << std::endl;
+            }
+            _trained = true;
+            if (verbose) {
+                PrintTimes();
+            }
+            return _centroids;
+        }
+
         // Second iteration: PDXearch to determine dimensions groupings
         _pruning_groups.clear();
         _pruning_groups_partial_d.clear();
@@ -1050,7 +1090,6 @@ class SuperKMeans {
         std::cout << "n_samples: " << n_samples << std::endl;
 
         // TODO(@lkuffo, crit): This buffer is a headache
-            // Sometimes I would not need to rotate
         _allocator_time.Tic();
         data_samples_buffer.resize(n_samples * _d);
         _allocator_time.Toc();

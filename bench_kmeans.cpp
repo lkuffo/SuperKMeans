@@ -19,14 +19,16 @@
 
 int main(int argc, char* argv[]) {
     // Choose dataset by name. You can also pass the dataset name as the first CLI argument.
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("glove100");
 
     const std::unordered_map<std::string, std::pair<size_t, size_t>> dataset_params = {
         {"mxbai", {769382, 1024}}, // pd: 128
         {"openai", {999000, 1536}}, // pd: 192
         {"arxiv", {2253000, 768}},  // pd: 128
         {"sift", {1000000, 128}}, // pd: 32
-        {"fmnist", {60000, 784}} // pd: 32
+        {"fmnist", {60000, 784}}, // pd: 32
+        {"glove100", {1183514, 100}}, // pd: 32?
+        {"glove50", {1183514, 50}} // pd: 16?
     };
 
     auto it = dataset_params.find(dataset);
@@ -88,10 +90,10 @@ int main(int argc, char* argv[]) {
     // ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans", [&]() {
     //     auto centroids = kmeans_state.Train(data.data(), n);
     // });
-    // ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans Queries", [&]() {
-    //     auto centroids = kmeans_state.Train(data.data(), n, queries.data(), n_queries);
-    // });
-    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans Queries Sampled", [&]() {
-        auto centroids = kmeans_state.Train(data.data(), n, nullptr, n_queries, true);
+    ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans Queries", [&]() {
+        auto centroids = kmeans_state.Train(data.data(), n, queries.data(), n_queries);
     });
+    // ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans Queries Sampled", [&]() {
+    //     auto centroids = kmeans_state.Train(data.data(), n, nullptr, n_queries, true);
+    // });
 }

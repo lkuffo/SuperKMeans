@@ -18,13 +18,15 @@ import fastkmeans
 from fastkmeans import FastKMeans
 
 if __name__ == "__main__":
-    dataset = sys.argv[1] if len(sys.argv) > 1 else "arxiv"
+    dataset = sys.argv[1] if len(sys.argv) > 1 else "glove100"
     dataset_params = {
         "mxbai": (769_382, 1024),
         "openai": (999_000, 1536),
         "arxiv": (2_253_000, 768),
         "sift": (1_000_000, 128),
         "fmnist": (60_000, 784),
+        "glove100": (1_183_514, 100),
+        "glove50": (1_183_514, 50)
     }
 
     if dataset not in dataset_params:
