@@ -256,13 +256,15 @@ class SuperKMeans {
 
 
         // Rest of iterations
-        std::vector<vector_value_t> centroid_partial_norms(_n_clusters);
+        std::vector<vector_value_t> centroids_partial_norms(_n_clusters);
         // Buffer to store per-vector not-pruned counts for tuning _initial_partial_d
         std::vector<size_t> not_pruned_counts(_n_samples);
         GetPartialL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
         for (; iter_idx < _iters; ++iter_idx) {
+            // Save current centroids for shift computation
+            std::copy(_horizontal_centroids.begin(), _horizontal_centroids.end(), _prev_centroids.begin());
             GetL2NormsRowMajor(
-                _horizontal_centroids.data(), _n_clusters, centroid_partial_norms.data(), _initial_partial_d
+                _horizontal_centroids.data(), _n_clusters, centroids_partial_norms.data(), _initial_partial_d
             );
             // Reset the not-pruned counts buffer
             std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
@@ -270,7 +272,7 @@ class SuperKMeans {
                 data_to_cluster,
                 _horizontal_centroids.data(),
                 data_norms.data(),
-                centroid_partial_norms.data(),
+                centroids_partial_norms.data(),
                 all_distances.data(),
                 centroids_pdx_wrapper,
                 _n_samples,
@@ -397,13 +399,10 @@ class SuperKMeans {
         const size_t n,
         size_t* out_not_pruned_counts = nullptr
     ) {
-        std::copy(_horizontal_centroids.begin(), _horizontal_centroids.end(), _prev_centroids.begin());
-
         cost = 0.0;
         batch_computer::Batched_XRowMajor_YRowMajor_PartialD(
             data,
             partial_rotated_centroids,
-            _prev_centroids.data(),
             n,
             _n_clusters,
             _d,

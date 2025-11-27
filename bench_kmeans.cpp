@@ -43,7 +43,7 @@ int main(int argc, char* argv[]) {
     const size_t d = it->second.second;
     const size_t n_clusters =
         std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
-    int n_iters = 2;
+    int n_iters = 25;
     float sampling_fraction = 1.0;
     std::string path_root = std::string(CMAKE_SOURCE_DIR);
     std::string filename = path_root + "/data_" + dataset + ".bin";

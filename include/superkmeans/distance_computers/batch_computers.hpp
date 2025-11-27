@@ -239,9 +239,7 @@ class BatchComputer<l2, f32> {
 
     static void Batched_XRowMajor_YRowMajor_PartialD(
         const data_t* SKM_RESTRICT x,
-        const data_t* SKM_RESTRICT y,
-        const data_t* SKM_RESTRICT
-            prev_y, // TODO(@lkuffo, supercrit): Is not previous but current (variable name is confusing)
+        const data_t* SKM_RESTRICT y, // Full-dimensional centroids (only partial_d dims used for BLAS)
         const size_t n_x,
         const size_t n_y,
         const size_t d,
@@ -299,7 +297,7 @@ class BatchComputer<l2, f32> {
                         distance_t dist_to_prev_centroid;
                         if (j == 0) { // After this we always have the right distance in out_distances
                             dist_to_prev_centroid = DistanceComputer<l2, f32>::Horizontal(
-                                prev_y + (prev_assignment * d), data_p, d
+                                y + (prev_assignment * d), data_p, d
                             );
                         } else {
                             dist_to_prev_centroid = out_distances[i_idx];
