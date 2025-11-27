@@ -41,7 +41,8 @@ class ADSamplingPruner {
             }
             flip_masks.resize(num_dimensions);
             for (size_t i = 0; i < num_dimensions; ++i) {
-                flip_masks[i] = (flip_masks[i] < 0.0 ? 0x80000000u : 0u);
+                // Use matrix(i) which has the random +1/-1 values, not flip_masks[i] which is uninitialized
+                flip_masks[i] = (matrix(i) < 0.0f ? 0x80000000u : 0u);
             }
             matrix_created = true;
         }
