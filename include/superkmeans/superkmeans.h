@@ -417,10 +417,15 @@ class SuperKMeans {
      * NOTE: The dimensionality of the data should match the dimensionality of the
      * data that the clustering was trained on.
      *
-     * @param data The data matrix
-     * @param n The number of data points (rows) in the data matrix
-     * @return std::vector<uint32_t> Clustering assignments as a vector of
-     * sequential ids of the points assigned to the corresponding cluster
+     * @brief Performs initial assignment and centroid update using BLAS-based computation.
+     *
+     * Used for the first iteration where full distance computation via BLAS is used
+     * (no pruning). Assigns each data point to its nearest centroid, then updates
+     * centroid positions.
+     *
+     * @param data Data matrix (row-major, _n_samples × _d)
+     * @param rotated_initial_centroids Initial centroids (row-major, _n_clusters × _d)
+     * @param all_distances Workspace buffer for distance computations
      */
     void InitAssignAndUpdateCentroids(
         const vector_value_t* SKM_RESTRICT data,
@@ -445,6 +450,18 @@ class SuperKMeans {
         UpdateCentroids(data);
     }
 
+    /**
+     * @brief Performs assignment and centroid update using hybrid BLAS+PDX computation.
+     *
+     * Uses BLAS for partial distance computation (first _initial_partial_d dimensions),
+     * then PDXearch for pruning and completing distances for remaining candidates.
+     *
+     * @param data Data matrix (row-major, _n_samples × _d)
+     * @param partial_centroid_norms Partial norms of centroids (first _initial_partial_d dims)
+     * @param all_distances Workspace buffer for distance computations
+     * @param pdx_centroids PDX-layout centroids for PDXearch
+     * @param out_not_pruned_counts Optional output for per-vector pruning statistics
+     */
     void AssignAndUpdateCentroidsPartialBatched(
         const vector_value_t* SKM_RESTRICT data,
         const vector_value_t* SKM_RESTRICT partial_centroid_norms,
@@ -473,6 +490,14 @@ class SuperKMeans {
         UpdateCentroids(data);
     }
 
+    /**
+     * @brief Updates centroid positions by accumulating assigned vectors.
+     *
+     * After this call, _horizontal_centroids contains the sum of assigned vectors.
+     * ConsolidateCentroids() must be called to normalize by cluster sizes.
+     *
+     * @param data Data matrix (row-major, _n_samples × _d)
+     */
     void UpdateCentroids(const vector_value_t* SKM_RESTRICT data) {
         SKM_PROFILE_SCOPE("update_centroids");
 #pragma omp parallel num_threads(_n_threads)
@@ -494,6 +519,9 @@ class SuperKMeans {
         }
     }
 
+    /**
+     * @brief Adds a vector to its assigned centroid's accumulator.
+     */
     SKM_ALWAYS_INLINE void UpdateCentroid(
         const vector_value_t* SKM_RESTRICT vector,
         const uint32_t cluster_idx
@@ -504,6 +532,13 @@ class SuperKMeans {
         }
     }
 
+    /**
+     * @brief Handles empty clusters by splitting large clusters.
+     *
+     * When a cluster becomes empty (no points assigned), this method splits
+     * a large cluster to repopulate it. Selection is probabilistic based on
+     * cluster sizes.
+     */
     void SplitClusters() {
         _n_split = 0;
         std::default_random_engine rng(_config.seed);
@@ -544,6 +579,12 @@ class SuperKMeans {
         }
     }
 
+    /**
+     * @brief Finalizes centroid computation after assignment.
+     *
+     * Divides accumulated sums by cluster sizes to get mean centroids,
+     * handles empty clusters via splitting, and converts to PDX layout.
+     */
     void ConsolidateCentroids() {
         SKM_PROFILE_SCOPE("consolidate");
         {
@@ -572,6 +613,9 @@ class SuperKMeans {
         }
     }
 
+    /**
+     * @brief Computes the total clustering cost (sum of distances).
+     */
     void ComputeCost() {
 #pragma clang loop vectorize(enable)
         for (size_t i = 0; i < _n_samples; ++i) {
@@ -579,6 +623,11 @@ class SuperKMeans {
         }
     }
 
+    /**
+     * @brief Computes the average squared centroid shift from previous iteration.
+     *
+     * Used for convergence detection - small shift indicates centroids have stabilized.
+     */
     void ComputeShift() {
         SKM_PROFILE_SCOPE("shift");
         Eigen::Map<const MatrixR> new_mat(_horizontal_centroids.data(), _n_clusters, _d);
@@ -591,6 +640,16 @@ class SuperKMeans {
         _shift /= (_n_clusters * _d);
     }
 
+    /**
+     * @brief Computes ground truth assignments for recall calculation.
+     *
+     * Finds the top-k nearest data points for each query using exact search.
+     * These assignments are used as ground truth for evaluating centroid quality.
+     *
+     * @param data Data matrix (sampled data points)
+     * @param queries Query vectors
+     * @param n_queries Number of query vectors
+     */
     void GetGTAssignmentsAndDistances(
         const vector_value_t* SKM_RESTRICT data,
         const vector_value_t* SKM_RESTRICT queries,
@@ -615,6 +674,17 @@ class SuperKMeans {
         );
     }
 
+    /**
+     * @brief Computes recall@k for current centroids.
+     *
+     * For each query, checks how many of its ground truth nearest neighbors
+     * would be found when searching only the top centroids. Higher recall
+     * indicates better centroid quality for ANN indexing.
+     *
+     * @param queries Query vectors
+     * @param n_queries Number of query vectors
+     * @return Recall value (0.0 to 1.0)
+     */
     float ComputeRecall(const vector_value_t* SKM_RESTRICT queries, const size_t n_queries) {
         SKM_PROFILE_SCOPE("recall");
         _tmp_distances_buffer.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
@@ -660,11 +730,23 @@ class SuperKMeans {
         return sum_recall / static_cast<float>(n_queries);
     }
 
+    /** @brief Returns the number of clusters. */
     inline size_t GetNClusters() const { return _n_clusters; }
 
+    /** @brief Returns whether the model has been trained. */
     inline bool IsTrained() const { return _trained; }
 
   protected:
+    /**
+     * @brief Generates initial centroids from the data.
+     *
+     * Takes the first _n_clusters vectors as initial centroids (similar to FAISS),
+     * rotates them, converts to PDX layout, and creates a PDXLayout wrapper.
+     *
+     * @param data Data matrix
+     * @param n Number of data points
+     * @return PDXLayout wrapper for the centroids
+     */
     PDXLayout<q, alpha> GenerateCentroids(
         const vector_value_t* SKM_RESTRICT data,
         const size_t n
@@ -701,6 +783,9 @@ class SuperKMeans {
         return pdx_centroids;
     }
 
+    /**
+     * @brief Computes partial L2 squared norms (first _initial_partial_d dimensions).
+     */
     void GetPartialL2NormsRowMajor(
         const vector_value_t* SKM_RESTRICT data,
         const size_t n,
@@ -712,6 +797,9 @@ class SuperKMeans {
         e_norms.noalias() = e_data.leftCols(_initial_partial_d).rowwise().squaredNorm();
     }
 
+    /**
+     * @brief Computes full L2 squared norms for each vector.
+     */
     void GetL2NormsRowMajor(
         const vector_value_t* SKM_RESTRICT data,
         const size_t n,
@@ -723,6 +811,10 @@ class SuperKMeans {
         e_norms.noalias() = e_data.rowwise().squaredNorm();
     }
 
+    /**
+     * @brief Computes partial L2 squared norms (first partial_d dimensions).
+     * @param partial_d Number of dimensions to include in norm computation
+     */
     void GetL2NormsRowMajor(
         const vector_value_t* SKM_RESTRICT data,
         const size_t n,
@@ -735,6 +827,11 @@ class SuperKMeans {
         e_norms.noalias() = e_data.leftCols(partial_d).rowwise().squaredNorm();
     }
 
+    /**
+     * @brief Copies the first _vertical_d dimensions of centroids to auxiliary storage.
+     *
+     * Used for efficient pruning when aux_data is available in PDXearch.
+     */
     void CentroidsToAuxiliaryHorizontal() {
         Eigen::Map<MatrixR> hor_centroids(_horizontal_centroids.data(), _n_clusters, _d);
         Eigen::Map<MatrixR> out_aux_centroids(_partial_horizontal_centroids.data(), _n_clusters, _vertical_d);
@@ -794,6 +891,11 @@ class SuperKMeans {
         return avg_not_pruned_pct;
     }
 
+    /**
+     * @brief Computes the number of vectors to sample based on sampling_fraction.
+     * @param n Total number of vectors
+     * @return Number of vectors to sample
+     */
     size_t GetNVectorsToSample(const size_t n) const {
         if (_config.sampling_fraction == 1.0) {
             return n;
@@ -866,7 +968,11 @@ class SuperKMeans {
         return _horizontal_centroids;
     }
 
-    // Normalize the centroids if DP is used
+    /**
+     * @brief Normalizes centroids to unit length for dot product distance.
+     *
+     * Called when using DistanceFunction::dp to ensure centroids are on the unit sphere.
+     */
     void PostprocessCentroids() {
         auto horizontal_centroids_p = _horizontal_centroids.data();
         for (size_t i = 0; i < _n_clusters; ++i) {
@@ -881,6 +987,18 @@ class SuperKMeans {
         }
     }
 
+    /**
+     * @brief Samples and optionally rotates vectors for training.
+     *
+     * Takes the first n_samples vectors from data and optionally rotates them
+     * using the pruner's rotation matrix.
+     *
+     * @tparam ROTATE Whether to apply rotation (default true)
+     * @param data Input data matrix
+     * @param out_buffer Output buffer for sampled (and optionally rotated) vectors
+     * @param n Total number of input vectors
+     * @param n_samples Number of vectors to sample
+     */
     template <bool ROTATE = true>
     void SampleVectors(
         const vector_value_t* SKM_RESTRICT data,

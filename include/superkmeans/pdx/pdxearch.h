@@ -9,10 +9,25 @@
 
 namespace skmeans {
 
-/******************************************************************
- * PDXearch
- * Implements our algorithm for vertical pruning
- ******************************************************************/
+/**
+ * @brief PDXearch - Efficient Top-1 nearest neighbor search with early termination.
+ *
+ * Implements the PDXearch algorithm for finding the nearest neighbor using the PDX
+ * data layout combined with ADSampling-based pruning. The algorithm works in two phases:
+ *
+ * 1. **Warmup**: Scans vertical dimensions until a sufficient fraction of candidates
+ *    can be pruned based on partial distances.
+ *
+ * 2. **Prune**: Iteratively processes remaining dimensions (horizontal then vertical),
+ *    progressively eliminating candidates that cannot be the nearest neighbor.
+ *
+ * This approach significantly reduces the number of full distance computations needed,
+ * especially for high-dimensional data.
+ *
+ * @tparam q Quantization type (f32 or u8)
+ * @tparam Index Index type (typically IndexPDXIVF<q>)
+ * @tparam alpha Distance function (l2 or dp)
+ */
 template <
     Quantization q = Quantization::f32,
     class Index = IndexPDXIVF<q>,
@@ -27,16 +42,25 @@ class PDXearch {
     using VectorComparator_t = VectorComparator<q>;
     using Pruner = ADSamplingPruner<q>;
 
-    Pruner& pruner;
-    INDEX_TYPE& pdx_data;
+    Pruner& pruner;       ///< Reference to the ADSampling pruner
+    INDEX_TYPE& pdx_data; ///< Reference to the PDX index data
 
+    /**
+     * @brief Constructs a PDXearch instance.
+     *
+     * @param data_index Reference to the PDX index containing the data
+     * @param pruner Reference to the ADSampling pruner for threshold computation
+     */
     PDXearch(INDEX_TYPE& data_index, Pruner& pruner) : pruner(pruner), pdx_data(data_index) {}
 
   protected:
-    const float selectivity_threshold = 0.80;
+    const float selectivity_threshold = 0.80;  ///< Target fraction of vectors to prune in warmup phase
 
+    /**
+     * @brief Retrieves the pruning threshold from the pruner.
+     */
     template <Quantization Q = q>
-    SKM_NO_INLINE void GetPruningThreshold(
+    void GetPruningThreshold(
         KNNCandidate<Q>& best_candidate,
         skmeans_distance_t<Q>& pruning_threshold,
         uint32_t current_dimension_idx
@@ -44,8 +68,11 @@ class PDXearch {
         pruning_threshold = pruner.template GetPruningThreshold<Q>(best_candidate, current_dimension_idx);
     }
 
+    /**
+     * @brief Counts how many vectors can be pruned given the current threshold.
+     */
     template <Quantization Q = q>
-    SKM_NO_INLINE void EvaluatePruningPredicateScalar(
+    void EvaluatePruningPredicateScalar(
         uint32_t& n_pruned,
         size_t n_vectors,
         skmeans_distance_t<Q>* pruning_distances,
@@ -56,8 +83,11 @@ class PDXearch {
         }
     }
 
+    /**
+     * @brief Updates the positions array to keep only non-pruned candidates.
+     */
     template <Quantization Q = q>
-    SKM_NO_INLINE void EvaluatePruningPredicateOnPositionsArray(
+    void EvaluatePruningPredicateOnPositionsArray(
         size_t n_vectors,
         size_t& n_vectors_not_pruned,
         uint32_t* pruning_positions,
@@ -72,8 +102,11 @@ class PDXearch {
         }
     }
 
+    /**
+     * @brief Initializes the positions array with indices of non-pruned vectors.
+     */
     template <Quantization Q = q>
-    SKM_NO_INLINE void InitPositionsArray(
+    void InitPositionsArray(
         size_t n_vectors,
         size_t& n_vectors_not_pruned,
         uint32_t* pruning_positions,
@@ -87,8 +120,23 @@ class PDXearch {
         }
     }
 
-    // On the warmup phase, we keep scanning dimensions until the amount of not-yet pruned vectors
-    // is low
+    /**
+     * @brief Warmup phase: scans vertical dimensions until enough candidates can be pruned.
+     *
+     * Progressively computes partial distances on vertical dimensions until the fraction
+     * of prunable candidates exceeds selectivity_threshold.
+     *
+     * @tparam Q Quantization type
+     * @param query Query vector
+     * @param data PDX-formatted cluster data
+     * @param n_vectors Number of vectors in the cluster
+     * @param tuples_threshold Target fraction of vectors to prune
+     * @param pruning_positions Output array for non-pruned vector positions
+     * @param pruning_distances Array of partial distances (updated in place)
+     * @param pruning_threshold Current pruning threshold (updated)
+     * @param best_candidate Current best candidate (for threshold computation)
+     * @param current_dimension_idx Number of dimensions processed (updated)
+     */
     template <Quantization Q = q>
     void Warmup(
         const skmeans_value_t<Q>* SKM_RESTRICT query,
@@ -134,9 +182,28 @@ class PDXearch {
         }
     }
 
-    // We scan only the not-yet pruned vectors
+    /**
+     * @brief Prune phase: iteratively eliminates candidates using remaining dimensions.
+     *
+     * Processes horizontal dimensions first (more SIMD-friendly), then remaining vertical
+     * dimensions. After each block, re-evaluates which candidates can be pruned.
+     *
+     * @tparam Q Quantization type
+     * @param query Query vector
+     * @param data PDX-formatted cluster data
+     * @param n_vectors Number of vectors in the cluster
+     * @param pruning_positions Array of candidate positions (compacted in place)
+     * @param pruning_distances Array of partial distances (updated in place)
+     * @param pruning_threshold Current pruning threshold (updated)
+     * @param best_candidate Current best candidate
+     * @param n_vectors_not_pruned Number of remaining candidates (updated)
+     * @param current_dimension_idx Number of dimensions processed (updated)
+     * @param vector_indices Mapping from local to global vector indices
+     * @param prev_top_1 Previous best candidate index (for early exit)
+     * @param aux_data Optional auxiliary horizontal data for vertical dimensions
+     * @param initial_not_pruned_out Optional output for initial non-pruned count
+     */
     template <Quantization Q = q>
-    SKM_NO_INLINE
     void Prune(
         const skmeans_value_t<Q>* SKM_RESTRICT query,
         const skmeans_value_t<Q>* SKM_RESTRICT data,
@@ -265,6 +332,9 @@ class PDXearch {
         }
     }
 
+    /**
+     * @brief Updates the best candidate from remaining non-pruned vectors.
+     */
     template <Quantization Q = q>
     void SetBestCandidate(
         const uint32_t* vector_indices,
@@ -283,6 +353,9 @@ class PDXearch {
         }
     }
 
+    /**
+     * @brief Converts distances back to original domain (for u8 quantization).
+     */
     void BuildResultSet(KNNCandidate_t& best_candidate) {
         // We return distances in the original domain
         if constexpr (q == Quantization::u8) {
@@ -296,6 +369,21 @@ class PDXearch {
     /******************************************************************
      * Search methods
      ******************************************************************/
+
+    /**
+     * @brief Finds the nearest neighbor using full PDXearch (warmup + prune).
+     *
+     * Searches through clusters from start_cluster to end_cluster, using the
+     * provided threshold as the initial pruning bound.
+     *
+     * @param query Query vector (in rotated space)
+     * @param prev_pruning_threshold Initial distance threshold (from previous best)
+     * @param prev_top_1 Index of previous best candidate
+     * @param pruned_at_accum Accumulator for early termination statistics
+     * @param start_cluster First cluster index to search
+     * @param end_cluster One past the last cluster index to search
+     * @return Best candidate found (index and distance)
+     */
     KNNCandidate_t Top1SearchWithThreshold(
         const float* SKM_RESTRICT query,
         const float prev_pruning_threshold,
@@ -361,7 +449,23 @@ class PDXearch {
         return top_embedding;
     }
 
-    SKM_NO_INLINE
+    /**
+     * @brief Finds the nearest neighbor using partial distances from BLAS computation.
+     *
+     * This variant skips the warmup phase and directly uses pre-computed partial
+     * distances (e.g., from a BLAS matrix multiplication). Used in the hybrid
+     * BLAS+PDX approach where BLAS computes the first partial_d dimensions.
+     *
+     * @param query Query vector (in rotated space)
+     * @param prev_pruning_threshold Initial distance threshold
+     * @param prev_top_1 Index of previous best candidate
+     * @param partial_pruning_distances Pre-computed partial distances (updated in place)
+     * @param computed_distance_until Number of dimensions already computed
+     * @param start_cluster First cluster index to search
+     * @param end_cluster One past the last cluster index to search
+     * @param initial_not_pruned_accum Optional accumulator for not-pruned statistics
+     * @return Best candidate found (index and distance)
+     */
     KNNCandidate_t Top1PartialSearchWithThresholdAndPartialDistances(
         const float* SKM_RESTRICT query,
         const float prev_pruning_threshold,

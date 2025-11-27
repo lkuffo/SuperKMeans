@@ -10,11 +10,27 @@
 
 namespace skmeans {
 
+/**
+ * @brief Holds the split of dimensions between vertical and horizontal storage.
+ */
 struct PDXDimensionSplit {
-    size_t horizontal_d{0};
-    size_t vertical_d{0};
+    size_t horizontal_d{0};  ///< Number of horizontal dimensions (stored row-major)
+    size_t vertical_d{0};    ///< Number of vertical dimensions (stored column-major)
 };
 
+/**
+ * @brief PDX data layout manager for efficient SIMD-friendly nearest neighbor search.
+ *
+ * PDX is a hybrid data layout that splits dimensions into:
+ * - Vertical dimensions: stored column-major for efficient early termination scanning
+ * - Horizontal dimensions: stored in row-major blocks for efficient SIMD operations
+ *
+ * This layout enables the PDXearch algorithm to efficiently prune candidates using
+ * partial distance computations.
+ *
+ * @tparam q Quantization type (f32 or u8)
+ * @tparam alpha Distance function (l2 or dp)
+ */
 template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
 class PDXLayout {
 
@@ -25,12 +41,32 @@ class PDXLayout {
     using searcher_t = PDXearch<q, IndexPDXIVF<q>, alpha>;
 
   public:
+    /**
+     * @brief Constructs a PDXLayout from existing data buffers.
+     *
+     * @param pdx_data Pointer to PDX-formatted data buffer
+     * @param pruner Reference to the ADSamplingPruner for search operations
+     * @param n_points Number of data points
+     * @param d Number of dimensions
+     * @param hor_data Optional pointer to auxiliary horizontal data for faster pruning
+     */
     PDXLayout(scalar_t* pdx_data, Pruner& pruner, size_t n_points, size_t d, scalar_t* hor_data = nullptr) {
         index = std::make_unique<index_t>(); // PDXLayout is owner of the Index
         FromBufferToPDXIndex(pdx_data, n_points, d, hor_data);
         searcher = std::make_unique<searcher_t>(*index, pruner);
     }
 
+    /**
+     * @brief Initializes the PDX index structure from a data buffer.
+     *
+     * Partitions the data into clusters of VECTOR_CHUNK_SIZE vectors each,
+     * setting up the index structure for PDXearch operations.
+     *
+     * @param pdx_data Pointer to PDX-formatted data
+     * @param n_points Number of data points
+     * @param d Number of dimensions
+     * @param hor_data Optional auxiliary horizontal data for the vertical dimensions
+     */
     void FromBufferToPDXIndex(
         scalar_t* SKM_RESTRICT pdx_data,
         const size_t n_points,
@@ -197,11 +233,11 @@ class PDXLayout {
         }
     }
 
-    std::unique_ptr<searcher_t> searcher = nullptr;
-    std::unique_ptr<index_t> index;
+    std::unique_ptr<searcher_t> searcher = nullptr;  ///< PDXearch instance for this layout
+    std::unique_ptr<index_t> index;                   ///< Index structure holding cluster metadata
 
   protected:
-    std::vector<uint32_t> centroid_ids;
+    std::vector<uint32_t> centroid_ids;  ///< Vector of centroid IDs (0 to n_points-1)
 };
 
 } // namespace skmeans

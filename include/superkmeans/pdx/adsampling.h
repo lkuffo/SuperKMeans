@@ -10,9 +10,19 @@
 
 namespace skmeans {
 
-/******************************************************************
- * ADSampling pruner
- ******************************************************************/
+/**
+ * @brief ADSampling pruner for early termination in nearest neighbor search.
+ *
+ * Implements Adaptive Dimension Sampling (ADSampling) which enables early termination
+ * during distance computations by predicting whether a candidate can be pruned based
+ * on partial distance calculations. Uses a random rotation matrix to ensure dimensions
+ * contribute equally to the distance.
+ *
+ * For high-dimensional data (>= D_THRESHOLD_FOR_DCT_ROTATION), uses DCT-based rotation
+ * which is more efficient than full matrix multiplication.
+ *
+ * @tparam q Quantization type (f32 or u8)
+ */
 template <Quantization q = Quantization::f32>
 class ADSamplingPruner {
     using DISTANCES_TYPE = skmeans_distance_t<q>;
@@ -22,9 +32,16 @@ class ADSamplingPruner {
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
   public:
-    uint32_t num_dimensions;
-    std::vector<float> ratios{};
+    uint32_t num_dimensions;      ///< Number of dimensions in the data
+    std::vector<float> ratios{};  ///< Precomputed pruning threshold ratios
 
+    /**
+     * @brief Constructs an ADSamplingPruner with a randomly generated rotation matrix.
+     *
+     * @param num_dimensions_ Number of dimensions in the data
+     * @param epsilon0 Pruning threshold parameter (higher = more aggressive pruning, less accuracy)
+     * @param seed Random seed for reproducible rotation matrix generation
+     */
     ADSamplingPruner(uint32_t num_dimensions_, float epsilon0, uint32_t seed = 42)
         : num_dimensions(num_dimensions_), epsilon0(epsilon0) {
         InitializeRatios();
@@ -58,6 +75,13 @@ class ADSamplingPruner {
         }
     }
 
+    /**
+     * @brief Constructs an ADSamplingPruner with a pre-computed rotation matrix.
+     *
+     * @param num_dims Number of dimensions in the data
+     * @param eps0 Pruning threshold parameter
+     * @param matrix_p Pointer to pre-computed rotation matrix data (row-major)
+     */
     ADSamplingPruner(uint32_t num_dims, float eps0, float* matrix_p)
         : num_dimensions(num_dims), epsilon0(eps0) {
         InitializeRatios();
@@ -80,6 +104,11 @@ class ADSamplingPruner {
 #endif
     }
 
+    /**
+     * @brief Pre-computes pruning threshold ratios for all dimension indices.
+     *
+     * Called during construction and when epsilon0 changes.
+     */
     void InitializeRatios() {
         // + 1 to be able to map n_dims to 1.0f, avoiding a branch in GetPruningThreshold
         ratios.resize(num_dimensions + 1);
@@ -88,16 +117,30 @@ class ADSamplingPruner {
         }
     }
 
+    /**
+     * @brief Updates the pruning threshold parameter and recalculates ratios.
+     * @param eps0 New epsilon0 value
+     */
     void SetEpsilon0(float eps0) {
         epsilon0 = eps0;
         InitializeRatios();
     }
 
+    /** @brief Sets the rotation matrix (copy). */
     void SetMatrix(const Eigen::MatrixXf& mat) { matrix = mat; }
+    
+    /** @brief Sets the rotation matrix (move). */
     void SetMatrix(Eigen::MatrixXf&& mat) { matrix = std::move(mat); }
 
+    /**
+     * @brief Computes the pruning threshold for a given number of visited dimensions.
+     *
+     * @tparam Q Quantization type
+     * @param best_candidate Current best candidate (provides the reference distance)
+     * @param current_dimension_idx Number of dimensions computed so far
+     * @return Pruning threshold - candidates with partial distance above this can be pruned
+     */
     template <Quantization Q = q>
-    SKM_NO_INLINE
     skmeans_distance_t<Q> GetPruningThreshold(
         const KNNCandidate<Q>& best_candidate,
         const uint32_t current_dimension_idx
@@ -105,6 +148,13 @@ class ADSamplingPruner {
         return best_candidate.distance * ratios[current_dimension_idx];
     }
 
+    /**
+     * @brief Applies sign flipping for DCT-based rotation (FFTW path).
+     *
+     * @param data Input data pointer
+     * @param out Output buffer
+     * @param n Number of vectors
+     */
     void FlipSign(const float* data, float* out, const size_t n) {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
@@ -113,6 +163,19 @@ class ADSamplingPruner {
         }
     }
 
+    /**
+     * @brief Rotates vectors using the rotation matrix.
+     *
+     * Transforms vectors to a rotated space where dimensions contribute more equally
+     * to the total distance, enabling effective early termination.
+     *
+     * For DCT path: applies sign flipping followed by DCT-II transform.
+     * For matrix path: computes out = vectors * matrix^T.
+     *
+     * @param vectors Input vectors (row-major, n × num_dimensions)
+     * @param out_buffer Output buffer for rotated vectors (n × num_dimensions)
+     * @param n Number of vectors to rotate
+     */
     void Rotate(
         const value_t* SKM_RESTRICT vectors,
         value_t* SKM_RESTRICT out_buffer,
@@ -219,10 +282,19 @@ class ADSamplingPruner {
     }
 
   private:
-    float epsilon0 = 2.1;
-    MatrixR matrix;
-    std::vector<uint32_t> flip_masks;
+    float epsilon0 = 2.1;              ///< Pruning aggressiveness parameter
+    MatrixR matrix;                     ///< Rotation matrix (or sign vector for DCT)
+    std::vector<uint32_t> flip_masks;   ///< Sign flip masks for DCT-based rotation
 
+    /**
+     * @brief Computes the pruning ratio for a given number of visited dimensions.
+     *
+     * Based on the ADSampling paper, the ratio accounts for the expected contribution
+     * of remaining dimensions to the total distance.
+     *
+     * @param visited_dimensions Number of dimensions computed
+     * @return Ratio to multiply with best distance to get pruning threshold
+     */
     float GetRatio(size_t visited_dimensions) {
         if (visited_dimensions == 0) {
             return 1;

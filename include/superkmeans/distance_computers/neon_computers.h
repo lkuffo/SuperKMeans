@@ -160,7 +160,6 @@ class SIMDComputer<DistanceFunction::l2, Quantization::f32> {
     }
 
     // Defer to the scalar kernel
-    SKM_NO_INLINE
     static void Vertical(
         const data_t* SKM_RESTRICT query,
         const data_t* SKM_RESTRICT data,
@@ -179,7 +178,6 @@ class SIMDComputer<DistanceFunction::l2, Quantization::f32> {
         }
     }
 
-    SKM_NO_INLINE
     static distance_t Horizontal(
         const data_t* SKM_RESTRICT vector1,
         const data_t* SKM_RESTRICT vector2,
