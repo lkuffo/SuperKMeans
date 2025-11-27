@@ -8,8 +8,6 @@
 #include <cassert>
 #include <memory>
 #include <string>
-#include <sys/mman.h>
-#include <unistd.h>
 
 namespace skmeans {
 
@@ -51,40 +49,7 @@ class PDXLayout {
         const size_t n_points,
         const size_t d
     ) {
-        auto [horizontal_d, vertical_d] = GetDimensionSplit(d);
-        size_t n_pdx_clusters = n_points / VECTOR_CHUNK_SIZE;
-        const size_t full_clusters = n_points / VECTOR_CHUNK_SIZE;
-        const size_t n_remaining = n_points % VECTOR_CHUNK_SIZE;
-        if (n_remaining) {
-            n_pdx_clusters++;
-        }
-
-        index->num_clusters = n_pdx_clusters;
-        // TODO(@lkuffo, high): Does this belong here?
-        // Seems to important to define the centroid ids here
-        centroid_ids.resize(n_points);
-        std::iota(centroid_ids.begin(), centroid_ids.end(), 0);
-        index->num_horizontal_dimensions = horizontal_d;
-        index->num_vertical_dimensions = vertical_d;
-        index->num_dimensions = d;
-        index->is_ivf = false;
-        index->is_normalized = false;
-        index->clusters.resize(n_pdx_clusters);
-        auto pdx_data_p = pdx_data;
-        size_t cluster_idx = 0;
-        for (; cluster_idx < full_clusters; cluster_idx++) {
-            cluster_t& cluster = index->clusters[cluster_idx];
-            cluster.num_embeddings = VECTOR_CHUNK_SIZE;
-            cluster.data = pdx_data_p;
-            cluster.indices = centroid_ids.data() + (cluster_idx * VECTOR_CHUNK_SIZE);
-            pdx_data_p += VECTOR_CHUNK_SIZE * d;
-        }
-        if (n_remaining) {
-            cluster_t& cluster = index->clusters[cluster_idx];
-            cluster.num_embeddings = n_remaining;
-            cluster.data = pdx_data_p;
-            cluster.indices = centroid_ids.data() + (cluster_idx * VECTOR_CHUNK_SIZE);
-        }
+        FromBufferToPDXIndex(pdx_data, n_points, d, nullptr);
     }
 
     void FromBufferToPDXIndex(
@@ -120,16 +85,20 @@ class PDXLayout {
             cluster.num_embeddings = VECTOR_CHUNK_SIZE;
             cluster.data = pdx_data_p;
             cluster.indices = centroid_ids.data() + (cluster_idx * VECTOR_CHUNK_SIZE);
-            cluster.aux_hor_data = hor_data_p;
+            if (hor_data_p) {
+                cluster.aux_hor_data = hor_data_p;
+                hor_data_p += VECTOR_CHUNK_SIZE * vertical_d;
+            }
             pdx_data_p += VECTOR_CHUNK_SIZE * d;
-            hor_data_p += VECTOR_CHUNK_SIZE * (vertical_d); // Contains only the vertical dimensions
         }
         if (n_remaining) {
             cluster_t& cluster = index->clusters[cluster_idx];
             cluster.num_embeddings = n_remaining;
             cluster.data = pdx_data_p;
             cluster.indices = centroid_ids.data() + (cluster_idx * VECTOR_CHUNK_SIZE);
-            cluster.aux_hor_data = hor_data_p;
+            if (hor_data_p) {
+                cluster.aux_hor_data = hor_data_p;
+            }
         }
     }
 

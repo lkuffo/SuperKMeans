@@ -19,7 +19,6 @@ class SuperKMeans {
     using vector_value_t = skmeans_value_t<q>;
     using Pruner = ADSamplingPruner<q>;
     using layout_t = PDXLayout<q, alpha>;
-    using knn_candidate_t = KNNCandidate<q>;
     using distance_t = skmeans_distance_t<q>;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
     using MatrixC = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
@@ -37,7 +36,7 @@ class SuperKMeans {
         float tol = 1e-5
     )
         : _iters(iters), _n_clusters(n_clusters), _sampling_fraction(sampling_fraction),
-          _d(dimensionality), _trained(false), verbose(verbose), N_THREADS(n_threads), tol(tol) {
+          _d(dimensionality), _trained(false), verbose(verbose), tol(tol) {
         SKMEANS_ENSURE_POSITIVE(n_clusters);
         SKMEANS_ENSURE_POSITIVE(iters);
         SKMEANS_ENSURE_POSITIVE(sampling_fraction);
@@ -96,7 +95,6 @@ class SuperKMeans {
             _horizontal_centroids.resize(_n_clusters * _d);
             _prev_centroids.resize(_n_clusters * _d);
             _cluster_sizes.resize(_n_clusters);
-            _reciprocal_cluster_sizes.resize(_n_clusters);
             _assignments.resize(n);
             _distances.resize(n);
 
@@ -892,7 +890,6 @@ class SuperKMeans {
 
     std::vector<vector_value_t> data_norms;
     std::vector<vector_value_t> centroid_norms;
-    std::vector<float> _reciprocal_cluster_sizes;
 
     const uint32_t _iters;
     const size_t _n_clusters;
@@ -904,7 +901,6 @@ class SuperKMeans {
     float shift;
     size_t _n_samples;
     size_t _n_split;
-    uint32_t N_THREADS;
     uint32_t _initial_partial_d = DEFAULT_INITIAL_PARTIAL_D;
     uint32_t _vertical_d;
     float tol;
