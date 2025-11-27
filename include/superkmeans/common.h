@@ -76,6 +76,8 @@ static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[19] =
     {16, 16, 32, 32, 32, 32, 64, 64, 64, 64, 128, 128, 128, 128, 256, 256, 512, 1024, 2048};
 
 // Global thread count for OpenMP parallel regions
+// NOTE: This is set by SuperKMeans constructor. Not ideal but needed for
+// external functions (adsampling, batch_computers) that can't access class members.
 inline uint32_t g_n_threads = 1;
 
 template <class T, T val = 8>

@@ -84,18 +84,22 @@ int main(int argc, char* argv[]) {
     file_queries.read(reinterpret_cast<char*>(queries.data()), queries.size() * sizeof(float));
     file_queries.close();
 
+    skmeans::SuperKMeansConfig config;
+    config.iters = n_iters;
+    config.sampling_fraction = sampling_fraction;
+    config.verbose = true;
+    config.n_threads = THREADS;
+    config.objective_k = 100;
+    config.ann_explore_fraction = 0.01f;
+    config.unrotate_centroids = false;
+    config.perform_assignments = false;
+    config.early_termination = false;
+
     auto kmeans_state = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, n_iters, sampling_fraction, true, THREADS
+        n_clusters, d, config
     );
-    // ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans", [&]() {
-    //     auto centroids = kmeans_state.Train(data.data(), n);
-    // });
     ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans Queries", [&]() {
-        auto centroids = kmeans_state.Train(
-            data.data(), n, queries.data(), n_queries, false,
-            100, 0.01, false, false,
-            false
-        );
+        auto centroids = kmeans_state.Train(data.data(), n, queries.data(), n_queries);
     });
     // ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans Queries Sampled", [&]()
     // {
