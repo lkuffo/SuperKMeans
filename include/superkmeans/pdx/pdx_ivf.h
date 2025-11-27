@@ -1,5 +1,5 @@
-#ifndef SKMEANS_IVF_HPP
-#define SKMEANS_IVF_HPP
+#ifndef SKMEANS_PDX_IVF_H
+#define SKMEANS_PDX_IVF_H
 
 #include "superkmeans/common.h"
 #include <vector>
@@ -49,4 +49,5 @@ class IndexPDXIVF<u8> {
 
 } // namespace skmeans
 
-#endif // SKMEANS_IVF_HPP
+#endif // SKMEANS_PDX_IVF_H
+

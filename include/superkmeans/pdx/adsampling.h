@@ -1,5 +1,5 @@
-#ifndef SKMEANS_ADSAMPLING_HPP
-#define SKMEANS_ADSAMPLING_HPP
+#ifndef SKMEANS_ADSAMPLING_H
+#define SKMEANS_ADSAMPLING_H
 
 #include "superkmeans/distance_computers/base_computers.hpp"
 #include "superkmeans/pdx/utils.h"
@@ -265,4 +265,5 @@ class ADSamplingPruner {
 
 } // namespace skmeans
 
-#endif // SKMEANS_ADSAMPLING_HPP
+#endif // SKMEANS_ADSAMPLING_H
+

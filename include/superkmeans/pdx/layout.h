@@ -2,7 +2,7 @@
 #define SKMEANS_PDX_LAYOUT_HPP
 
 #include "superkmeans/common.h"
-#include "superkmeans/pdx/index_base/pdx_ivf.hpp"
+#include "superkmeans/pdx/pdx_ivf.h"
 #include "superkmeans/pdx/pdxearch.h"
 #include <Eigen/Eigen/Dense>
 #include <cassert>

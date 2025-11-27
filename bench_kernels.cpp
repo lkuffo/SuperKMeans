@@ -8,7 +8,7 @@
 
 #include "superkmeans/nanobench.h"
 #include "superkmeans/pdx/layout.h"
-#include "superkmeans/pdx/pruners/adsampling.hpp"
+#include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/distance_computers/batch_computers.hpp"
 #include "superkmeans/superkmeans.h"
 #include <Eigen/Eigen/Dense>

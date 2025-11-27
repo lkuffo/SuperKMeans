@@ -13,7 +13,7 @@
 #include "superkmeans/common.h"
 #include "superkmeans/nanobench.h"
 #include "superkmeans/pdx/layout.h"
-#include "superkmeans/pdx/pruners/adsampling.hpp"
+#include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/superkmeans.h"
 

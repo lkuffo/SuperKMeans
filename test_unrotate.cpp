@@ -9,7 +9,7 @@
 #include <random>
 
 #include "superkmeans/common.h"
-#include "superkmeans/pdx/pruners/adsampling.hpp"
+#include "superkmeans/pdx/adsampling.h"
 
 int main() {
     // Test both low-dim (orthonormal matrix) and high-dim (DCT) cases

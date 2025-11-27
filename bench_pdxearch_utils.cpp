@@ -9,7 +9,7 @@
 
 #include "superkmeans/nanobench.h"
 #include "superkmeans/pdx/layout.h"
-#include "superkmeans/pdx/pruners/adsampling.hpp"
+#include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/superkmeans.h"
 
 size_t InitPositionsIf(
