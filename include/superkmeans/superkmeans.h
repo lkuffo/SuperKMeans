@@ -57,6 +57,7 @@ class SuperKMeans {
      * @param d Number of dimensions (cols) in the data matrix
      * @param verbose Whether to use verbose output. Defaults to false.
      * @param num_threads Number of CPU threads to use (set to -1 to use all cores)
+     * @param ann_explore_fraction Fraction of centroids to explore for recall computation (0.0 to 1.0). Default 0.01 (1%).
      * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
      */
     std::vector<skmeans_centroid_value_t<q>> Train(
@@ -65,7 +66,8 @@ class SuperKMeans {
         const vector_value_t* SKM_RESTRICT queries = nullptr,
         const size_t n_queries = 0,
         const bool sample_queries = false,
-        const size_t objective_k = 100
+        const size_t objective_k = 100,
+        const float ann_explore_fraction = 0.01f
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
         if (_trained) {
@@ -143,10 +145,10 @@ class SuperKMeans {
 
         std::vector<vector_value_t> rotated_queries;
         if (n_queries) {
-            // TODO(@lkuffo, supercrit): Set this to a percentage of the number of clusters defined as a parameter of Train()
-            // By default, we explore 1% of the centroids (implemented here as _n_clusters / 100)
-            _centroids_to_explore = std::max<size_t>(_n_clusters / 100, 1);
-            std::cout << " -----> Centroids to explore: " << _centroids_to_explore << std::endl;
+            // Compute number of centroids to explore from the fraction parameter (minimum 1)
+            _centroids_to_explore = std::max<size_t>(static_cast<size_t>(_n_clusters * ann_explore_fraction), 1);
+            std::cout << " -----> Centroids to explore: " << _centroids_to_explore 
+                      << " (" << ann_explore_fraction * 100.0f << "% of " << _n_clusters << ")" << std::endl;
             {
                 SKM_PROFILE_SCOPE("allocator");
                 _gt_assignments.resize(n_queries * objective_k);
