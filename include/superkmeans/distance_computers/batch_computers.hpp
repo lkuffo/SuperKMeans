@@ -110,6 +110,8 @@ class BatchComputer<l2, f32> {
         distance_t* SKM_RESTRICT out_distances,
         float* SKM_RESTRICT all_distances_buf
     ) {
+        SKM_PROFILE_SCOPE("search");
+        SKM_PROFILE_SCOPE("search/blas");
         std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             auto batch_n_x = X_BATCH_SIZE;
@@ -253,8 +255,7 @@ class BatchComputer<l2, f32> {
         uint32_t partial_d,
         size_t* out_not_pruned_counts = nullptr
     ) {
-        std::cout << "partial_d: " << partial_d << std::endl;
-        
+        SKM_PROFILE_SCOPE("search");
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             auto batch_n_x = X_BATCH_SIZE;
             auto batch_x_p = x + (i * d);

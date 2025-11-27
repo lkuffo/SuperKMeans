@@ -158,17 +158,13 @@ class SuperKMeans {
             rotated_queries.resize(n_queries * _d);
             if (sample_queries) {
                 std::cout << "Sampling queries from data..." << std::endl;
-                SKM_PROFILE_SCOPE("sampling");
                 SampleVectors<false>(data_to_cluster, rotated_queries, _n_samples, n_queries);
             } else {
                 // We already did a validation step to ensure that queries is not nullptr
                 SKM_PROFILE_SCOPE("rotator");
                 _pruner->Rotate(queries, rotated_queries.data(), n_queries);
             }
-            {
-                SKM_PROFILE_SCOPE("gt_assignments");
-                GetGTAssignmentsAndDistances(data_to_cluster, _n_samples, rotated_queries.data(), n_queries, objective_k);
-            }
+            GetGTAssignmentsAndDistances(data_to_cluster, _n_samples, rotated_queries.data(), n_queries, objective_k);
             std::cout << "TOTAL GT ASSIGNMENTS TIME " << Profiler::Get().GetTimeSeconds("gt_assignments") << std::endl;
 
             // Print the assignments and distances of the first 10 queries
@@ -200,9 +196,7 @@ class SuperKMeans {
             PostprocessCentroids();
         }
         if (n_queries) {
-            SKM_PROFILE_SCOPE("recall");
-            float cur_recall = ComputeRecall(rotated_queries.data(), n_queries, objective_k, _centroids_to_explore);
-            _recall = cur_recall;
+            _recall = ComputeRecall(rotated_queries.data(), n_queries, objective_k, _centroids_to_explore);
         }
         size_t iter_idx = 1;
         if (verbose)
@@ -218,7 +212,6 @@ class SuperKMeans {
 
         // Special path for low-dimensional data: use BLAS-only for all iterations
         if (_d < 128) {
-            std::cout << " !!!!!!!!!!!!! BLAS-only path" << std::endl;
             for (; iter_idx < _iters; ++iter_idx) {
                 // Save current centroids for shift computation
                 std::copy(_tmp_centroids.begin(), _tmp_centroids.end(), _prev_centroids.begin());
@@ -241,9 +234,7 @@ class SuperKMeans {
                 if (n_queries) {
                     // Update centroid norms to match the NEW centroids (after ConsolidateCentroids)
                     GetL2NormsRowMajor(_tmp_centroids.data(), _n_clusters, centroid_norms.data());
-                    SKM_PROFILE_SCOPE("recall");
-                    float cur_recall = ComputeRecall(rotated_queries.data(), n_queries, objective_k, _centroids_to_explore);
-                    _recall = cur_recall;
+                    _recall = ComputeRecall(rotated_queries.data(), n_queries, objective_k, _centroids_to_explore);
                 }
                 if (verbose)
                     std::cout << "Iteration " << iter_idx + 1 << "/" << _iters
@@ -300,9 +291,7 @@ class SuperKMeans {
                 // Update centroid norms with FULL norms for recall computation
                 // (PDX uses partial norms for distance computation, but recall needs full norms)
                 GetL2NormsRowMajor(_tmp_centroids.data(), _n_clusters, centroid_norms.data());
-                SKM_PROFILE_SCOPE("recall");
-                float cur_recall = ComputeRecall(rotated_queries.data(), n_queries, objective_k, _centroids_to_explore);
-                _recall = cur_recall;
+                _recall = ComputeRecall(rotated_queries.data(), n_queries, objective_k, _centroids_to_explore);
             }
             if (verbose)
                 std::cout << "Iteration " << iter_idx + 1 << "/" << _iters
@@ -379,32 +368,25 @@ class SuperKMeans {
         if (verbose) {
             std::cout << "Batch Calculation [START]..." << std::endl;
         }
-        {
-            SKM_PROFILE_SCOPE("search");
-            SKM_PROFILE_SCOPE("search/blas");
-            batch_computer::Batched_XRowMajor_YRowMajor(
-                data,
-                rotated_initial_centroids,
-                n,
-                _n_clusters,
-                _d,
-                data_norms,
-                centroid_norms,
-                _assignments.data(),
-                _distances.data(),
-                all_distances
-            );
-        }
+        batch_computer::Batched_XRowMajor_YRowMajor(
+            data,
+            rotated_initial_centroids,
+            n,
+            _n_clusters,
+            _d,
+            data_norms,
+            centroid_norms,
+            _assignments.data(),
+            _distances.data(),
+            all_distances
+        );
         if (verbose) {
             std::cout << "Batch Calculation [DONE]..." << std::endl;
         }
         std::fill(_tmp_centroids.begin(), _tmp_centroids.end(), 0.0);
         std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
         cost = 0.0;
-        {
-            SKM_PROFILE_SCOPE("update_centroids");
-            UpdateCentroids(data, n);
-        }
+        UpdateCentroids(data, n);
     }
 
     void AssignAndUpdateCentroidsPartialBatched(
@@ -420,34 +402,29 @@ class SuperKMeans {
         std::copy(_tmp_centroids.begin(), _tmp_centroids.end(), _prev_centroids.begin());
 
         cost = 0.0;
-        {
-            SKM_PROFILE_SCOPE("search");
-            batch_computer::Batched_XRowMajor_YRowMajor_PartialD(
-                data,
-                partial_rotated_centroids,
-                _prev_centroids.data(),
-                n,
-                _n_clusters,
-                _d,
-                partial_data_norms,
-                partial_centroid_norms,
-                _assignments.data(),
-                _distances.data(),
-                all_distances,
-                pdx_centroids,
-                _initial_partial_d,
-                out_not_pruned_counts
-            );
-        }
+        batch_computer::Batched_XRowMajor_YRowMajor_PartialD(
+            data,
+            partial_rotated_centroids,
+            _prev_centroids.data(),
+            n,
+            _n_clusters,
+            _d,
+            partial_data_norms,
+            partial_centroid_norms,
+            _assignments.data(),
+            _distances.data(),
+            all_distances,
+            pdx_centroids,
+            _initial_partial_d,
+            out_not_pruned_counts
+        );
         std::fill(_tmp_centroids.begin(), _tmp_centroids.end(), 0.0);
         std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
-        {
-            SKM_PROFILE_SCOPE("update_centroids");
-            UpdateCentroids(data, n);
-        }
+        UpdateCentroids(data, n);
     }
 
     void UpdateCentroids(const vector_value_t* SKM_RESTRICT data, const size_t n) {
+        SKM_PROFILE_SCOPE("update_centroids");
 #pragma omp parallel num_threads(g_n_threads)
         {
             uint32_t nt = g_n_threads;
@@ -572,6 +549,7 @@ class SuperKMeans {
         const size_t n_queries,
         const size_t objective_k
     ) {
+        SKM_PROFILE_SCOPE("gt_assignments");
         std::vector<distance_t> tmp_distances_buffer(X_BATCH_SIZE * Y_BATCH_SIZE);
         std::vector<distance_t> query_norms(n_queries);
         GetL2NormsRowMajor(queries, n_queries, query_norms.data());
@@ -591,6 +569,7 @@ class SuperKMeans {
     }
 
     float ComputeRecall(const vector_value_t* SKM_RESTRICT queries, const size_t n_queries, const size_t objective_k, const size_t centroids_to_explore) {
+        SKM_PROFILE_SCOPE("recall");
         std::vector<distance_t> tmp_distances_buffer(X_BATCH_SIZE * Y_BATCH_SIZE);
         // TODO(@lkuffo, crit): Everytime we call this function we compute norms again and again.
         std::vector<distance_t> query_norms(n_queries);

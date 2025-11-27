@@ -187,7 +187,10 @@ public:
             }
         }
         
-        std::sort(top_level.begin(), top_level.end());
+        // Sort top-level by accumulated time (descending)
+        std::sort(top_level.begin(), top_level.end(), [this](const std::string& a, const std::string& b) {
+            return timers_.at(a).accum_time_ns > timers_.at(b).accum_time_ns;
+        });
         
         for (const auto& name : top_level) {
             const auto& data = timers_.at(name);
@@ -202,11 +205,13 @@ public:
             }
             os << "\n";
             
-            // Print children
+            // Print children (sorted by time descending)
             auto it = groups.find(name);
             if (it != groups.end()) {
                 auto& children = it->second;
-                std::sort(children.begin(), children.end());
+                std::sort(children.begin(), children.end(), [this](const std::string& a, const std::string& b) {
+                    return timers_.at(a).accum_time_ns > timers_.at(b).accum_time_ns;
+                });
                 for (const auto& child : children) {
                     const auto& child_data = timers_.at(child);
                     double child_secs = child_data.accum_time_ns / 1e9;
