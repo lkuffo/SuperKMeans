@@ -59,6 +59,7 @@ class SuperKMeans {
      * @param num_threads Number of CPU threads to use (set to -1 to use all cores)
      * @param ann_explore_fraction Fraction of centroids to explore for recall computation (0.0 to 1.0). Default 0.01 (1%).
      * @param unrotate_centroids Whether to unrotate centroids before returning (default true). Set to false to get rotated centroids.
+     * @param perform_assignments If true, performs a final assignment pass so _assignments matches the returned centroids.
      * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
      */
     std::vector<skmeans_centroid_value_t<q>> Train(
@@ -69,7 +70,8 @@ class SuperKMeans {
         const bool sample_queries = false,
         const size_t objective_k = 100,
         const float ann_explore_fraction = 0.01f,
-        const bool unrotate_centroids = true
+        const bool unrotate_centroids = true,
+        const bool perform_assignments = false
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
         if (_trained) {
@@ -210,6 +212,9 @@ class SuperKMeans {
 
         if (_iters <= 1) {
             auto output_centroids = GetOutputCentroids(unrotate_centroids);
+            if (perform_assignments) {
+                _assignments = Assign(data, output_centroids.data(), n, _n_clusters, _d);
+            }
             Profiler::Get().PrintHierarchical();
             return output_centroids;
         }
@@ -248,6 +253,9 @@ class SuperKMeans {
             }
             _trained = true;
             auto output_centroids = GetOutputCentroids(unrotate_centroids);
+            if (perform_assignments) {
+                _assignments = Assign(data, output_centroids.data(), n, _n_clusters, _d);
+            }
             if (verbose) {
                 Profiler::Get().PrintHierarchical();
             }
@@ -313,6 +321,9 @@ class SuperKMeans {
 
         _trained = true;
         auto output_centroids = GetOutputCentroids(unrotate_centroids);
+        if (perform_assignments) {
+            _assignments = Assign(data, output_centroids.data(), n, _n_clusters, _d);
+        }
         if (verbose) {
             Profiler::Get().PrintHierarchical();
         }
@@ -865,8 +876,12 @@ class SuperKMeans {
     std::vector<centroid_value_t> _horizontal_centroids;  // Always keeps the horizontal (row-major) centroids
     std::vector<centroid_value_t> _prev_centroids; // Always keeps the previous iteration centroids
     std::vector<centroid_value_t> _partial_horizontal_centroids; // Partial horizontal centroids (first _vertical_d dimensions)
-    std::vector<uint32_t> _assignments;
     std::vector<distance_t> _distances;
+
+  public:
+    std::vector<uint32_t> _assignments;  // Cluster assignments from Train() (public for user access)
+
+  protected:
     std::vector<uint32_t> _cluster_sizes;
 
     std::vector<uint32_t> _gt_assignments;
