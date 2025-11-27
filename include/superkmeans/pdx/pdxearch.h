@@ -1,6 +1,4 @@
 #pragma once
-#ifndef SKMEANS_PDXEARCH_HPP
-#define SKMEANS_PDXEARCH_HPP
 
 #include <algorithm>
 #include <cassert>
@@ -16,9 +14,9 @@ namespace skmeans {
  * Implements our algorithm for vertical pruning
  ******************************************************************/
 template <
-    Quantization q = f32,
+    Quantization q = Quantization::f32,
     class Index = IndexPDXIVF<q>,
-    DistanceFunction alpha = l2>
+    DistanceFunction alpha = DistanceFunction::l2>
 class PDXearch {
   public:
     using DISTANCES_TYPE = skmeans_distance_t<q>;
@@ -29,7 +27,7 @@ class PDXearch {
     using VectorComparator_t = VectorComparator<q>;
     using Pruner = ADSamplingPruner<q>;
 
-    Pruner pruner;
+    Pruner& pruner;
     INDEX_TYPE& pdx_data;
 
     PDXearch(INDEX_TYPE& data_index, Pruner& pruner) : pruner(pruner), pdx_data(data_index) {}
@@ -44,7 +42,7 @@ class PDXearch {
         uint32_t current_dimension_idx
     ) {
         pruning_threshold = pruner.template GetPruningThreshold<Q>(best_candidate, current_dimension_idx);
-    };
+    }
 
     template <Quantization Q = q>
     SKM_NO_INLINE void EvaluatePruningPredicateScalar(
@@ -56,7 +54,7 @@ class PDXearch {
         for (size_t vector_idx = 0; vector_idx < n_vectors; ++vector_idx) {
             n_pruned += pruning_distances[vector_idx] >= pruning_threshold;
         }
-    };
+    }
 
     template <Quantization Q = q>
     SKM_NO_INLINE void EvaluatePruningPredicateOnPositionsArray(
@@ -72,7 +70,7 @@ class PDXearch {
             n_vectors_not_pruned +=
                 pruning_distances[pruning_positions[vector_idx]] < pruning_threshold;
         }
-    };
+    }
 
     template <Quantization Q = q>
     SKM_NO_INLINE void InitPositionsArray(
@@ -87,7 +85,7 @@ class PDXearch {
             pruning_positions[n_vectors_not_pruned] = vector_idx;
             n_vectors_not_pruned += pruning_distances[vector_idx] < pruning_threshold;
         }
-    };
+    }
 
     // On the warmup phase, we keep scanning dimensions until the amount of not-yet pruned vectors
     // is low
@@ -103,8 +101,7 @@ class PDXearch {
         KNNCandidate<Q>& best_candidate,
         uint32_t& current_dimension_idx
     ) {
-        thread_local size_t cur_subgrouping_size_idx = 0;
-        cur_subgrouping_size_idx = 0;
+        size_t cur_subgrouping_size_idx = 0;
         size_t tuples_needed_to_exit = std::ceil(1.0 * tuples_threshold * n_vectors);
         uint32_t n_tuples_to_prune = 0;
         GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
@@ -286,16 +283,11 @@ class PDXearch {
         }
     }
 
-    void BuildResultSet(
-        KNNCandidate_t& best_candidate
-    ) {
+    void BuildResultSet(KNNCandidate_t& best_candidate) {
         // We return distances in the original domain
-        float inverse_scale_factor;
-        if constexpr (q == u8) {
-            inverse_scale_factor = 1.0f / pdx_data.scale_factor;
+        if constexpr (q == Quantization::u8) {
+            float inverse_scale_factor = 1.0f / pdx_data.scale_factor;
             inverse_scale_factor = inverse_scale_factor * inverse_scale_factor;
-        }
-        if constexpr (q == u8) {
             best_candidate.distance = best_candidate.distance * inverse_scale_factor;
         }
     }
@@ -437,5 +429,3 @@ class PDXearch {
 };
 
 } // namespace skmeans
-
-#endif // SKMEANS_PDXEARCH_HPP

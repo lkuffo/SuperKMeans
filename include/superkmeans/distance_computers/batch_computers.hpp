@@ -16,16 +16,16 @@ template <DistanceFunction alpha, Quantization q>
 class BatchComputer {};
 
 template <>
-class BatchComputer<l2, u8> {};
+class BatchComputer<DistanceFunction::l2, Quantization::u8> {};
 
 template <>
-class BatchComputer<l2, f32> {
+class BatchComputer<DistanceFunction::l2, Quantization::f32> {
 
-    using distance_t = skmeans_distance_t<f32>;
-    using data_t = skmeans_value_t<f32>;
-    using norms_t = skmeans_value_t<f32>;
-    using knn_candidate_t = KNNCandidate<f32>;
-    using layout_t = PDXLayout<f32, l2>;
+    using distance_t = skmeans_distance_t<Quantization::f32>;
+    using data_t = skmeans_value_t<Quantization::f32>;
+    using norms_t = skmeans_value_t<Quantization::f32>;
+    using knn_candidate_t = KNNCandidate<Quantization::f32>;
+    using layout_t = PDXLayout<Quantization::f32, DistanceFunction::l2>;
     using MatrixR = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
     using MatrixC = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
@@ -296,7 +296,7 @@ class BatchComputer<l2, f32> {
                         const auto prev_assignment = out_knn[i_idx];
                         distance_t dist_to_prev_centroid;
                         if (j == 0) { // After this we always have the right distance in out_distances
-                            dist_to_prev_centroid = DistanceComputer<l2, f32>::Horizontal(
+                            dist_to_prev_centroid = DistanceComputer<DistanceFunction::l2, Quantization::f32>::Horizontal(
                                 y + (prev_assignment * d), data_p, d
                             );
                         } else {

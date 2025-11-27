@@ -57,8 +57,8 @@ int main(int argc, char* argv[]) {
     std::cout << "Eigen # threads: " << Eigen::nbThreads()
               << " (note: it will always be 1 if BLAS is enabled)" << std::endl;
 
-    std::vector<skmeans::skmeans_value_t<skmeans::f32>> data;
-    std::vector<skmeans::skmeans_value_t<skmeans::f32>> queries;
+    std::vector<skmeans::skmeans_value_t<skmeans::Quantization::f32>> data;
+    std::vector<skmeans::skmeans_value_t<skmeans::Quantization::f32>> queries;
     try {
         data.resize(n * d);
         queries.resize(n_queries * d);
@@ -84,7 +84,7 @@ int main(int argc, char* argv[]) {
     file_queries.read(reinterpret_cast<char*>(queries.data()), queries.size() * sizeof(float));
     file_queries.close();
 
-    auto kmeans_state = skmeans::SuperKMeans<skmeans::f32, skmeans::l2>(
+    auto kmeans_state = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
         n_clusters, d, n_iters, sampling_fraction, true, THREADS
     );
     // ankerl::nanobench::Bench().epochs(1).epochIterations(1).run("SKMeans", [&]() {

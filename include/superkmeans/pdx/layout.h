@@ -1,5 +1,4 @@
-#ifndef SKMEANS_PDX_LAYOUT_HPP
-#define SKMEANS_PDX_LAYOUT_HPP
+#pragma once
 
 #include "superkmeans/common.h"
 #include "superkmeans/pdx/pdx_ivf.h"
@@ -16,7 +15,7 @@ struct PDXDimensionSplit {
     size_t vertical_d{0};
 };
 
-template <Quantization q = f32, DistanceFunction alpha = l2>
+template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
 class PDXLayout {
 
     using index_t = IndexPDXIVF<q>;
@@ -26,19 +25,7 @@ class PDXLayout {
     using searcher_t = PDXearch<q, IndexPDXIVF<q>, alpha>;
 
   public:
-    PDXLayout(scalar_t* pdx_data, Pruner& pruner, size_t n_points, size_t d) {
-        index = std::make_unique<index_t>(); // PDXLayout is owner of the Index
-        FromBufferToPDXIndex(pdx_data, n_points, d);
-        searcher = std::make_unique<searcher_t>(*index, pruner);
-    }
-
-    PDXLayout(
-        scalar_t* pdx_data,
-        Pruner& pruner,
-        size_t n_points,
-        size_t d,
-        scalar_t* hor_data
-    ) {
+    PDXLayout(scalar_t* pdx_data, Pruner& pruner, size_t n_points, size_t d, scalar_t* hor_data = nullptr) {
         index = std::make_unique<index_t>(); // PDXLayout is owner of the Index
         FromBufferToPDXIndex(pdx_data, n_points, d, hor_data);
         searcher = std::make_unique<searcher_t>(*index, pruner);
@@ -218,5 +205,3 @@ class PDXLayout {
 };
 
 } // namespace skmeans
-
-#endif // SKMEANS_PDX_LAYOUT_HPP

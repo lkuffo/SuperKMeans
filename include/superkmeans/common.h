@@ -85,16 +85,16 @@ static constexpr uint32_t AlignValue(T n) {
     return ((n + (val - 1)) / val) * val;
 }
 
-enum DistanceFunction { l2, dp, neg_l2 };
+enum class DistanceFunction { l2, dp, neg_l2 };
 
-enum Quantization { f32, u8, f16, bf16 };
+enum class Quantization { f32, u8, f16, bf16 };
 
 template <Quantization q>
 struct DistanceType {
     using type = uint32_t;
 };
 template <>
-struct DistanceType<f32> {
+struct DistanceType<Quantization::f32> {
     using type = float;
 };
 template <Quantization q>
@@ -105,7 +105,7 @@ struct DataType {
     using type = uint8_t;
 };
 template <>
-struct DataType<f32> {
+struct DataType<Quantization::f32> {
     using type = float;
 };
 template <Quantization q>
@@ -116,7 +116,7 @@ struct CentroidDataType {
     using type = float;
 };
 template <>
-struct CentroidDataType<f32> {
+struct CentroidDataType<Quantization::f32> {
     using type = float;
 };
 template <Quantization q>
@@ -139,18 +139,18 @@ template <Quantization q>
 struct Cluster {
     uint32_t num_embeddings{};
     uint32_t* indices = nullptr;
-    skmeans_value_t<u8>* data = nullptr;
-    skmeans_value_t<u8>* aux_hor_data =
+    skmeans_value_t<Quantization::u8>* data = nullptr;
+    skmeans_value_t<Quantization::u8>* aux_hor_data =
         nullptr; // Contains the vertical dimensions minus partial_d in a horizontal layout, aka the
                  // ones not visited by BLAS
 };
 
 template <>
-struct Cluster<f32> {
+struct Cluster<Quantization::f32> {
     uint32_t num_embeddings{};
     uint32_t* indices = nullptr;
-    skmeans_value_t<f32>* data = nullptr;
-    skmeans_value_t<f32>* aux_hor_data =
+    skmeans_value_t<Quantization::f32>* data = nullptr;
+    skmeans_value_t<Quantization::f32>* aux_hor_data =
         nullptr; // Contains the vertical dimensions minus partial_d in a horizontal layout, aka the
                  // ones not visited by BLAS
 };

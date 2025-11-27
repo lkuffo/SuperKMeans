@@ -22,8 +22,8 @@ template <DistanceFunction alpha, Quantization q>
 class DistanceComputer {};
 
 template <>
-class DistanceComputer<l2, f32> {
-    using computer = SIMDComputer<l2, f32>;
+class DistanceComputer<DistanceFunction::l2, Quantization::f32> {
+    using computer = SIMDComputer<DistanceFunction::l2, Quantization::f32>;
 
   public:
     constexpr static auto VerticalPruning = computer::VerticalPruning<true>;
@@ -33,8 +33,8 @@ class DistanceComputer<l2, f32> {
 };
 
 template <>
-class DistanceComputer<l2, u8> {
-    using computer = SIMDComputer<l2, u8>;
+class DistanceComputer<DistanceFunction::l2, Quantization::u8> {
+    using computer = SIMDComputer<DistanceFunction::l2, Quantization::u8>;
 
   public:
     constexpr static auto VerticalPruning = computer::VerticalPruning<true>;

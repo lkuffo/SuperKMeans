@@ -11,13 +11,13 @@ template <DistanceFunction alpha, Quantization q>
 class ScalarComputer {};
 
 template <>
-class ScalarComputer<l2, u8> {};
+class ScalarComputer<DistanceFunction::l2, Quantization::u8> {};
 
 template <>
-class ScalarComputer<l2, f32> {
+class ScalarComputer<DistanceFunction::l2, Quantization::f32> {
   public:
-    using distance_t = skmeans_distance_t<f32>;
-    using data_t = skmeans_value_t<f32>;
+    using distance_t = skmeans_distance_t<Quantization::f32>;
+    using data_t = skmeans_value_t<Quantization::f32>;
 
     // Defer to the scalar kernel
     template <bool SKIP_PRUNED>
@@ -86,10 +86,10 @@ class ScalarComputer<l2, f32> {
 };
 
 template <>
-class ScalarComputer<dp, f32> {
+class ScalarComputer<DistanceFunction::dp, Quantization::f32> {
   public:
-    using distance_t = skmeans_distance_t<f32>;
-    using data_t = skmeans_value_t<f32>;
+    using distance_t = skmeans_distance_t<Quantization::f32>;
+    using data_t = skmeans_value_t<Quantization::f32>;
 
     // Defer to the scalar kernel
     template <bool SKIP_PRUNED>
@@ -137,9 +137,9 @@ template <Quantization q>
 class ScalarUtilsComputer {};
 
 template <>
-class ScalarUtilsComputer<f32> {
+class ScalarUtilsComputer<Quantization::f32> {
   public:
-    using data_t = skmeans_value_t<f32>;
+    using data_t = skmeans_value_t<Quantization::f32>;
 
     /**
      * @brief Flip sign of floats based on a mask (single vector).

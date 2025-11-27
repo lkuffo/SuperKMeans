@@ -13,9 +13,9 @@ template <Quantization q>
 class IndexPDXIVF {};
 
 template <>
-class IndexPDXIVF<f32> {
+class IndexPDXIVF<Quantization::f32> {
   public:
-    using CLUSTER_TYPE = Cluster<f32>;
+    using CLUSTER_TYPE = Cluster<Quantization::f32>;
 
     uint32_t num_dimensions{};
     uint32_t num_clusters{};
@@ -29,15 +29,15 @@ class IndexPDXIVF<f32> {
 };
 
 template <>
-class IndexPDXIVF<u8> {
+class IndexPDXIVF<Quantization::u8> {
   public:
-    using CLUSTER_TYPE = Cluster<u8>;
+    using CLUSTER_TYPE = Cluster<Quantization::u8>;
 
     uint32_t num_dimensions{};
     uint32_t num_clusters{};
     uint32_t num_horizontal_dimensions{};
     uint32_t num_vertical_dimensions{};
-    std::vector<Cluster<u8>> clusters;
+    std::vector<Cluster<Quantization::u8>> clusters;
     bool is_ivf{};
     bool is_normalized{};
     float* centroids{};

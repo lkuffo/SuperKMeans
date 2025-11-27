@@ -1,5 +1,4 @@
-#ifndef SKMEANS_PDX_UTILS_HPP
-#define SKMEANS_PDX_UTILS_HPP
+#pragma once
 
 #include <cassert>
 #include <chrono>
@@ -41,5 +40,3 @@ inline bool IsPowerOf2(const uint32_t x) {
 }
 
 } // namespace skmeans
-
-#endif // SKMEANS_PDX_UTILS_HPP

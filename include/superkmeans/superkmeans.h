@@ -13,7 +13,7 @@
 #include "superkmeans/profiler.hpp"
 
 namespace skmeans {
-template <Quantization q = f32, DistanceFunction alpha = l2>
+template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
 class SuperKMeans {
     using centroid_value_t = skmeans_centroid_value_t<q>;
     using vector_value_t = skmeans_value_t<q>;
@@ -21,7 +21,6 @@ class SuperKMeans {
     using layout_t = PDXLayout<q, alpha>;
     using distance_t = skmeans_distance_t<q>;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-    using MatrixC = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
     using VectorR = Eigen::VectorXf;
     using batch_computer = BatchComputer<alpha, q>;
 
@@ -193,7 +192,7 @@ class SuperKMeans {
         ConsolidateCentroids();
         ComputeCost();
         ComputeShift();
-        if (alpha == dp) {
+        if (alpha == DistanceFunction::dp) {
             PostprocessCentroids();
         }
         if (n_queries) {
@@ -237,7 +236,7 @@ class SuperKMeans {
                 ConsolidateCentroids();
                 ComputeCost();
                 ComputeShift();
-                if (alpha == dp) {
+                if (alpha == DistanceFunction::dp) {
                     PostprocessCentroids();
                 }
                 if (n_queries) {
@@ -303,7 +302,7 @@ class SuperKMeans {
             ConsolidateCentroids();
             ComputeCost();
             ComputeShift();
-            if (alpha == dp) {
+            if (alpha == DistanceFunction::dp) {
                 PostprocessCentroids();
             }
             if (n_queries) {
@@ -362,7 +361,7 @@ class SuperKMeans {
         
         // Compute norms for vectors and centroids
         std::vector<vector_value_t> vector_norms(n_vectors);
-        std::vector<vector_value_t> _centroid_norms(n_centroids);
+        std::vector<vector_value_t> centroid_norms_local(n_centroids);
         {
             Eigen::Map<const MatrixR> vectors_mat(vectors, n_vectors, d);
             Eigen::Map<VectorR> v_norms(vector_norms.data(), n_vectors);
@@ -370,7 +369,7 @@ class SuperKMeans {
         }
         {
             Eigen::Map<const MatrixR> centroids_mat(centroids, n_centroids, d);
-            Eigen::Map<VectorR> c_norms(_centroid_norms.data(), n_centroids);
+            Eigen::Map<VectorR> c_norms(centroid_norms_local.data(), n_centroids);
             c_norms.noalias() = centroids_mat.rowwise().squaredNorm();
         }
         
@@ -387,7 +386,7 @@ class SuperKMeans {
             n_centroids,
             d,
             vector_norms.data(),
-            _centroid_norms.data(),
+            centroid_norms_local.data(),
             assignments.data(),
             distances.data(),
             all_distances_buf.data()
@@ -474,7 +473,7 @@ class SuperKMeans {
             size_t c0 = (_n_clusters * rank) / nt;
             size_t c1 = (_n_clusters * (rank + 1)) / nt;
             for (size_t i = 0; i < n; i++) {
-                int64_t ci = _assignments[i];
+                uint32_t ci = _assignments[i];
                 assert(ci >= 0 && ci < _n_clusters);
                 if (ci >= c0 && ci < c1) {
                     auto vector_p = data + i * _d;
@@ -497,7 +496,7 @@ class SuperKMeans {
 
     void SplitClusters() {
         _n_split = 0;
-        std::default_random_engine rng;
+        std::default_random_engine rng(std::random_device{}());
         auto _horizontal_centroids_p = _horizontal_centroids.data();
         for (size_t ci = 0; ci < _n_clusters; ci++) {
             if (_cluster_sizes[ci] == 0) { // Need to redefine a centroid
@@ -574,11 +573,10 @@ class SuperKMeans {
         SKM_PROFILE_SCOPE("shift");
         Eigen::Map<const MatrixR> new_mat(_horizontal_centroids.data(), _n_clusters, _d);
         Eigen::Map<const MatrixR> prev_mat(_prev_centroids.data(), _n_clusters, _d);
-        MatrixR diff = new_mat - prev_mat;
         _shift = 0.0f;
 #pragma omp parallel for reduction(+:_shift) num_threads(g_n_threads)
         for (size_t i = 0; i < _n_clusters; ++i) {
-            _shift += diff.row(i).squaredNorm();
+            _shift += (new_mat.row(i) - prev_mat.row(i)).squaredNorm();
         }
         _shift /= (_n_clusters * _d);
     }
@@ -591,7 +589,7 @@ class SuperKMeans {
         const size_t objective_k
     ) {
         SKM_PROFILE_SCOPE("gt_assignments");
-        std::vector<distance_t> tmp_distances_buffer(X_BATCH_SIZE * Y_BATCH_SIZE);
+        _tmp_distances_buffer.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         std::vector<distance_t> query_norms(n_queries);
         GetL2NormsRowMajor(queries, n_queries, query_norms.data());
         batch_computer::Batched_XRowMajor_YRowMajor_TopK(
@@ -605,15 +603,15 @@ class SuperKMeans {
             objective_k,
             _gt_assignments.data(),
             _gt_distances.data(),
-            tmp_distances_buffer.data()
+            _tmp_distances_buffer.data()
         );
     }
 
     float ComputeRecall(const vector_value_t* SKM_RESTRICT queries, const size_t n_queries, const size_t objective_k, const size_t centroids_to_explore) {
         SKM_PROFILE_SCOPE("recall");
-        std::vector<distance_t> tmp_distances_buffer(X_BATCH_SIZE * Y_BATCH_SIZE);
-        std::vector<uint32_t> promising_centroids(n_queries * centroids_to_explore);
-        std::vector<distance_t> distances(n_queries * centroids_to_explore);
+        _tmp_distances_buffer.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
+        _promising_centroids.resize(n_queries * centroids_to_explore);
+        _recall_distances.resize(n_queries * centroids_to_explore);
         batch_computer::Batched_XRowMajor_YRowMajor_TopK(
             queries,
             _horizontal_centroids.data(),
@@ -623,9 +621,9 @@ class SuperKMeans {
             _query_norms.data(),
             _centroid_norms.data(),
             centroids_to_explore,
-            promising_centroids.data(),
-            distances.data(),
-            tmp_distances_buffer.data()
+            _promising_centroids.data(),
+            _recall_distances.data(),
+            _tmp_distances_buffer.data()
         );
         // For each query, compute recall@objective_k: how many of the GT clusters are found in the top-64 assignments
         // Recall per query = (# matched GT assignments in top-64) / objective_k
@@ -640,7 +638,7 @@ class SuperKMeans {
                 bool found = false;
                 for (size_t t = 0; t < centroids_to_explore; ++t) {
                     // If a promising centroid is the same as the GT centroid assignment, then we have a match
-                    if (promising_centroids[i * centroids_to_explore + t] == _assignments[gt]) {
+                    if (_promising_centroids[i * centroids_to_explore + t] == _assignments[gt]) {
                         found = true;
                         break;
                     }
@@ -653,7 +651,6 @@ class SuperKMeans {
         }
         return sum_recall / static_cast<float>(n_queries);
     }
-    std::vector<skmeans_centroid_value_t<q>> GetCentroids() const { return _centroids; }
 
     inline size_t GetNClusters() const { return _n_clusters; }
 
@@ -948,6 +945,10 @@ class SuperKMeans {
 
     std::vector<vector_value_t> _data_norms;
     std::vector<vector_value_t> _centroid_norms;
+
+    std::vector<distance_t> _tmp_distances_buffer;
+    std::vector<uint32_t> _promising_centroids;
+    std::vector<distance_t> _recall_distances;
 
     const uint32_t _iters;
     const size_t _n_clusters;
