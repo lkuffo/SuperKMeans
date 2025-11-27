@@ -164,6 +164,9 @@ class SuperKMeans {
                 SKM_PROFILE_SCOPE("rotator");
                 _pruner->Rotate(queries, rotated_queries.data(), n_queries);
             }
+            // Compute and cache query norms once (used by ComputeRecall in each iteration)
+            _query_norms.resize(n_queries);
+            GetL2NormsRowMajor(rotated_queries.data(), n_queries, _query_norms.data());
             GetGTAssignmentsAndDistances(data_to_cluster, _n_samples, rotated_queries.data(), n_queries, objective_k);
 
             // Print the assignments and distances of the first 10 queries
@@ -565,10 +568,6 @@ class SuperKMeans {
     float ComputeRecall(const vector_value_t* SKM_RESTRICT queries, const size_t n_queries, const size_t objective_k, const size_t centroids_to_explore) {
         SKM_PROFILE_SCOPE("recall");
         std::vector<distance_t> tmp_distances_buffer(X_BATCH_SIZE * Y_BATCH_SIZE);
-        // TODO(@lkuffo, supercrit): Everytime we call this function we compute the query norms again and again. We need to compute the query norms once and store them in a buffer and
-        // that this function receives that buffer as an argument.
-        std::vector<distance_t> query_norms(n_queries);
-        GetL2NormsRowMajor(queries, n_queries, query_norms.data());
         std::vector<uint32_t> promising_centroids(n_queries * centroids_to_explore);
         std::vector<distance_t> distances(n_queries * centroids_to_explore);
         batch_computer::Batched_XRowMajor_YRowMajor_TopK(
@@ -577,7 +576,7 @@ class SuperKMeans {
             n_queries,
             _n_clusters,
             _d,
-            query_norms.data(),
+            _query_norms.data(),
             centroid_norms.data(),
             centroids_to_explore,
             promising_centroids.data(),
@@ -829,6 +828,7 @@ class SuperKMeans {
 
     std::vector<uint32_t> _gt_assignments;
     std::vector<distance_t> _gt_distances;
+    std::vector<distance_t> _query_norms;  // Cached query norms (computed once per Train call)
 
     std::vector<vector_value_t> data_norms;
     std::vector<vector_value_t> centroid_norms;
