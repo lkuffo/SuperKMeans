@@ -235,8 +235,7 @@ class BatchComputer<l2, f32> {
         }
     };
 
-    template <bool RECORD_PRUNING_GROUP = false>
-    static void Batched_XRowMajor_YRowMajor_MultiplePartialD(
+    static void Batched_XRowMajor_YRowMajor_PartialD(
         const data_t* SKM_RESTRICT x,
         const data_t* SKM_RESTRICT y,
         const data_t* SKM_RESTRICT
@@ -248,31 +247,19 @@ class BatchComputer<l2, f32> {
         const norms_t* SKM_RESTRICT norms_y,
         uint32_t* SKM_RESTRICT out_knn,
         distance_t* SKM_RESTRICT out_distances,
-        uint32_t* SKM_RESTRICT out_pruning_groups,
-        const uint32_t* SKM_RESTRICT pruning_groups_partial_d,
-        const uint32_t* SKM_RESTRICT pruning_groups_ranges,
         float* SKM_RESTRICT all_distances_buf,
         const layout_t& pdx_centroids,
         TicToc& blas_tt,
         TicToc& pdx_tt,
         TicToc& norms_tt,
-        uint32_t init_partial_d,
+        uint32_t partial_d,
         size_t* out_not_pruned_counts = nullptr
     ) {
         TicToc cur_blas_tt;
         TicToc cur_pdx_tt;
-        size_t cur_group_idx = 0;
-        uint32_t partial_d = pruning_groups_partial_d[cur_group_idx];
-        std::cout << "New partial_d: " << partial_d << " at 0" << std::endl;
+        std::cout << "partial_d: " << partial_d << std::endl;
         
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
-            if (i >= pruning_groups_ranges[cur_group_idx]) {
-                assert(i == pruning_groups_ranges[cur_group_idx]); // TODO(@lkuffo, crit): delete
-                cur_group_idx++;
-                partial_d = pruning_groups_partial_d[cur_group_idx];
-                std::cout << "New partial_d: " << partial_d << " at " << i << std::endl;
-                norms_y += n_y;
-            }
             auto batch_n_x = X_BATCH_SIZE;
             auto batch_x_p = x + (i * d);
             if (i + X_BATCH_SIZE > n_x) {
@@ -324,49 +311,28 @@ class BatchComputer<l2, f32> {
 
                     // PDXearch per vector
                     knn_candidate_t assignment;
-                    if constexpr (RECORD_PRUNING_GROUP) {
-                        auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
-                        assignment =
-                            pdx_centroids.searcher
-                                ->Top1PartialSearchWithThresholdAndPartialDistances(
-                                    data_p,
-                                    dist_to_prev_centroid,
-                                    prev_assignment,
-                                    r,
-                                    out_pruning_groups[i_idx],
-                                    partial_distances_p,
-                                    partial_d,
-                                    j / VECTOR_CHUNK_SIZE, // start cluster_id
-                                    (j + Y_BATCH_SIZE) /
-                                        VECTOR_CHUNK_SIZE // end cluster_id; We use Y_BATCH_SIZE and
-                                                          // not batch_n_y because otherwise we
-                                                          // would not go up until incomplete
-                                                          // clusters
-                                );
-                    } else {
-                        auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
-                        size_t local_not_pruned = 0;
-                        assignment =
-                            pdx_centroids.searcher
-                                ->Top1PartialSearchWithThresholdAndPartialDistances(
-                                    data_p,
-                                    dist_to_prev_centroid,
-                                    prev_assignment,
-                                    r,
-                                    partial_distances_p,
-                                    partial_d,
-                                    j / VECTOR_CHUNK_SIZE, // start cluster_id
-                                    (j + Y_BATCH_SIZE) /
-                                        VECTOR_CHUNK_SIZE, // end cluster_id; We use Y_BATCH_SIZE and
-                                                          // not batch_n_y because otherwise we
-                                                          // would not go up until incomplete
-                                                          // clusters
-                                    out_not_pruned_counts != nullptr ? &local_not_pruned : nullptr
-                                );
-                        // Store not-pruned count for this X vector (accumulate across Y batches)
-                        if (out_not_pruned_counts != nullptr) {
-                            out_not_pruned_counts[i_idx] += local_not_pruned;
-                        }
+                    auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
+                    size_t local_not_pruned = 0;
+                    assignment =
+                        pdx_centroids.searcher
+                            ->Top1PartialSearchWithThresholdAndPartialDistances(
+                                data_p,
+                                dist_to_prev_centroid,
+                                prev_assignment,
+                                r,
+                                partial_distances_p,
+                                partial_d,
+                                j / VECTOR_CHUNK_SIZE, // start cluster_id
+                                (j + Y_BATCH_SIZE) /
+                                    VECTOR_CHUNK_SIZE, // end cluster_id; We use Y_BATCH_SIZE and
+                                                      // not batch_n_y because otherwise we
+                                                      // would not go up until incomplete
+                                                      // clusters
+                                out_not_pruned_counts != nullptr ? &local_not_pruned : nullptr
+                            );
+                    // Store not-pruned count for this X vector (accumulate across Y batches)
+                    if (out_not_pruned_counts != nullptr) {
+                        out_not_pruned_counts[i_idx] += local_not_pruned;
                     }
                     auto [assignment_idx, assignment_distance] = assignment;
                     out_knn[i_idx] = assignment_idx;
@@ -375,19 +341,9 @@ class BatchComputer<l2, f32> {
                 pdx_tt.Toc();
                 cur_pdx_tt.Toc();
             }
-            if constexpr (RECORD_PRUNING_GROUP) {
-                float num_centroids_norm = 1.0 / pdx_centroids.searcher->pdx_data.num_clusters;
-                for (size_t r = 0; r < batch_n_x; ++r) {
-                    const auto i_idx = i + r;
-                    out_pruning_groups[i_idx] *= num_centroids_norm;
-                    out_pruning_groups[i_idx] = CeilXToMultipleOfM(out_pruning_groups[i_idx], 16);
-                    // std::cout << out_pruning_groups[i_idx] << std::endl;
-                }
-            }
         }
         std::cout << " - BLAS  " << cur_blas_tt.accum_time / 1000000000.0 << std::endl;
         std::cout << " - PDX  " << cur_pdx_tt.accum_time / 1000000000.0 << std::endl;
-        // pdx_centroids.searcher->PrintPrunedPositions();
     }
 };
 
