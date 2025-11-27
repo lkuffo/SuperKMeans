@@ -1,5 +1,4 @@
-#ifndef SKMEANS_PDX_IVF_H
-#define SKMEANS_PDX_IVF_H
+#pragma once
 
 #include "superkmeans/common.h"
 #include <vector>
@@ -48,6 +47,4 @@ class IndexPDXIVF<Quantization::u8> {
 };
 
 } // namespace skmeans
-
-#endif // SKMEANS_PDX_IVF_H
 

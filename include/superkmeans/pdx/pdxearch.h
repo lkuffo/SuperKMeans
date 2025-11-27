@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
-#include "superkmeans/distance_computers/base_computers.hpp"
+#include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/pdx/pdx_ivf.h"
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/utils.h"

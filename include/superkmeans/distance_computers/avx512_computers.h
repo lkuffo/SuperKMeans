@@ -7,7 +7,7 @@
 #include <cstdio>
 
 #include "superkmeans/common.h"
-#include "superkmeans/distance_computers/scalar_computers.hpp"
+#include "superkmeans/distance_computers/scalar_computers.h"
 
 namespace skmeans {
 

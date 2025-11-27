@@ -1,6 +1,4 @@
 #pragma once
-#ifndef SUPERKMEANS_COMMON_H
-#define SUPERKMEANS_COMMON_H
 
 #include <cinttypes>
 #include <cstdint>
@@ -156,5 +154,3 @@ struct Cluster<Quantization::f32> {
 };
 
 }; // namespace skmeans
-
-#endif // SUPERKMEANS_COMMON_H

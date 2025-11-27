@@ -6,8 +6,8 @@
 #include <random>
 
 #include "superkmeans/common.h"
-#include "superkmeans/distance_computers/base_computers.hpp"
-#include "superkmeans/distance_computers/batch_computers.hpp"
+#include "superkmeans/distance_computers/base_computers.h"
+#include "superkmeans/distance_computers/batch_computers.h"
 #include "superkmeans/pdx/pdxearch.h"
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/profiler.hpp"
@@ -37,8 +37,8 @@ class SuperKMeans {
         float tol = 1e-8,
         float recall_tol = 0.001f
     )
-        : _iters(iters), _n_clusters(n_clusters), _sampling_fraction(sampling_fraction),
-          _d(dimensionality), _trained(false), _verbose(verbose), _tol(tol), _recall_tol(recall_tol) {
+        : _d(dimensionality), _n_clusters(n_clusters), _iters(iters), _sampling_fraction(sampling_fraction),
+          _verbose(verbose), _tol(tol), _recall_tol(recall_tol) {
         SKMEANS_ENSURE_POSITIVE(n_clusters);
         SKMEANS_ENSURE_POSITIVE(iters);
         SKMEANS_ENSURE_POSITIVE(sampling_fraction);
@@ -925,47 +925,52 @@ class SuperKMeans {
         }
     }
 
+    // === Configuration (immutable after construction) ===
+    const size_t _d;
+    const size_t _n_clusters;
+    const uint32_t _iters;
+    const float _sampling_fraction;
+
+    // === Training state ===
+    bool _trained = false;
+    bool _verbose = false;
+    size_t _n_samples = 0;
+    size_t _n_split = 0;
+    size_t _centroids_to_explore = 64;
+    uint32_t _vertical_d = 0;
+    uint32_t _initial_partial_d = DEFAULT_INITIAL_PARTIAL_D;
+    float _cost = 0.0f;
+    float _shift = 0.0f;
+    float _tol = 0.0f;
+    float _recall = 0.0f;
+    float _recall_tol = 0.0f;
+
+    // === Core algorithm components ===
     std::unique_ptr<Pruner> _pruner;
 
-    std::vector<centroid_value_t> _centroids;      // Always keeps the PDX centroids
-    std::vector<centroid_value_t> _horizontal_centroids;  // Always keeps the horizontal (row-major) centroids
-    std::vector<centroid_value_t> _prev_centroids; // Always keeps the previous iteration centroids
-    std::vector<centroid_value_t> _partial_horizontal_centroids; // Partial horizontal centroids (first _vertical_d dimensions)
+    // === Centroid data ===
+    std::vector<centroid_value_t> _centroids;                    // PDX-layout centroids
+    std::vector<centroid_value_t> _horizontal_centroids;         // Row-major centroids
+    std::vector<centroid_value_t> _prev_centroids;               // Previous iteration centroids
+    std::vector<centroid_value_t> _partial_horizontal_centroids; // First _vertical_d dimensions
+
+    // === Assignment and distance data ===
     std::vector<distance_t> _distances;
-
-  public:
-    std::vector<uint32_t> _assignments;  // Cluster assignments from Train() (public for user access)
-
-  protected:
     std::vector<uint32_t> _cluster_sizes;
-
-    std::vector<uint32_t> _gt_assignments;
-    std::vector<distance_t> _gt_distances;
-    std::vector<distance_t> _query_norms;  // Cached query norms (computed once per Train call)
-
     std::vector<vector_value_t> _data_norms;
     std::vector<vector_value_t> _centroid_norms;
 
+    // === Ground truth and recall computation ===
+    std::vector<uint32_t> _gt_assignments;
+    std::vector<distance_t> _gt_distances;
+    std::vector<distance_t> _query_norms;
+
+    // === Reusable buffers (avoid repeated allocations) ===
     std::vector<distance_t> _tmp_distances_buffer;
     std::vector<uint32_t> _promising_centroids;
     std::vector<distance_t> _recall_distances;
 
-    const uint32_t _iters;
-    const size_t _n_clusters;
-    const float _sampling_fraction;
-    const size_t _d;
-    bool _trained;
-    bool _verbose;
-    float _cost;
-    float _shift;
-    size_t _n_samples;
-    size_t _n_split;
-    uint32_t _initial_partial_d = DEFAULT_INITIAL_PARTIAL_D;
-    uint32_t _vertical_d;
-    float _tol;
-    float _recall_tol;
-    float _recall = 0.0f;
-    size_t _centroids_to_explore = 64;
-
+  public:
+    std::vector<uint32_t> _assignments;  // Public for user access
 };
 } // namespace skmeans

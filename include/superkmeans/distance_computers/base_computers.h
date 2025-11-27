@@ -7,11 +7,11 @@
 #endif
 
 #if defined(__AVX2__) && !defined(__AVX512F__)
-#include "avx2_computers.hpp"
+#include "avx2_computers.h"
 #endif
 
 #ifdef __AVX512F__
-#include "avx512_computers.hpp"
+#include "avx512_computers.h"
 #endif
 
 namespace skmeans {

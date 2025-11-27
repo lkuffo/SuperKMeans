@@ -9,7 +9,7 @@
 #include "superkmeans/nanobench.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/adsampling.h"
-#include "superkmeans/distance_computers/batch_computers.hpp"
+#include "superkmeans/distance_computers/batch_computers.h"
 #include "superkmeans/superkmeans.h"
 #include <Eigen/Eigen/Dense>
 
