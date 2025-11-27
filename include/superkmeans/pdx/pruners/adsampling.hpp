@@ -120,7 +120,7 @@ class ADSamplingPruner {
         Multiply(raw_query, query, num_dimensions);
     }
 
-    void FlipSign(const float* SKM_RESTRICT data, float* SKM_RESTRICT out, const size_t n) {
+    void FlipSign(const float* data, float* out, const size_t n) {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const auto offset = i * num_dimensions;
@@ -188,6 +188,65 @@ class ADSamplingPruner {
         }
 #endif
         out.noalias() = vectors_matrix * matrix.transpose();
+    }
+
+    /**
+     * @brief Unrotate vectors (inverse of Rotate).
+     * For orthonormal matrix Q: Rotate does out = vectors * Q^T, so Unrotate does out = vectors * Q
+     * For DCT: applies inverse scaling, then inverse DCT (DCT-III), then FlipSign
+     */
+    void Unrotate(
+        const float* SKM_RESTRICT rotated_vectors,
+        float* SKM_RESTRICT out_buffer,
+        const uint32_t n
+    ) {
+        Eigen::Map<const MatrixR> vectors_matrix(rotated_vectors, n, num_dimensions);
+        Eigen::Map<MatrixR> out(out_buffer, n, num_dimensions);
+#ifdef HAS_FFTW
+        if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
+            // Copy input to output buffer for in-place transform
+            std::memcpy(out_buffer, rotated_vectors, n * num_dimensions * sizeof(float));
+            
+            // Undo scaling (inverse of forward scaling)
+            const float inv_s0 = std::sqrt(4.0f * num_dimensions);
+            const float inv_s = std::sqrt(2.0f * num_dimensions);
+            out.col(0) *= inv_s0;
+            out.rightCols(num_dimensions - 1) *= inv_s;
+            
+            // Apply inverse DCT (DCT-III = FFTW_REDFT01)
+            fftwf_init_threads();
+            fftwf_plan_with_nthreads(g_n_threads);
+            int n0 = static_cast<int>(num_dimensions);
+            int howmany = static_cast<int>(n);
+            fftw_r2r_kind kind[1] = {FFTW_REDFT01};  // DCT-III (inverse of DCT-II)
+            auto flag = FFTW_MEASURE;
+            if (IsPowerOf2(num_dimensions)) {
+                flag = FFTW_ESTIMATE;
+            }
+            fftwf_plan plan = fftwf_plan_many_r2r(
+                1,
+                &n0,
+                howmany,
+                out.data(),
+                NULL, 1, n0,
+                out.data(),
+                NULL, 1, n0,
+                kind,
+                flag
+            );
+            fftwf_execute(plan);
+            fftwf_destroy_plan(plan);
+            
+            // FFTW's DCT-III needs normalization by 1/(2*n)
+            out *= (1.0f / (2.0f * num_dimensions));
+            
+            // Undo FlipSign (FlipSign is its own inverse)
+            FlipSign(out_buffer, out_buffer, n);
+            return;
+        }
+#endif
+        // For orthonormal matrix: Q^{-1} = Q^T, and Rotate does v * Q^T, so Unrotate does v * Q
+        out.noalias() = vectors_matrix * matrix;
     }
 
   private:

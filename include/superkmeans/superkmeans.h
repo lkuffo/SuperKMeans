@@ -58,6 +58,7 @@ class SuperKMeans {
      * @param verbose Whether to use verbose output. Defaults to false.
      * @param num_threads Number of CPU threads to use (set to -1 to use all cores)
      * @param ann_explore_fraction Fraction of centroids to explore for recall computation (0.0 to 1.0). Default 0.01 (1%).
+     * @param unrotate_centroids Whether to unrotate centroids before returning (default true). Set to false to get rotated centroids.
      * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
      */
     std::vector<skmeans_centroid_value_t<q>> Train(
@@ -67,7 +68,8 @@ class SuperKMeans {
         const size_t n_queries = 0,
         const bool sample_queries = false,
         const size_t objective_k = 100,
-        const float ann_explore_fraction = 0.01f
+        const float ann_explore_fraction = 0.01f,
+        const bool unrotate_centroids = true
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
         if (_trained) {
@@ -208,7 +210,7 @@ class SuperKMeans {
 
         if (_iters <= 1) {
             Profiler::Get().PrintHierarchical();
-            return _horizontal_centroids;
+            return GetOutputCentroids(unrotate_centroids);
         }
 
         // Special path for low-dimensional data: use BLAS-only for all iterations
@@ -247,7 +249,7 @@ class SuperKMeans {
             if (verbose) {
                 Profiler::Get().PrintHierarchical();
             }
-            return _horizontal_centroids;
+            return GetOutputCentroids(unrotate_centroids);
         }
 
 
@@ -314,10 +316,7 @@ class SuperKMeans {
         if (verbose) {
             Profiler::Get().PrintHierarchical();
         }
-        // TODO(@lkuffo, supercrit): I need to return the UNROTATED horizontal centroids
-        // We have the rotation matrix in adsampling.hpp, we need to create there an unrotate function 
-        // and unrotate the centroids. 
-        return _horizontal_centroids;
+        return GetOutputCentroids(unrotate_centroids);
     }
 
 
@@ -752,6 +751,21 @@ class SuperKMeans {
         return std::floor(n * _sampling_fraction);
     }
 
+    /**
+     * @brief Prepare centroids for output (applies any necessary transformations).
+     * @param should_unrotate If true, unrotates centroids to original space; if false, returns rotated centroids.
+     * @return Centroids ready for output
+     */
+    std::vector<centroid_value_t> GetOutputCentroids(bool should_unrotate) {
+        if (should_unrotate) {
+            SKM_PROFILE_SCOPE("unrotator");
+            std::vector<centroid_value_t> unrotated(_n_clusters * _d);
+            _pruner->Unrotate(_horizontal_centroids.data(), unrotated.data(), _n_clusters);
+            return unrotated;
+        }
+        return _horizontal_centroids;
+    }
+
     // TODO(@lkuffo, low): Centroids are on PDX, I cant do this... but TMP centroids are not!
     void PostprocessCentroids() {
         auto centroids_p = _centroids.data();
@@ -778,7 +792,7 @@ class SuperKMeans {
         std::cout << "n_samples: " << n_samples << std::endl;
 
         // Intermediate buffer needed only when both sampling and rotating
-        // (rotation cannot be done in-place from sparse source indices)
+        // (we have not yet implemented rotation in-place)
         std::vector<vector_value_t> samples_tmp;
         const vector_value_t* src_data = data;
         
