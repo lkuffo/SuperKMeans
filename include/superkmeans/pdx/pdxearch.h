@@ -196,12 +196,17 @@ class PDXearch {
         uint32_t& current_dimension_idx,
         const uint32_t* vector_indices,
         const uint32_t prev_top_1,
-        const skmeans_value_t<Q>* SKM_RESTRICT aux_data = nullptr
+        const skmeans_value_t<Q>* SKM_RESTRICT aux_data = nullptr,
+        size_t* initial_not_pruned_out = nullptr
     ) {
         GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
         InitPositionsArray<Q>(
             n_vectors, n_vectors_not_pruned, pruning_positions, pruning_threshold, pruning_distances
         );
+        // Record the initial n_vectors_not_pruned if requested
+        if (initial_not_pruned_out != nullptr) {
+            *initial_not_pruned_out = n_vectors_not_pruned;
+        }
         // Early exit if the only remaining point is the one that was initially the best candidate
         if (n_vectors_not_pruned == 1 && vector_indices[pruning_positions[0]] == prev_top_1) {
             n_vectors_not_pruned = 0;
@@ -448,7 +453,8 @@ class PDXearch {
         DISTANCES_TYPE* partial_pruning_distances,
         const uint32_t computed_distance_until,
         const size_t start_cluster,
-        const size_t end_cluster
+        const size_t end_cluster,
+        size_t* initial_not_pruned_accum = nullptr
     ) {
         alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
         DISTANCES_TYPE pruning_threshold = std::numeric_limits<DISTANCES_TYPE>::max();
@@ -477,6 +483,7 @@ class PDXearch {
             current_cluster = cluster_idx;
             CLUSTER_TYPE& cluster = pdx_data.clusters[current_cluster];
             data_offset += cluster.num_embeddings;
+            size_t initial_not_pruned = 0;
             Prune(
                 query,
                 cluster.data,
@@ -489,8 +496,13 @@ class PDXearch {
                 current_dimension_idx,
                 cluster.indices,
                 prev_top_1,
-                cluster.aux_hor_data
+                cluster.aux_hor_data,
+                &initial_not_pruned
             );
+            // Accumulate the initial not-pruned count for this cluster
+            if (initial_not_pruned_accum != nullptr) {
+                *initial_not_pruned_accum += initial_not_pruned;
+            }
             if (n_vectors_not_pruned) {
                 SetBestCandidate<true>(
                     cluster.indices,

@@ -256,13 +256,15 @@ class BatchComputer<l2, f32> {
         TicToc& blas_tt,
         TicToc& pdx_tt,
         TicToc& norms_tt,
-        uint32_t init_partial_d
+        uint32_t init_partial_d,
+        size_t* out_not_pruned_counts = nullptr
     ) {
         TicToc cur_blas_tt;
         TicToc cur_pdx_tt;
         size_t cur_group_idx = 0;
         uint32_t partial_d = pruning_groups_partial_d[cur_group_idx];
         std::cout << "New partial_d: " << partial_d << " at 0" << std::endl;
+        
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             if (i >= pruning_groups_ranges[cur_group_idx]) {
                 assert(i == pruning_groups_ranges[cur_group_idx]); // TODO(@lkuffo, crit): delete
@@ -343,6 +345,7 @@ class BatchComputer<l2, f32> {
                                 );
                     } else {
                         auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
+                        size_t local_not_pruned = 0;
                         assignment =
                             pdx_centroids.searcher
                                 ->Top1PartialSearchWithThresholdAndPartialDistances(
@@ -354,11 +357,16 @@ class BatchComputer<l2, f32> {
                                     partial_d,
                                     j / VECTOR_CHUNK_SIZE, // start cluster_id
                                     (j + Y_BATCH_SIZE) /
-                                        VECTOR_CHUNK_SIZE // end cluster_id; We use Y_BATCH_SIZE and
+                                        VECTOR_CHUNK_SIZE, // end cluster_id; We use Y_BATCH_SIZE and
                                                           // not batch_n_y because otherwise we
                                                           // would not go up until incomplete
                                                           // clusters
+                                    out_not_pruned_counts != nullptr ? &local_not_pruned : nullptr
                                 );
+                        // Store not-pruned count for this X vector (accumulate across Y batches)
+                        if (out_not_pruned_counts != nullptr) {
+                            out_not_pruned_counts[i_idx] += local_not_pruned;
+                        }
                     }
                     auto [assignment_idx, assignment_distance] = assignment;
                     out_knn[i_idx] = assignment_idx;

@@ -18,7 +18,7 @@ import fastkmeans
 from fastkmeans import FastKMeans
 
 if __name__ == "__main__":
-    dataset = sys.argv[1] if len(sys.argv) > 1 else "glove100"
+    dataset = sys.argv[1] if len(sys.argv) > 1 else "fmnist"
     dataset_params = {
         "mxbai": (769_382, 1024),
         "openai": (999_000, 1536),

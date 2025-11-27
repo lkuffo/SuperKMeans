@@ -14,7 +14,7 @@
 #include "superkmeans/nanobench.h"
 
 int main(int argc, char* argv[]) {
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("glove100");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("fmnist");
 
     const std::unordered_map<std::string, std::pair<int, int>> dataset_params = {
         {"mxbai", {769382, 1024}},

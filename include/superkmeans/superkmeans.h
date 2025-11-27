@@ -107,6 +107,8 @@ class SuperKMeans {
         }
         //! _centroids and _aux_hor_centroids are always wrapped with the PDXLayout object
         _vertical_d = PDXLayout<q, alpha, Pruner>::GetDimensionSplit(_d).vertical_d;
+        // Set initial_partial_d dynamically as half of vertical_d
+        _initial_partial_d = std::max<uint32_t>(8, _vertical_d / 2);
         // Ensure initial_partial_d doesn't exceed vertical_d to avoid double-counting dimensions
         // when BLAS computes more dimensions than the vertical block contains
         if (_initial_partial_d > _vertical_d) {
@@ -306,12 +308,16 @@ class SuperKMeans {
         std::vector<vector_value_t> centroid_partial_norms(
             _n_clusters * _pruning_groups_partial_d.size()
         );
+        // Buffer to store per-vector not-pruned counts for tuning _initial_partial_d
+        std::vector<size_t> not_pruned_counts(_n_samples);
         _allocator_time.Toc();
         GetGroupsL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
         for (; iter_idx < _iters; ++iter_idx) {
             GetL2NormsRowMajorPerGroup(
                 _tmp_centroids.data(), _n_clusters, centroid_partial_norms.data()
             );
+            // Reset the not-pruned counts buffer
+            std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
             AssignAndUpdateCentroidsPartialBatched(
                 data_to_cluster,
                 _tmp_centroids.data(),
@@ -319,8 +325,18 @@ class SuperKMeans {
                 centroid_partial_norms.data(),
                 all_distances.data(),
                 centroids_pdx_wrapper,
-                _n_samples
+                _n_samples,
+                not_pruned_counts.data()
             );
+            
+            // Tune _initial_partial_d based on the average not-pruned percentage
+            bool partial_d_changed = false;
+            float avg_not_pruned_pct = TuneInitialPartialD(not_pruned_counts.data(), _n_samples, _n_clusters, partial_d_changed);
+            
+            // If _initial_partial_d changed, recompute the data norms with the new partial_d
+            if (partial_d_changed) {
+                GetGroupsL2NormsRowMajor(data_to_cluster, _n_samples, data_norms.data());
+            }
             
             ConsolidateCentroids();
             ComputeCost();
@@ -341,7 +357,9 @@ class SuperKMeans {
                 std::cout << "Iteration " << iter_idx + 1 << "/" << _iters
                           << " | Objective: " << cost << " | Shift: " << shift
                           << " | Split: " << _n_split 
-                          << " | Recall: " << _recall << std::endl << std::endl;
+                          << " | Recall: " << _recall
+                          << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
+                          << " | Partial D: " << _initial_partial_d << std::endl << std::endl;
         }
         //! I only need assignments if sampling_faction < 1
         if (_sampling_fraction < 1.0f) {
@@ -513,7 +531,8 @@ class SuperKMeans {
         const vector_value_t* SKM_RESTRICT partial_centroid_norms,
         distance_t* SKM_RESTRICT all_distances,
         const layout_t& pdx_centroids,
-        const size_t n
+        const size_t n,
+        size_t* out_not_pruned_counts = nullptr
     ) {
         _sampling_time.Tic();
         std::copy(_tmp_centroids.begin(), _tmp_centroids.end(), _prev_centroids.begin());
@@ -542,7 +561,8 @@ class SuperKMeans {
             _blas_total_time,
             _pdx_search_time,
             _blas_norms_time,
-            _initial_partial_d
+            _initial_partial_d,
+            out_not_pruned_counts
         );
         _search_time.Toc();
         _total_search_time.Toc();
@@ -1046,6 +1066,64 @@ class SuperKMeans {
         Eigen::Map<VectorR> e_norms(out_norm, n);
         e_norms.noalias() = e_data.leftCols(partial_d).rowwise().squaredNorm();
         _norms_calc_time.Toc();
+    }
+
+    /**
+     * @brief Tune _initial_partial_d based on the average not-pruned percentage.
+     * 
+     * A safe range for pruning is between 75% - 90% of vectors pruned (i.e., 10% - 25% not pruned).
+     * - If avg_not_pruned_pct > 25% (i.e., less than 75% pruned), we reduce _initial_partial_d by 25%
+     *   to be more aggressive in pruning
+     * - If avg_not_pruned_pct < 10% (i.e., more than 90% pruned), we increase _initial_partial_d by 25%
+     *   to be less aggressive
+     * - _initial_partial_d is clamped between 8 and _vertical_d
+     * 
+     * @param not_pruned_counts Buffer containing per-vector not-pruned counts
+     * @param n_samples Number of X vectors
+     * @param n_y Number of Y vectors (centroids)
+     * @param partial_d_changed Output parameter: set to true if _initial_partial_d was changed
+     * @return The computed average not-pruned percentage
+     */
+    float TuneInitialPartialD(const size_t* not_pruned_counts, size_t n_samples, size_t n_y, bool& partial_d_changed) {
+        constexpr float MIN_NOT_PRUNED_PCT = 0.03f;  // 3% not pruned = 97% pruned
+        constexpr float MAX_NOT_PRUNED_PCT = 0.10f;  // 10% not pruned = 90% pruned
+        constexpr float ADJUSTMENT_FACTOR = 0.10f;   // 10% adjustment
+        constexpr uint32_t MIN_PARTIAL_D = 8;
+        
+        // Calculate average not-pruned percentage from the buffer
+        float avg_not_pruned_pct = 0.0f;
+        for (size_t i = 0; i < n_samples; ++i) {
+            // std::cout << "Not pruned count: " << not_pruned_counts[i] << " out of " << n_y << std::endl;
+            avg_not_pruned_pct += static_cast<float>(not_pruned_counts[i]);
+        }
+        avg_not_pruned_pct /= static_cast<float>(n_samples * n_y);
+        
+        uint32_t old_partial_d = _initial_partial_d;
+        
+        if (avg_not_pruned_pct > MAX_NOT_PRUNED_PCT) {
+            // Too many vectors not pruned (< MAX_NOT_PRUNED_PCT pruned), need more BLAS dimensions
+            // Increase _initial_partial_d by ADJUSTMENT_FACTOR
+            uint32_t increase = static_cast<uint32_t>(_initial_partial_d * ADJUSTMENT_FACTOR);
+            _initial_partial_d = std::min(_initial_partial_d + std::max(increase, 1u), _vertical_d);
+        } else if (avg_not_pruned_pct < MIN_NOT_PRUNED_PCT) {
+            // Too few vectors not pruned (> MIN_NOT_PRUNED_PCT pruned), can reduce BLAS dimensions
+            // Decrease _initial_partial_d by ADJUSTMENT_FACTOR
+            uint32_t decrease = static_cast<uint32_t>(_initial_partial_d * ADJUSTMENT_FACTOR);
+            _initial_partial_d = std::max(_initial_partial_d - std::max(decrease, 1u), MIN_PARTIAL_D);
+        }
+        // This line activates or deactivates the initial partial d tuning mechanism
+        // _pruning_groups_partial_d[0] = _initial_partial_d;
+        // partial_d_changed = (old_partial_d != _initial_partial_d);
+
+        partial_d_changed = false;
+        
+        // else: within safe range (75% - 90% pruned), no adjustment needed
+        if (verbose && partial_d_changed) {
+            std::cout << "Tuning _initial_partial_d: " << old_partial_d << " -> " << _initial_partial_d
+                      << " (avg not pruned: " << avg_not_pruned_pct * 100.0f << "%)" << std::endl;
+        }
+        
+        return avg_not_pruned_pct;
     }
 
     size_t GetNVectorsToSample(const size_t n) const {
