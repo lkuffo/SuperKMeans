@@ -18,6 +18,7 @@ namespace skmeans {
 template <Quantization q = f32>
 class ADSamplingPruner {
     using DISTANCES_TYPE = skmeans_distance_t<q>;
+    using value_t = skmeans_value_t<q>;
     using KNNCandidate_t = KNNCandidate<q>;
     using VectorComparator_t = VectorComparator<q>;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
@@ -129,10 +130,9 @@ class ADSamplingPruner {
         }
     }
 
-    // TODO(@lkuffo, high): use scalar_t
     void Rotate(
-        const float* SKM_RESTRICT vectors,
-        float* SKM_RESTRICT out_buffer,
+        const value_t* SKM_RESTRICT vectors,
+        value_t* SKM_RESTRICT out_buffer,
         const uint32_t n
     ) {
         TicToc m;

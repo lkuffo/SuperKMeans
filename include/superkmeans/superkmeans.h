@@ -13,11 +13,12 @@
 #include "superkmeans/profiler.hpp"
 
 namespace skmeans {
-template <Quantization q = f32, DistanceFunction alpha = l2, class Pruner = ADSamplingPruner<q>>
+template <Quantization q = f32, DistanceFunction alpha = l2>
 class SuperKMeans {
     using centroid_value_t = skmeans_centroid_value_t<q>;
     using vector_value_t = skmeans_value_t<q>;
-    using layout_t = PDXLayout<q, alpha, Pruner>;
+    using Pruner = ADSamplingPruner<q>;
+    using layout_t = PDXLayout<q, alpha>;
     using knn_candidate_t = KNNCandidate<q>;
     using distance_t = skmeans_distance_t<q>;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
@@ -110,7 +111,7 @@ class SuperKMeans {
             std::cout << "Generating centroids..." << std::endl;
         }
         //! _centroids and _partial_horizontal_centroids are always wrapped with the PDXLayout object
-        _vertical_d = PDXLayout<q, alpha, Pruner>::GetDimensionSplit(_d).vertical_d;
+        _vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(_d).vertical_d;
         // Set initial_partial_d dynamically as half of vertical_d
         _initial_partial_d = std::max<uint32_t>(8, _vertical_d / 2);
         // Ensure initial_partial_d doesn't exceed vertical_d to avoid double-counting dimensions
@@ -150,8 +151,9 @@ class SuperKMeans {
         if (n_queries) {
             // Compute number of centroids to explore from the fraction parameter (minimum 1)
             _centroids_to_explore = std::max<size_t>(static_cast<size_t>(_n_clusters * ann_explore_fraction), 1);
-            std::cout << " -----> Centroids to explore: " << _centroids_to_explore 
-                      << " (" << ann_explore_fraction * 100.0f << "% of " << _n_clusters << ")" << std::endl;
+            if (verbose) {
+                std::cout << "Centroids to explore: " << _centroids_to_explore << " (" << ann_explore_fraction * 100.0f << "% of " << _n_clusters << ")" << std::endl;
+            }
             {
                 SKM_PROFILE_SCOPE("allocator");
                 _gt_assignments.resize(n_queries * objective_k);
@@ -548,7 +550,7 @@ class SuperKMeans {
         {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
             //! This updates the object within the pdx_layout wrapper
-            PDXLayout<q, alpha, Pruner>::template PDXify<false>(
+            PDXLayout<q, alpha>::template PDXify<false>(
                 _horizontal_centroids.data(), _centroids.data(), _n_clusters, _d
             );
             CentroidsToAuxiliaryHorizontal();
@@ -652,7 +654,7 @@ class SuperKMeans {
     inline bool IsTrained() const { return _trained; }
 
   protected:
-    PDXLayout<q, alpha, Pruner> GenerateCentroids(
+    PDXLayout<q, alpha> GenerateCentroids(
         const vector_value_t* SKM_RESTRICT data,
         const size_t n
     ) {
@@ -676,13 +678,13 @@ class SuperKMeans {
         }
         {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
-            PDXLayout<q, alpha, Pruner>::template PDXify<false>(
+            PDXLayout<q, alpha>::template PDXify<false>(
                 rotated_centroids.data(), _centroids.data(), _n_clusters, _d
             );
         }
         //! We wrap _centroids and _partial_horizontal_centroids in the PDXLayout wrapper
         //! Any updates to these objects is reflected in the PDXLayout
-        auto pdx_centroids = PDXLayout<q, alpha, Pruner>(
+        auto pdx_centroids = PDXLayout<q, alpha>(
             _centroids.data(), *_pruner, _n_clusters, _d, _partial_horizontal_centroids.data()
         );
         return pdx_centroids;
@@ -804,17 +806,17 @@ class SuperKMeans {
         return _horizontal_centroids;
     }
 
-    // TODO(@lkuffo, low): Centroids are on PDX, I cant do this... but TMP centroids are not!
+    // Normalize the centroids if DP is used
     void PostprocessCentroids() {
-        auto centroids_p = _centroids.data();
+        auto horizontal_centroids_p = _horizontal_centroids.data();
         for (size_t i = 0; i < _n_clusters; ++i) {
             float sum = 0.0f;
             for (size_t j = 0; j < _d; ++j) {
-                sum += centroids_p[i * _d + j] * centroids_p[i * _d + j];
+                sum += horizontal_centroids_p[i * _d + j] * horizontal_centroids_p[i * _d + j];
             }
             float norm = std::sqrt(sum);
             for (size_t j = 0; j < _d; ++j) {
-                centroids_p[i * _d + j] = centroids_p[i * _d + j] / norm;
+                horizontal_centroids_p[i * _d + j] = horizontal_centroids_p[i * _d + j] / norm;
             }
         }
     }

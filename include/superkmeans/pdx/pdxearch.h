@@ -11,7 +11,6 @@
 #include "superkmeans/pdx/index_base/pdx_ivf.hpp"
 #include "superkmeans/pdx/index_base/pdx_ivf2.hpp"
 #include "superkmeans/pdx/pruners/adsampling.hpp"
-#include "superkmeans/pdx/pruners/bond.hpp"
 #include "superkmeans/pdx/utils.h"
 
 namespace skmeans {
@@ -23,8 +22,7 @@ namespace skmeans {
 template <
     Quantization q = f32,
     class Index = IndexPDXIVF<q>,
-    DistanceFunction alpha = l2,
-    class Pruner = ADSamplingPruner<q>>
+    DistanceFunction alpha = l2>
 class PDXearch {
   public:
     using DISTANCES_TYPE = skmeans_distance_t<q>;
@@ -33,20 +31,12 @@ class PDXearch {
     using CLUSTER_TYPE = Cluster<q>;
     using KNNCandidate_t = KNNCandidate<q>;
     using VectorComparator_t = VectorComparator<q>;
+    using Pruner = ADSamplingPruner<q>;
 
     Pruner pruner;
     INDEX_TYPE& pdx_data;
 
-    PDXearch(INDEX_TYPE& data_index, Pruner& pruner) : pruner(pruner), pdx_data(data_index) {
-        if constexpr (std::is_same_v<Pruner, BondPruner<q>>) {
-            pdx_data.num_horizontal_dimensions = 0;
-            pdx_data.num_vertical_dimensions = pdx_data.num_dimensions;
-            is_adsampling = false;
-        }
-        if constexpr (std::is_same_v<Pruner, ADSamplingPruner<q>>) {
-            is_adsampling = true;
-        }
-    }
+    PDXearch(INDEX_TYPE& data_index, Pruner& pruner) : pruner(pruner), pdx_data(data_index) {}
 
     void PrintPrunedPositions() {
         std::vector<std::pair<uint32_t, int>> elems(
@@ -69,7 +59,6 @@ class PDXearch {
 
   protected:
     float selectivity_threshold = 0.80;
-    uint32_t is_adsampling = false;
 
     static inline std::unordered_map<uint32_t, uint32_t> pruned_positions{};
 
@@ -172,8 +161,7 @@ class PDXearch {
             );
             current_dimension_idx = last_dimension_to_fetch;
             cur_subgrouping_size_idx += 1;
-            if (is_adsampling)
-                GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
+            GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
             n_tuples_to_prune = 0;
             EvaluatePruningPredicateScalar<Q>(
                 n_tuples_to_prune, n_vectors, pruning_distances, pruning_threshold
@@ -237,8 +225,7 @@ class PDXearch {
             }
             current_horizontal_dimension += H_DIM_SIZE;
             current_dimension_idx += H_DIM_SIZE;
-            if (is_adsampling)
-                GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
+            GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
             assert(
                 current_dimension_idx == current_vertical_dimension +
                 current_horizontal_dimension
@@ -303,8 +290,7 @@ class PDXearch {
             assert(
                 current_dimension_idx == current_vertical_dimension + current_horizontal_dimension
             );
-            if (is_adsampling)
-                GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
+            GetPruningThreshold<Q>(best_candidate, pruning_threshold, current_dimension_idx);
             EvaluatePruningPredicateOnPositionsArray<Q>(
                 cur_n_vectors_not_pruned,
                 n_vectors_not_pruned,

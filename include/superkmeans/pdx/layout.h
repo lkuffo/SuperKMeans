@@ -18,13 +18,14 @@ struct PDXDimensionSplit {
     size_t vertical_d{0};
 };
 
-template <Quantization q = f32, DistanceFunction alpha = l2, class Pruner = ADSamplingPruner<q>>
+template <Quantization q = f32, DistanceFunction alpha = l2>
 class PDXLayout {
 
     using index_t = IndexPDXIVF<q>;
     using scalar_t = skmeans_value_t<q>;
     using cluster_t = Cluster<q>;
-    using searcher_t = PDXearch<q, IndexPDXIVF<q>, alpha, Pruner>;
+    using Pruner = ADSamplingPruner<q>;
+    using searcher_t = PDXearch<q, IndexPDXIVF<q>, alpha>;
 
   public:
     PDXLayout(scalar_t* pdx_data, Pruner& pruner, size_t n_points, size_t d) {
