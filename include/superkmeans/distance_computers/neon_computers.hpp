@@ -214,6 +214,47 @@ class SIMDComputer<l2, f32> {
     };
 };
 
+/**
+ * Utility SIMD operations that don't depend on distance function (alpha)
+ */
+template <Quantization q>
+class SIMDUtilsComputer {};
+
+template <>
+class SIMDUtilsComputer<f32> {
+  public:
+    using data_t = skmeans_value_t<f32>;
+
+    /**
+     * @brief Flip sign of floats based on a mask using NEON (single vector).
+     * @param data Input vector (d elements)
+     * @param out Output vector (can be same as data for in-place)
+     * @param masks Bitmask array (0x80000000 to flip, 0 to keep)
+     * @param d Number of dimensions
+     */
+    static void FlipSign(
+        const data_t* data,
+        data_t* out,
+        const uint32_t* masks,
+        size_t d
+    ) {
+        size_t j = 0;
+        // NEON: process 4 floats at a time
+        for (; j + 4 <= d; j += 4) {
+            float32x4_t vec = vld1q_f32(data + j);
+            const uint32x4_t mask = vld1q_u32(masks + j);
+            vec = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(vec), mask));
+            vst1q_f32(out + j, vec);
+        }
+        // Scalar tail
+        auto data_bits = reinterpret_cast<const uint32_t*>(data);
+        auto out_bits = reinterpret_cast<uint32_t*>(out);
+        for (; j < d; ++j) {
+            out_bits[j] = data_bits[j] ^ masks[j];
+        }
+    }
+};
+
 } // namespace skmeans
 
 #endif // SUPERKMEANS_NEON_COMPUTERS_HPP

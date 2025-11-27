@@ -43,6 +43,17 @@ class DistanceComputer<l2, u8> {
     constexpr static auto Horizontal = computer::Horizontal;
 };
 
+/**
+ * Utility operations (architecture-independent entry point)
+ */
+template <Quantization q>
+class UtilsComputer {
+    using computer = SIMDUtilsComputer<q>;
+
+  public:
+    constexpr static auto FlipSign = computer::FlipSign;
+};
+
 }; // namespace skmeans
 
 #endif // SUPERKMEANS_BASE_COMPUTERS_HPP

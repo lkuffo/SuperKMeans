@@ -1,6 +1,7 @@
 #ifndef SKMEANS_ADSAMPLING_HPP
 #define SKMEANS_ADSAMPLING_HPP
 
+#include "superkmeans/distance_computers/base_computers.hpp"
 #include "superkmeans/pdx/utils.h"
 
 #include <Eigen/Eigen/Dense>
@@ -123,21 +124,8 @@ class ADSamplingPruner {
     void FlipSign(const float* data, float* out, const size_t n) {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
-            const auto offset = i * num_dimensions;
-            size_t j = 0;
-            // TODO(@lkuffo, supercrit): Get this out of here into the neon/avx2/avx512_computers.hpp
-            for (; j + 4 <= num_dimensions; j += 4) {
-                float32x4_t vec = vld1q_f32(data + offset + j);
-                const uint32x4_t mask = vld1q_u32(flip_masks.data() + j);
-                vec = vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(vec), mask));
-                vst1q_f32(out + offset + j, vec);
-            }
-            // Tail
-            auto v = reinterpret_cast<const uint32_t*>(data + offset);
-            auto out_bits = reinterpret_cast<uint32_t*>(out + offset);
-            for (; j < num_dimensions; ++j) {
-                out_bits[j] = v[j] ^ flip_masks[j];
-            }
+            const size_t offset = i * num_dimensions;
+            UtilsComputer<q>::FlipSign(data + offset, out + offset, flip_masks.data(), num_dimensions);
         }
     }
 

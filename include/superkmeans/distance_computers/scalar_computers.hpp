@@ -130,6 +130,38 @@ class ScalarComputer<dp, f32> {
     };
 };
 
+/**
+ * Utility SIMD operations that don't depend on distance function (alpha)
+ */
+template <Quantization q>
+class ScalarUtilsComputer {};
+
+template <>
+class ScalarUtilsComputer<f32> {
+  public:
+    using data_t = skmeans_value_t<f32>;
+
+    /**
+     * @brief Flip sign of floats based on a mask (single vector).
+     * @param data Input vector (d elements)
+     * @param out Output vector (can be same as data for in-place)
+     * @param masks Bitmask array (0x80000000 to flip, 0 to keep)
+     * @param d Number of dimensions
+     */
+    static void FlipSign(
+        const data_t* data,
+        data_t* out,
+        const uint32_t* masks,
+        size_t d
+    ) {
+        auto data_bits = reinterpret_cast<const uint32_t*>(data);
+        auto out_bits = reinterpret_cast<uint32_t*>(out);
+        for (size_t j = 0; j < d; ++j) {
+            out_bits[j] = data_bits[j] ^ masks[j];
+        }
+    }
+};
+
 } // namespace skmeans
 
 #endif // SUPERKMEANS_SCALAR_COMPUTERS_HPP
