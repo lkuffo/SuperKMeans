@@ -19,7 +19,7 @@
 
 int main(int argc, char* argv[]) {
     // Choose dataset by name. You can also pass the dataset name as the first CLI argument.
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("fmnist");
 
     const std::unordered_map<std::string, std::pair<size_t, size_t>> dataset_params = {
         {"mxbai", {769382, 1024}}, // pd: 128
@@ -39,7 +39,7 @@ int main(int argc, char* argv[]) {
     }
 
     const size_t n = it->second.first;
-    const size_t n_queries = 1000;
+    const size_t n_queries = 10000;
     const size_t d = it->second.second;
     const size_t n_clusters =
         std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));

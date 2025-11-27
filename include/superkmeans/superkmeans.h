@@ -33,10 +33,11 @@ class SuperKMeans {
         float sampling_fraction = 0.50,
         bool verbose = false,
         uint32_t n_threads = 1,
-        float tol = 1e-5
+        float tol = 1e-5,
+        float recall_tol = 0.001f
     )
         : _iters(iters), _n_clusters(n_clusters), _sampling_fraction(sampling_fraction),
-          _d(dimensionality), _trained(false), _verbose(verbose), _tol(tol) {
+          _d(dimensionality), _trained(false), _verbose(verbose), _tol(tol), _recall_tol(recall_tol) {
         SKMEANS_ENSURE_POSITIVE(n_clusters);
         SKMEANS_ENSURE_POSITIVE(iters);
         SKMEANS_ENSURE_POSITIVE(sampling_fraction);
@@ -60,6 +61,7 @@ class SuperKMeans {
      * @param ann_explore_fraction Fraction of centroids to explore for recall computation (0.0 to 1.0). Default 0.01 (1%).
      * @param unrotate_centroids Whether to unrotate centroids before returning (default true). Set to false to get rotated centroids.
      * @param perform_assignments If true, performs a final assignment pass so _assignments matches the returned centroids.
+     * @param early_termination If true, stops iterating when shift < tol (convergence). Default false.
      * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
      */
     std::vector<skmeans_centroid_value_t<q>> Train(
@@ -71,7 +73,8 @@ class SuperKMeans {
         const size_t objective_k = 100,
         const float ann_explore_fraction = 0.01f,
         const bool unrotate_centroids = true,
-        const bool perform_assignments = false
+        const bool perform_assignments = false,
+        const bool early_termination = false
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
         if (_trained) {
@@ -219,6 +222,10 @@ class SuperKMeans {
             return output_centroids;
         }
 
+        // Early stopping tracking variables
+        float best_recall = _recall;
+        size_t iters_without_improvement = 0;
+
         // Special path for low-dimensional data: use BLAS-only for all iterations
         if (_d < 128) {
             for (; iter_idx < _iters; ++iter_idx) {
@@ -250,6 +257,10 @@ class SuperKMeans {
                               << " | Objective: " << _cost << " | Shift: " << _shift
                               << " | Split: " << _n_split
                               << " | Recall: " << _recall << " [BLAS-only]" << std::endl << std::endl;
+                // Early stopping if converged
+                if (early_termination && ShouldStopEarly(n_queries > 0, best_recall, iters_without_improvement, iter_idx)) {
+                    break;
+                }
             }
             _trained = true;
             auto output_centroids = GetOutputCentroids(unrotate_centroids);
@@ -315,6 +326,10 @@ class SuperKMeans {
                           << " | Recall: " << _recall
                           << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
                           << " | Partial D: " << _initial_partial_d << std::endl << std::endl;
+            // Early stopping if converged
+            if (early_termination && ShouldStopEarly(n_queries > 0, best_recall, iters_without_improvement, iter_idx)) {
+                break;
+            }
         }
         // Note: When sampling_fraction < 1, only the first n_samples vectors have assignments.
         // Users can call Assign() on remaining vectors if needed.
@@ -790,6 +805,56 @@ class SuperKMeans {
     }
 
     /**
+     * @brief Check if training should stop early based on convergence criteria.
+     * 
+     * Convergence is detected when either:
+     * - Shift is below tolerance (_shift < _tol)
+     * - Recall hasn't improved by more than _recall_tol in 2 consecutive iterations (when tracking recall)
+     * 
+     * @param tracking_recall Whether recall is being tracked (n_queries > 0)
+     * @param best_recall Reference to the best recall seen so far (updated if current is better)
+     * @param iters_without_improvement Reference to counter of iterations without recall improvement
+     * @param iter_idx Current iteration index (for verbose output)
+     * @return true if training should stop, false otherwise
+     */
+    bool ShouldStopEarly(
+        bool tracking_recall,
+        float& best_recall,
+        size_t& iters_without_improvement,
+        size_t iter_idx
+    ) {
+        // Check shift convergence
+        if (_shift < _tol) {
+            if (_verbose)
+                std::cout << "Converged at iteration " << iter_idx + 1 
+                          << " (shift " << _shift << " < tol " << _tol << ")" << std::endl;
+            return true;
+        }
+        
+        // Check recall convergence (only when tracking recall)
+        if (tracking_recall) {
+            float improvement = _recall - best_recall;
+            if (improvement > _recall_tol) {
+                // Significant improvement: update best and reset counter
+                best_recall = _recall;
+                iters_without_improvement = 0;
+            } else {
+                // No significant improvement
+                iters_without_improvement++;
+                if (iters_without_improvement >= 2) {
+                    if (_verbose)
+                        std::cout << "Converged at iteration " << iter_idx + 1 
+                                  << " (recall " << _recall << " hasn't improved by more than " 
+                                  << _recall_tol << " in 2 iterations, best: " << best_recall << ")" << std::endl;
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    /**
      * @brief Prepare centroids for output (applies any necessary transformations).
      * @param should_unrotate If true, unrotates centroids to original space; if false, returns rotated centroids.
      * @return Centroids ready for output
@@ -904,6 +969,7 @@ class SuperKMeans {
     uint32_t _initial_partial_d = DEFAULT_INITIAL_PARTIAL_D;
     uint32_t _vertical_d;
     float _tol;
+    float _recall_tol;
     float _recall = 0.0f;
     size_t _centroids_to_explore = 64;
 
