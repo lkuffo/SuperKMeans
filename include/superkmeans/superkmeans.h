@@ -308,13 +308,8 @@ class SuperKMeans {
                           << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
                           << " | Partial D: " << _initial_partial_d << std::endl << std::endl;
         }
-        //! I only need assignments if sampling_faction < 1
-        if (_sampling_fraction < 1.0f) {
-            // TODO(@lkuffo, supercrit): If data is sampled, then assignments are only done to the first n_samples vectors (remember 
-            // that we sampled the first n_samples vectors from the original data). To do this we need to do a finall call to the only-blas batch computer
-            // only for these remaining points.
-            // Assign(data, centroids_pdx_wrapper, n);
-        }
+        // Note: When sampling_fraction < 1, only the first n_samples vectors have assignments.
+        // Users can call Assign() on remaining vectors if needed.
 
         _trained = true;
         auto output_centroids = GetOutputCentroids(unrotate_centroids);
@@ -326,30 +321,60 @@ class SuperKMeans {
 
 
     /**
-     * @brief Assign given data points to their nearest cluster.
+     * @brief Assign vectors to their nearest centroid using BLAS-based computation.
      *
-     * NOTE: The dimensionality of the data should match the dimensionality of the
-     * data that the clustering was trained on.
+     * Both vectors and centroids are assumed to be in the same domain (no rotation/transformation needed).
      *
-     * @param data The data matrix
-     * @param n The number of data points (rows) in the data matrix
-     * @return std::vector<uint32_t> Clustering assignments as a vector of
-     * sequential ids of the points assigned to the corresponding cluster
+     * @param vectors The data matrix (row-major, n_vectors x d)
+     * @param centroids The centroids matrix (row-major, n_centroids x d)
+     * @param n_vectors Number of vectors
+     * @param n_centroids Number of centroids
+     * @param d Dimensionality of vectors and centroids
+     * @return std::vector<uint32_t> Assignment for each vector (index of nearest centroid)
      */
-    void Assign(
-        const vector_value_t* SKM_RESTRICT data,
-        const layout_t& pdx_centroids,
-        const size_t n
+    static std::vector<uint32_t> Assign(
+        const vector_value_t* SKM_RESTRICT vectors,
+        const vector_value_t* SKM_RESTRICT centroids,
+        const size_t n_vectors,
+        const size_t n_centroids,
+        const size_t d
     ) {
-        auto data_p = data;
-        // TODO(@lkuffo, med): Skip the vectors that were used as samples
-        for (size_t i = 0; i < n; ++i) {
-            // PDXearch per vector
-            std::vector<knn_candidate_t> assignment = pdx_centroids.searcher->Search(data_p, 1);
-            auto assignment_idx = assignment[0].index;
-            _assignments[i] = assignment_idx;
-            data_p += _d;
+        SKM_PROFILE_SCOPE("assign");
+        
+        // Compute norms for vectors and centroids
+        std::vector<vector_value_t> vector_norms(n_vectors);
+        std::vector<vector_value_t> centroid_norms(n_centroids);
+        {
+            Eigen::Map<const MatrixR> vectors_mat(vectors, n_vectors, d);
+            Eigen::Map<VectorR> v_norms(vector_norms.data(), n_vectors);
+            v_norms.noalias() = vectors_mat.rowwise().squaredNorm();
         }
+        {
+            Eigen::Map<const MatrixR> centroids_mat(centroids, n_centroids, d);
+            Eigen::Map<VectorR> c_norms(centroid_norms.data(), n_centroids);
+            c_norms.noalias() = centroids_mat.rowwise().squaredNorm();
+        }
+        
+        // Allocate output and temporary buffers
+        std::vector<uint32_t> assignments(n_vectors);
+        std::vector<distance_t> distances(n_vectors);
+        std::vector<distance_t> all_distances_buf(X_BATCH_SIZE * Y_BATCH_SIZE);
+        
+        // Use batched BLAS computation for assignment
+        batch_computer::Batched_XRowMajor_YRowMajor(
+            vectors,
+            centroids,
+            n_vectors,
+            n_centroids,
+            d,
+            vector_norms.data(),
+            centroid_norms.data(),
+            assignments.data(),
+            distances.data(),
+            all_distances_buf.data()
+        );
+        
+        return assignments;
     }
 
     /**
@@ -800,30 +825,23 @@ class SuperKMeans {
         
         if (n_samples < n) {
             SKM_PROFILE_SCOPE("sampling");
+            // Sequential sampling: take first n_samples vectors
             if constexpr (ROTATE) {
                 // Need intermediate buffer: sample first, then rotate
                 samples_tmp.resize(n_samples * _d);
-                const auto jumps = static_cast<size_t>(std::floor((1.0 * n) / n_samples));
-                for (size_t i = 0; i < n_samples; i++) {
-                    size_t src_vector_idx = i * jumps;
-                    memcpy(
-                        (void*) (samples_tmp.data() + i * _d),
-                        (void*) (data + src_vector_idx * _d),
-                        sizeof(vector_value_t) * _d
-                    );
-                }
+                memcpy(
+                    (void*) samples_tmp.data(),
+                    (void*) data,
+                    sizeof(vector_value_t) * n_samples * _d
+                );
                 src_data = samples_tmp.data();
             } else {
-                // No rotation: sample directly into output buffer
-                const auto jumps = static_cast<size_t>(std::floor((1.0 * n) / n_samples));
-                for (size_t i = 0; i < n_samples; i++) {
-                    size_t src_vector_idx = i * jumps;
-                    memcpy(
-                        (void*) (out_buffer.data() + i * _d),
-                        (void*) (data + src_vector_idx * _d),
-                        sizeof(vector_value_t) * _d
-                    );
-                }
+                // No rotation: copy directly into output buffer
+                memcpy(
+                    (void*) out_buffer.data(),
+                    (void*) data,
+                    sizeof(vector_value_t) * n_samples * _d
+                );
                 return;  // Done, no rotation needed
             }
         }
