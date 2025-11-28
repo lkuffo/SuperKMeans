@@ -55,18 +55,23 @@ if __name__ == "__main__":
     data = data.reshape(num_vectors, num_dimensions)
 
     start = time.time()
-    km = KMeans(
-        n_clusters=num_centroids,
-        init='random',
-        n_init=1,
-        max_iter=n_iter,
-        verbose=1,
-        random_state=42,
-        copy_x=True
+    km = FastKMeans(
+        d=num_dimensions,
+        k=num_centroids,
+        niter=n_iter,
+        tol=-math.inf,
+        device='cpu',
+        seed=42,
+        max_points_per_centroid=256,
+        verbose=True,
+        use_triton=False,
     )
-    km.fit(data)
+    km.train(data)
     end = time.time()
-    print(f"ScikitLearn Took: {(end - start):.2f} s")
+    print(f"FastKMeans Took: {(end - start):.2f} s")
+
+    centroids = km.centroids
+    assignments = km.predict(data)
 
     # Compute recall if ground truth file exists
     gt_filename = f"agnews-{dataset}-{num_dimensions}-euclidean_10.json"
@@ -86,10 +91,6 @@ if __name__ == "__main__":
         n_queries = len(gt_dict)
         queries = queries.reshape(n_queries, num_dimensions)
         print(f"Loaded {n_queries} queries")
-
-        # Get sklearn assignments (cluster labels for each data point)
-        assignments = km.labels_  # shape: (num_vectors,)
-        centroids = km.cluster_centers_  # shape: (num_centroids, num_dimensions)
 
         # Compute distances from queries to centroids
         # Using L2 distance: ||q - c||^2 = ||q||^2 + ||c||^2 - 2*q·c

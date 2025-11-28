@@ -255,7 +255,7 @@ class SuperKMeans {
         if (_config.iters <= 1) {
             auto output_centroids = GetOutputCentroids(_config.unrotate_centroids);
             if (_config.perform_assignments) {
-                _assignments = Assign(data, output_centroids.data(), n, _n_clusters, _d);
+                _assignments = Assign(data, output_centroids.data(), n, _n_clusters);
             }
             Profiler::Get().PrintHierarchical();
             return output_centroids;
@@ -311,7 +311,7 @@ class SuperKMeans {
             _trained = true;
             auto output_centroids = GetOutputCentroids(_config.unrotate_centroids);
             if (_config.perform_assignments) {
-                _assignments = Assign(data, output_centroids.data(), n, _n_clusters, _d);
+                _assignments = Assign(data, output_centroids.data(), n, _n_clusters);
             }
             if (_config.verbose) {
                 Profiler::Get().PrintHierarchical();
@@ -392,7 +392,7 @@ class SuperKMeans {
         _trained = true;
         auto output_centroids = GetOutputCentroids(_config.unrotate_centroids);
         if (_config.perform_assignments) {
-            _assignments = Assign(data, output_centroids.data(), n, _n_clusters, _d);
+            _assignments = Assign(data, output_centroids.data(), n, _n_clusters);
         }
         if (_config.verbose) {
             Profiler::Get().PrintHierarchical();
@@ -413,12 +413,11 @@ class SuperKMeans {
      * @param d Dimensionality of vectors and centroids
      * @return std::vector<uint32_t> Assignment for each vector (index of nearest centroid)
      */
-    [[nodiscard]] static std::vector<uint32_t> Assign(
+    [[nodiscard]] std::vector<uint32_t> Assign(
         const vector_value_t* SKM_RESTRICT vectors,
         const vector_value_t* SKM_RESTRICT centroids,
         const size_t n_vectors,
-        const size_t n_centroids,
-        const size_t d
+        const size_t n_centroids
     ) {
         SKM_PROFILE_SCOPE("assign");
         
@@ -426,12 +425,12 @@ class SuperKMeans {
         std::vector<vector_value_t> vector_norms(n_vectors);
         std::vector<vector_value_t> centroid_norms_local(n_centroids);
         {
-            Eigen::Map<const MatrixR> vectors_mat(vectors, n_vectors, d);
+            Eigen::Map<const MatrixR> vectors_mat(vectors, n_vectors, _d);
             Eigen::Map<VectorR> v_norms(vector_norms.data(), n_vectors);
             v_norms.noalias() = vectors_mat.rowwise().squaredNorm();
         }
         {
-            Eigen::Map<const MatrixR> centroids_mat(centroids, n_centroids, d);
+            Eigen::Map<const MatrixR> centroids_mat(centroids, n_centroids, _d);
             Eigen::Map<VectorR> c_norms(centroid_norms_local.data(), n_centroids);
             c_norms.noalias() = centroids_mat.rowwise().squaredNorm();
         }
@@ -447,7 +446,7 @@ class SuperKMeans {
             centroids,
             n_vectors,
             n_centroids,
-            d,
+            _d,
             vector_norms.data(),
             centroid_norms_local.data(),
             assignments.data(),

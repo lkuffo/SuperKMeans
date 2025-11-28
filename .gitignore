@@ -59,7 +59,9 @@ Makefile
 install_manifest.txt
 compile_commands.json
 CMakeUserPresets.json
-DartConfiguration.tcl
+DartConfiguration.
+
+*.json
 
 *.cmake
 *.ipynb_checkpoints
