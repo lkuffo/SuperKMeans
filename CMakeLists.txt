@@ -37,7 +37,7 @@ set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "disable python" FORCE)
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "disable gpu" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "disable faiss tests" FORCE)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "shared libs" FORCE)
-set(FAISS_OPT_LEVEL "generic" CACHE STRING "CPU optimization level" FORCE)
+# set(FAISS_OPT_LEVEL "generic" CACHE STRING "CPU optimization level" FORCE)
 FetchContent_Declare(
         faiss
         GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
