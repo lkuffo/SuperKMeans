@@ -18,7 +18,7 @@ enable_testing()
 set(TEST_COMMON_LIBS
     gtest
     gtest_main
-    "-framework Accelerate"
+    ${BLAS_LINK_LIBRARIES}
 )
 
 if (FFTW_FOUND)
@@ -26,22 +26,19 @@ if (FFTW_FOUND)
 endif()
 
 # Test: Unrotate functionality
-add_executable(test_unrotate test_unrotate.cpp)
-target_link_libraries(test_unrotate PRIVATE ${TEST_COMMON_LIBS})
-add_test(NAME UnrotateTest COMMAND test_unrotate)
+add_executable(test_unrotate.out test_unrotate.cpp)
+target_link_libraries(test_unrotate.out PRIVATE ${TEST_COMMON_LIBS})
 
 # Test: Assign functionality
-add_executable(test_assign test_assign.cpp)
-target_link_libraries(test_assign PRIVATE ${TEST_COMMON_LIBS})
-add_test(NAME AssignTest COMMAND test_assign)
+add_executable(test_assign.out test_assign.cpp)
+target_link_libraries(test_assign.out PRIVATE ${TEST_COMMON_LIBS})
 
 # Test: SuperKMeans core functionality
-add_executable(test_superkmeans test_superkmeans.cpp)
-target_link_libraries(test_superkmeans PRIVATE ${TEST_COMMON_LIBS})
-add_test(NAME SuperKMeansTest COMMAND test_superkmeans)
+add_executable(test_superkmeans.out test_superkmeans.cpp)
+target_link_libraries(test_superkmeans.out PRIVATE ${TEST_COMMON_LIBS})
 
-# Discover tests for CTest
+# Automatically discover all GoogleTest tests
 include(GoogleTest)
-gtest_discover_tests(test_unrotate)
-gtest_discover_tests(test_assign)
-gtest_discover_tests(test_superkmeans)
+gtest_discover_tests(test_unrotate.out)
+gtest_discover_tests(test_assign.out)
+gtest_discover_tests(test_superkmeans.out)
