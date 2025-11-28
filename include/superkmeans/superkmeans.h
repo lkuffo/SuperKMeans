@@ -823,9 +823,8 @@ class SuperKMeans {
     }
 
     /**
-     * @brief Copies the first _vertical_d dimensions of centroids to auxiliary storage.
-     *
-     * Used for efficient pruning when aux_data is available in PDXearch.
+     * @brief Copies the first _vertical_d dimensions of centroids for efficient pruning on PDXearch.
+     * TODO(@lkuffo, high): We can avoid _partial_horizontal_centroids by using the full horizontal centroids in PDXearch.
      */
     void CentroidsToAuxiliaryHorizontal() {
         Eigen::Map<MatrixR> hor_centroids(_horizontal_centroids.data(), _n_clusters, _d);

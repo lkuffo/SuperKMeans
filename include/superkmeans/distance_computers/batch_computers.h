@@ -29,6 +29,46 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
     using MatrixR = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
     using MatrixC = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
+  private:
+    /**
+     * @brief Performs BLAS matrix multiplication: distances = x * y^T
+     * Note that Eigen internally uses BLAS for matrix multiplication, so we can use it directly.
+     * This is convenient as it will work even if a BLAS library is not available.
+     * 
+     * Computes the dot product matrix between query vectors (x) and reference vectors (y).
+     * Can optionally use only the first partial_d dimensions for partial distance computation.
+     * 
+     * @param batch_x_p Pointer to query vectors batch (batch_n_x × d)
+     * @param batch_y_p Pointer to reference vectors batch (batch_n_y × d)
+     * @param batch_n_x Number of query vectors in batch
+     * @param batch_n_y Number of reference vectors in batch
+     * @param d Full dimensionality
+     * @param partial_d Number of dimensions to use (if 0 or d, uses all dimensions)
+     * @param all_distances_buf Output buffer for distance matrix (batch_n_x × batch_n_y)
+     */
+    static void BlasMatrixMultiplication(
+        const data_t* SKM_RESTRICT batch_x_p,
+        const data_t* SKM_RESTRICT batch_y_p,
+        const size_t batch_n_x,
+        const size_t batch_n_y,
+        const size_t d,
+        const size_t partial_d,
+        float* SKM_RESTRICT all_distances_buf
+    ) {
+        Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
+        Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, d);
+        Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);
+        
+        if (partial_d > 0 && partial_d < d) {
+            // Partial multiplication: use only first partial_d dimensions
+            distances_matrix.noalias() = 
+                x_matrix.leftCols(partial_d) * y_matrix.leftCols(partial_d).transpose();
+        } else {
+            // Full multiplication: use all dimensions
+            distances_matrix.noalias() = x_matrix * y_matrix.transpose();
+        }
+    }
+
   public:
 
     /**
@@ -76,10 +116,8 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 if (j + Y_BATCH_SIZE > n_y) {
                     batch_n_y = n_y - j;
                 }
+                BlasMatrixMultiplication(batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf);
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
-                Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, d);
-                Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);
-                distances_matrix.noalias() = x_matrix * y_matrix.transpose();
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const auto i_idx = i + r;
@@ -156,10 +194,8 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                     batch_n_y = n_y - j;
                 }
 
+                BlasMatrixMultiplication(batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf);
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
-                Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, d);
-                Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);
-                distances_matrix.noalias() = x_matrix * y_matrix.transpose();
 
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
@@ -264,14 +300,11 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 if (j + Y_BATCH_SIZE > n_y) {
                     batch_n_y = n_y - j;
                 }
-                Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
                 {
                     SKM_PROFILE_SCOPE("search/blas");
-                    Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, d);
-                    Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);
-                    distances_matrix.noalias() =
-                        x_matrix.leftCols(partial_d) * y_matrix.leftCols(partial_d).transpose();
+                    BlasMatrixMultiplication(batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
                 }
+                Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
                 {
                     SKM_PROFILE_SCOPE("search/norms");
 #pragma omp parallel for num_threads(g_n_threads)

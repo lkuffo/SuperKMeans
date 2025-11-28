@@ -82,8 +82,7 @@ class PDXLayout {
         }
 
         index->num_clusters = n_pdx_clusters;
-        // TODO(@lkuffo, high): Does this belong here?
-        // Seems to important to define the centroid ids here
+        // We define sequential centroid ids
         centroid_ids.resize(n_points);
         std::iota(centroid_ids.begin(), centroid_ids.end(), 0);
         index->num_horizontal_dimensions = horizontal_d;
