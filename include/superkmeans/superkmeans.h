@@ -162,18 +162,17 @@ class SuperKMeans {
         SampleVectors(data_p, data_samples_buffer, n, _n_samples);
         auto data_to_cluster = data_samples_buffer.data();
 
-        // TODO(@lkuffo, low): I don't like this rotated_initial_centroids variable
-        std::vector<centroid_value_t> rotated_initial_centroids(_n_clusters * _d);
+        // We use _prev_centroids to store the rotated initial centroids, to avoid allocating a new buffer
         {
             SKM_PROFILE_SCOPE("rotator");
             if (_config.verbose)
                 std::cout << "Rotating..." << std::endl;
-            _pruner->Rotate(_horizontal_centroids.data(), rotated_initial_centroids.data(), _n_clusters);
+            _pruner->Rotate(_horizontal_centroids.data(), _prev_centroids.data(), _n_clusters);
         }
 
         // Getting norms for data and initial centroids (full norms)
         GetL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
-        GetL2NormsRowMajor(rotated_initial_centroids.data(), _n_clusters, _centroid_norms.data());
+        GetL2NormsRowMajor(_prev_centroids.data(), _n_clusters, _centroid_norms.data());
 
         std::vector<vector_value_t> rotated_queries;
         if (n_queries) {
@@ -206,7 +205,7 @@ class SuperKMeans {
         // First iteration: Only Blas
         InitAssignAndUpdateCentroids(
             data_to_cluster,
-            rotated_initial_centroids.data(),
+            _prev_centroids.data(),
             all_distances.data()
         );
         ConsolidateCentroids();
@@ -365,7 +364,7 @@ class SuperKMeans {
      * @param d Dimensionality of vectors and centroids
      * @return std::vector<uint32_t> Assignment for each vector (index of nearest centroid)
      */
-    static std::vector<uint32_t> Assign(
+    [[nodiscard]] static std::vector<uint32_t> Assign(
         const vector_value_t* SKM_RESTRICT vectors,
         const vector_value_t* SKM_RESTRICT centroids,
         const size_t n_vectors,
@@ -411,10 +410,10 @@ class SuperKMeans {
     }
 
     /** @brief Returns the number of clusters. */
-    inline size_t GetNClusters() const { return _n_clusters; }
+    [[nodiscard]] inline size_t GetNClusters() const noexcept { return _n_clusters; }
 
     /** @brief Returns whether the model has been trained. */
-    inline bool IsTrained() const { return _trained; }
+    [[nodiscard]] inline bool IsTrained() const noexcept { return _trained; }
 
   protected:
     /**
@@ -1057,9 +1056,9 @@ class SuperKMeans {
     bool _trained = false;
     size_t _n_samples = 0;
     size_t _n_split = 0;
-    size_t _centroids_to_explore = 64;
+    size_t _centroids_to_explore = 0;
     uint32_t _vertical_d = 0;
-    uint32_t _initial_partial_d = DEFAULT_INITIAL_PARTIAL_D;
+    uint32_t _initial_partial_d = 0;
     float _cost = 0.0f;
     float _shift = 0.0f;
     float _recall = 0.0f;
