@@ -24,6 +24,7 @@ struct SuperKMeansConfig {
     float sampling_fraction = 1.0f;         ///< Fraction of data to sample (0.0 to 1.0)
     uint32_t n_threads = 0;                 ///< Number of CPU threads (0 = auto-detect max)
     uint32_t seed = 42;                     ///< Random seed for reproducibility
+    bool use_blas_only = false;             ///< Whether to use BLAS-only computation (no PDX pruning) for all iterations
 
     // Convergence parameters
     float tol = 1e-8f;                      ///< Tolerance for shift-based early termination
@@ -39,6 +40,20 @@ struct SuperKMeansConfig {
     bool unrotate_centroids = true;         ///< Whether to unrotate centroids before returning
     bool perform_assignments = false;       ///< Whether to perform final assignment pass
     bool verbose = false;                   ///< Whether to print progress information
+};
+
+/**
+ * @brief Statistics for a single iteration of SuperKMeans clustering.
+ */
+ struct SuperKMeansIterationStats {
+    size_t iteration = 0;              ///< Iteration number (1-indexed)
+    float objective = 0.0f;           ///< Total clustering cost (sum of distances)
+    float shift = 0.0f;               ///< Average squared centroid shift from previous iteration
+    size_t split = 0;                 ///< Number of clusters that were split (empty cluster handling)
+    float recall = 0.0f;              ///< Recall@k value (0.0 to 1.0, only when queries provided)
+    float not_pruned_pct = -1.0f;     ///< Percentage of vectors not pruned (0.0 to 1.0, -1.0 if not applicable)
+    uint32_t partial_d = 0;           ///< Number of dimensions used for partial distance computation (0 if not applicable)
+    bool is_blas_only = false;        ///< Whether this iteration used BLAS-only computation (no PDX pruning)
 };
 
 template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
@@ -105,6 +120,9 @@ class SuperKMeans {
         if (_trained) {
             throw std::runtime_error("The clustering has already been trained");
         }
+        
+
+        iteration_stats.clear();
 
         if (n < _n_clusters) {
             throw std::runtime_error(
@@ -218,6 +236,16 @@ class SuperKMeans {
             _recall = ComputeRecall(rotated_queries.data(), n_queries);
         }
         size_t iter_idx = 1;
+        {
+            SuperKMeansIterationStats stats;
+            stats.iteration = 1;
+            stats.objective = _cost;
+            stats.shift = _shift;
+            stats.split = _n_split;
+            stats.recall = _recall;
+            stats.is_blas_only = false;
+            iteration_stats.push_back(stats);
+        }
         if (_config.verbose)
             std::cout << "Iteration 1" << "/" << _config.iters << " | Objective: " << _cost
                       << " | Shift: " << _shift << " | Split: " << _n_split
@@ -237,8 +265,8 @@ class SuperKMeans {
         float best_recall = _recall;
         size_t iters_without_improvement = 0;
 
-        // Special path for low-dimensional data: use BLAS-only for all iterations
-        if (_d < 128) {
+        // Special path for low-dimensional data or when use_blas_only is enabled: use BLAS-only for all iterations
+        if (_d < 128 || _config.use_blas_only) {
             for (; iter_idx < _config.iters; ++iter_idx) {
                 // After swap: _prev_centroids has old centroids, _horizontal_centroids will be zeroed for accumulation
                 std::swap(_horizontal_centroids, _prev_centroids);
@@ -259,6 +287,16 @@ class SuperKMeans {
                     // Update centroid norms to match the NEW centroids (after ConsolidateCentroids)
                     GetL2NormsRowMajor(_horizontal_centroids.data(), _n_clusters, _centroid_norms.data());
                     _recall = ComputeRecall(rotated_queries.data(), n_queries);
+                }
+                {
+                    SuperKMeansIterationStats stats;
+                    stats.iteration = iter_idx + 1;
+                    stats.objective = _cost;
+                    stats.shift = _shift;
+                    stats.split = _n_split;
+                    stats.recall = _recall;
+                    stats.is_blas_only = true;
+                    iteration_stats.push_back(stats);
                 }
                 if (_config.verbose)
                     std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
@@ -323,6 +361,18 @@ class SuperKMeans {
                 // (PDX uses partial norms for distance computation, but recall needs full norms)
                 GetL2NormsRowMajor(_horizontal_centroids.data(), _n_clusters, _centroid_norms.data());
                 _recall = ComputeRecall(rotated_queries.data(), n_queries);
+            }
+            {
+                SuperKMeansIterationStats stats;
+                stats.iteration = iter_idx + 1;
+                stats.objective = _cost;
+                stats.shift = _shift;
+                stats.split = _n_split;
+                stats.recall = _recall;
+                stats.not_pruned_pct = avg_not_pruned_pct;
+                stats.partial_d = _initial_partial_d;
+                stats.is_blas_only = false;
+                iteration_stats.push_back(stats);
             }
             if (_config.verbose)
                 std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
@@ -1092,5 +1142,6 @@ class SuperKMeans {
 
   public:
     std::vector<uint32_t> _assignments;  // Public for user access
+    std::vector<SuperKMeansIterationStats> iteration_stats;  // Public for user access to iteration statistics
 };
 } // namespace skmeans

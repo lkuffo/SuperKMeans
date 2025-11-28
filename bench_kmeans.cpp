@@ -19,7 +19,7 @@
 
 int main(int argc, char* argv[]) {
     // Choose dataset by name. You can also pass the dataset name as the first CLI argument.
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("sift");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
 
     const std::unordered_map<std::string, std::pair<size_t, size_t>> dataset_params = {
         {"mxbai", {769382, 1024}},
@@ -43,7 +43,7 @@ int main(int argc, char* argv[]) {
     const size_t d = it->second.second;
     const size_t n_clusters =
         std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
-    int n_iters = 25;
+    int n_iters = 10;
     float sampling_fraction = 1.0;
     std::string path_root = std::string(CMAKE_SOURCE_DIR);
     std::string filename = path_root + "/data_" + dataset + ".bin";
@@ -86,7 +86,6 @@ int main(int argc, char* argv[]) {
 
     skmeans::SuperKMeansConfig config;
     config.iters = n_iters;
-    config.sampling_fraction = sampling_fraction;
     config.verbose = true;
     config.n_threads = THREADS;
     config.objective_k = 100;
@@ -94,7 +93,8 @@ int main(int argc, char* argv[]) {
     config.unrotate_centroids = false;
     config.perform_assignments = false;
     config.early_termination = false;
-    config.sampling_fraction = 0.2;
+    config.sampling_fraction = sampling_fraction;
+    config.use_blas_only = false;
 
     auto kmeans_state = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
         n_clusters, d, config
