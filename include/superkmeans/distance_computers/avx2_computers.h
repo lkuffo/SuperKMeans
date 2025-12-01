@@ -14,14 +14,14 @@ template <DistanceFunction alpha, Quantization q>
 class SIMDComputer {};
 
 template <>
-class SIMDComputer<l2, u8> {};
+class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u8> {};
 
 template <>
-class SIMDComputer<l2, f32> {
+class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32> {
   public:
-    using distance_t = skmeans_distance_t<f32>;
-    using data_t = skmeans_value_t<f32>;
-    using scalar_computer = ScalarComputer<l2, f32>;
+    using distance_t = skmeans_distance_t<skmeans::Quantization::f32>;
+    using data_t = skmeans_value_t<skmeans::Quantization::f32>;
+    using scalar_computer = ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>;
 
     // Defer to the scalar kernel
     template <bool SKIP_PRUNED>
@@ -85,14 +85,14 @@ class SIMDComputer<l2, f32> {
             d2_vec = _mm256_fmadd_ps(d_vec, d_vec, d2_vec);
         }
 
-        // _simsimd_reduce_f32x8_haswell
+        // _simsimd_reduce_skmeans::Quantization::f32x8_haswell
         // Convert the lower and higher 128-bit lanes of the input vector to double precision
-        __m128 low_f32 = _mm256_castps256_ps128(d2_vec);
-        __m128 high_f32 = _mm256_extractf128_ps(d2_vec, 1);
+        __m128 low_skmeans::Quantization::f32 = _mm256_castps256_ps128(d2_vec);
+        __m128 high_skmeans::Quantization::f32 = _mm256_extractf128_ps(d2_vec, 1);
 
         // Convert single-precision (float) vectors to double-precision (double) vectors
-        __m256d low_f64 = _mm256_cvtps_pd(low_f32);
-        __m256d high_f64 = _mm256_cvtps_pd(high_f32);
+        __m256d low_f64 = _mm256_cvtps_pd(low_skmeans::Quantization::f32);
+        __m256d high_f64 = _mm256_cvtps_pd(high_skmeans::Quantization::f32);
 
         // Perform the addition in double-precision
         __m256d sum = _mm256_add_pd(low_f64, high_f64);
@@ -120,10 +120,10 @@ class SIMDComputer<l2, f32> {
 };
 
 template <>
-class SIMDComputer<dp, f32> {
+class SIMDComputer<skmeans::DistanceFunction::dp, skmeans::Quantization::f32> {
   public:
-    using distance_t = skmeans_distance_t<f32>;
-    using data_t = skmeans_value_t<f32>;
+    using distance_t = skmeans_distance_t<skmeans::Quantization::f32>;
+    using data_t = skmeans_value_t<skmeans::Quantization::f32>;
 
     // Defer to the scalar kernel
     template <bool SKIP_PRUNED>
@@ -164,14 +164,14 @@ class SIMDComputer<dp, f32> {
             d2_vec = _mm256_fmadd_ps(a_vec, b_vec, d2_vec);
         }
 
-        // _simsimd_reduce_f32x8_haswell
+        // _simsimd_reduce_skmeans::Quantization::f32x8_haswell
         // Convert the lower and higher 128-bit lanes of the input vector to double precision
-        __m128 low_f32 = _mm256_castps256_ps128(d2_vec);
-        __m128 high_f32 = _mm256_extractf128_ps(d2_vec, 1);
+        __m128 low_skmeans::Quantization::f32 = _mm256_castps256_ps128(d2_vec);
+        __m128 high_skmeans::Quantization::f32 = _mm256_extractf128_ps(d2_vec, 1);
 
         // Convert single-precision (float) vectors to double-precision (double) vectors
-        __m256d low_f64 = _mm256_cvtps_pd(low_f32);
-        __m256d high_f64 = _mm256_cvtps_pd(high_f32);
+        __m256d low_f64 = _mm256_cvtps_pd(low_skmeans::Quantization::f32);
+        __m256d high_f64 = _mm256_cvtps_pd(high_skmeans::Quantization::f32);
 
         // Perform the addition in double-precision
         __m256d sum = _mm256_add_pd(low_f64, high_f64);
@@ -202,9 +202,9 @@ template <Quantization q>
 class SIMDUtilsComputer {};
 
 template <>
-class SIMDUtilsComputer<f32> {
+class SIMDUtilsComputer<skmeans::Quantization::f32> {
   public:
-    using data_t = skmeans_value_t<f32>;
+    using data_t = skmeans_value_t<skmeans::Quantization::f32>;
 
     /**
      * @brief Flip sign of floats based on a mask using AVX2 (single vector).

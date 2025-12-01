@@ -15,10 +15,10 @@ template <DistanceFunction alpha, Quantization q>
 class SIMDComputer {};
 
 template <>
-class SIMDComputer<l2, u8> {
+class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::u8> {
   public:
-    using distance_t = skmeans_distance_t<u8>;
-    using data_t = skmeans_value_t<u8>;
+    using distance_t = skmeans_distance_t<Quantization::u8>;
+    using data_t = skmeans_value_t<Quantization::u8>;
 
     template <bool SKIP_PRUNED>
     static void VerticalPruning(
@@ -175,11 +175,11 @@ class SIMDComputer<l2, u8> {
 };
 
 template <>
-class SIMDComputer<l2, f32> {
+class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::f32> {
   public:
-    using distance_t = skmeans_distance_t<f32>;
-    using data_t = DataType_t<f32>;
-    using scalar_computer = ScalarComputer<l2, f32>;
+    using distance_t = skmeans_distance_t<Quantization::f32>;
+    using data_t = skmeans_value_t<Quantization::f32>;
+    using scalar_computer = ScalarComputer<skmeans::DistanceFunction::l2, Quantization::f32>;
 
     // Defer to the scalar kernel
     template <bool SKIP_PRUNED>
@@ -268,9 +268,9 @@ template <Quantization q>
 class SIMDUtilsComputer {};
 
 template <>
-class SIMDUtilsComputer<f32> {
+class SIMDUtilsComputer<Quantization::f32> {
   public:
-    using data_t = skmeans_value_t<f32>;
+    using data_t = skmeans_value_t<Quantization::f32>;
 
     /**
      * @brief Flip sign of floats based on a mask using AVX-512 (single vector).
