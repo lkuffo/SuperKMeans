@@ -1,6 +1,7 @@
 # Benchmark suite for SuperKMeans
 
 # Detect CPU features for FAISS optimization
+# Check both compiler support AND actual flags being used
 set(HAS_AVX512 OFF)
 set(HAS_AVX512_SPR OFF)
 set(HAS_AVX2 OFF)
@@ -8,14 +9,27 @@ set(HAS_AVX2 OFF)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     include(CheckCXXCompilerFlag)
 
-    # Check for AVX-512 support (highest priority)
-    check_cxx_compiler_flag("-mavx512f" HAS_AVX512)
-    if(HAS_AVX512)
-        # Check for Sapphire Rapids specific features
-        check_cxx_compiler_flag("-mavx512fp16" HAS_AVX512FP16)
-        check_cxx_compiler_flag("-mavx512bf16" HAS_AVX512BF16)
+    # Get all CXX flags (including build-type specific flags)
+    set(ALL_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}}")
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" BUILD_TYPE_UPPER)
+    set(ALL_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${BUILD_TYPE_UPPER}}")
 
-        if(HAS_AVX512FP16 AND HAS_AVX512BF16)
+    # Check for AVX-512 support (highest priority)
+    # Check both: 1) compiler capability, 2) flags already set
+    check_cxx_compiler_flag("-mavx512f" COMPILER_HAS_AVX512)
+    string(FIND "${ALL_CXX_FLAGS}" "-mavx512" AVX512_IN_FLAGS)
+
+    if(COMPILER_HAS_AVX512 OR AVX512_IN_FLAGS GREATER -1)
+        set(HAS_AVX512 ON)
+
+        # Check for Sapphire Rapids specific features
+        check_cxx_compiler_flag("-mavx512fp16" COMPILER_HAS_AVX512FP16)
+        check_cxx_compiler_flag("-mavx512bf16" COMPILER_HAS_AVX512BF16)
+        string(FIND "${ALL_CXX_FLAGS}" "-mavx512fp16" AVX512FP16_IN_FLAGS)
+        string(FIND "${ALL_CXX_FLAGS}" "-mavx512bf16" AVX512BF16_IN_FLAGS)
+
+        if((COMPILER_HAS_AVX512FP16 OR AVX512FP16_IN_FLAGS GREATER -1) AND
+           (COMPILER_HAS_AVX512BF16 OR AVX512BF16_IN_FLAGS GREATER -1))
             set(HAS_AVX512_SPR ON)
             message(STATUS "Sapphire Rapids CPU detected (AVX512_FP16, AVX512_BF16)")
         else()
@@ -23,13 +37,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         endif()
     else()
         # Check for AVX2 support (fallback)
-        check_cxx_compiler_flag("-mavx2" HAS_AVX2)
-        if(HAS_AVX2)
+        check_cxx_compiler_flag("-mavx2" COMPILER_HAS_AVX2)
+        string(FIND "${ALL_CXX_FLAGS}" "-mavx2" AVX2_IN_FLAGS)
+
+        if(COMPILER_HAS_AVX2 OR AVX2_IN_FLAGS GREATER -1)
+            set(HAS_AVX2 ON)
             message(STATUS "AVX2 CPU detected")
         else()
             message(STATUS "No AVX2/AVX-512 support detected")
         endif()
     endif()
+
+    message(STATUS "Detected CXX flags: ${ALL_CXX_FLAGS}")
 endif()
 
 # Set FAISS optimization level based on detected CPU features
