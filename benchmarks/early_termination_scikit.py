@@ -20,7 +20,7 @@ from bench_utils import (DATASET_PARAMS, load_ground_truth, compute_recall,
 
 if __name__ == "__main__":
     # Experiment configuration
-    experiment_name = "end_to_end"
+    experiment_name = "early_termination"
     algorithm = "scikit"
 
     dataset = sys.argv[1] if len(sys.argv) > 1 else "openai"
@@ -32,7 +32,7 @@ if __name__ == "__main__":
         )
     num_vectors, num_dimensions = DATASET_PARAMS[dataset]
     num_centroids = max(1, int(math.sqrt(num_vectors) * 4))
-    n_iter = MAX_ITERS
+    n_iter = 300
     threads = threads
 
     print(f"=== Running algorithm: {algorithm} ===")
@@ -56,7 +56,7 @@ if __name__ == "__main__":
         init='random',
         n_init=1,
         max_iter=n_iter,
-        tol=0.0, # We dont want early stopping
+        tol=1e-8,  # Early termination tolerance
         verbose=0,
         random_state=42,
         copy_x=True

@@ -1,14 +1,45 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 namespace bench_utils {
+
+/******************************************************************
+ * Clock to benchmark algorithms runtime
+ ******************************************************************/
+class TicToc {
+  public:
+    size_t accum_time = 0;
+    std::chrono::high_resolution_clock::time_point start =
+        std::chrono::high_resolution_clock::now();
+
+    void Reset() {
+        accum_time = 0;
+        start = std::chrono::high_resolution_clock::now();
+    }
+
+    void Tic() { start = std::chrono::high_resolution_clock::now(); }
+
+    void Toc() {
+        auto end = std::chrono::high_resolution_clock::now();
+        accum_time += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    }
+
+    double GetMilliseconds() const {
+        return accum_time / 1e6;  // Convert nanoseconds to milliseconds
+    }
+};
 
 // Dataset configurations: name -> (num_vectors, num_dimensions)
 const std::unordered_map<std::string, std::pair<size_t, size_t>> DATASET_PARAMS = {
@@ -33,6 +64,16 @@ const std::vector<float> EXPLORE_FRACTIONS = {
 
 // KNN values to test
 const std::vector<int> KNN_VALUES = {10, 100};
+
+// Benchmark configuration
+const int MAX_ITERS = 25;
+const int N_QUERIES = 1000;
+
+// Early termination benchmark configuration
+const std::vector<float> RECALL_TOL_VALUES = {0.01f, 0.005f, 0.001f, 0.0005f, 0.0001f};
+const std::vector<int> FAISS_EARLY_TERM_ITERS = {10, 25};
+const int SCIKIT_EARLY_TERM_MAX_ITERS = 300;
+const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
 /**
  * @brief Parse ground truth JSON file.
@@ -207,8 +248,8 @@ std::vector<std::tuple<int, float, float, float>> compute_recall(
             total_recall += query_recall;
         }
 
-        float average_recall = total_recall / static_cast<float>(gt_map.size());
-        float avg_vectors_to_visit = static_cast<float>(total_vectors_to_visit) / static_cast<float>(gt_map.size());
+        float average_recall = total_recall / static_cast<float>(n_queries);
+        float avg_vectors_to_visit = static_cast<float>(total_vectors_to_visit) / static_cast<float>(n_queries);
         results.push_back(std::make_tuple(centroids_to_explore, explore_frac, average_recall, avg_vectors_to_visit));
     }
 
@@ -227,6 +268,155 @@ inline void print_recall_results(const std::vector<std::tuple<int, float, float,
         printf("Recall@%4d (%5.2f%% centroids, %8.0f avg vectors): %.4f\n",
                centroids_to_explore, explore_frac * 100.0f, avg_vectors, recall);
     }
+}
+
+/**
+ * @brief Create directory recursively if it doesn't exist.
+ */
+inline bool create_directory_recursive(const std::string& path) {
+    std::string current_path;
+    std::istringstream path_stream(path);
+    std::string segment;
+
+    while (std::getline(path_stream, segment, '/')) {
+        if (segment.empty()) continue;
+        current_path += "/" + segment;
+
+        struct stat st;
+        if (stat(current_path.c_str(), &st) != 0) {
+            if (mkdir(current_path.c_str(), 0755) != 0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Write results to CSV file.
+ *
+ * @param experiment_name Name of the experiment (e.g., "end_to_end")
+ * @param algorithm Name of the algorithm (e.g., "superkmeans", "faiss")
+ * @param dataset Dataset name
+ * @param n_iters Number of iterations (max requested)
+ * @param actual_iterations Actual iterations performed (may be less if early termination)
+ * @param dimensionality Data dimensionality
+ * @param data_size Number of data points
+ * @param n_clusters Number of clusters
+ * @param construction_time_ms Construction time in milliseconds
+ * @param threads Number of threads used
+ * @param final_objective Final k-means objective value
+ * @param config_dict Dictionary with algorithm-specific configuration (will be serialized to JSON)
+ * @param results_knn_10 Results for KNN=10
+ * @param results_knn_100 Results for KNN=100
+ */
+inline void write_results_to_csv(
+    const std::string& experiment_name,
+    const std::string& algorithm,
+    const std::string& dataset,
+    int n_iters,
+    int actual_iterations,
+    int dimensionality,
+    size_t data_size,
+    int n_clusters,
+    double construction_time_ms,
+    int threads,
+    double final_objective,
+    const std::unordered_map<std::string, std::string>& config_dict,
+    const std::vector<std::tuple<int, float, float, float>>& results_knn_10,
+    const std::vector<std::tuple<int, float, float, float>>& results_knn_100
+) {
+    // Get architecture from environment variable
+    const char* arch_env = std::getenv("SKM_ARCH");
+    std::string arch = arch_env ? std::string(arch_env) : "default";
+
+    // Create results directory
+    std::string results_dir = std::string(CMAKE_SOURCE_DIR) + "/benchmarks/results/" + arch;
+    create_directory_recursive(results_dir);
+
+    // CSV file path
+    std::string csv_path = results_dir + "/" + experiment_name + ".csv";
+
+    // Check if file exists to determine if we need to write header
+    bool file_exists = (std::ifstream(csv_path).good());
+
+    // Open file in append mode
+    std::ofstream csv_file(csv_path, std::ios::app);
+    if (!csv_file.is_open()) {
+        std::cerr << "Failed to open CSV file: " << csv_path << std::endl;
+        return;
+    }
+
+    // Write header if file is new
+    if (!file_exists) {
+        csv_file << "timestamp,algorithm,dataset,n_iters,actual_iterations,dimensionality,data_size,n_clusters,"
+                 << "construction_time_ms,threads,final_objective";
+
+        // Add columns for each KNN and explore fraction combination
+        for (int knn : KNN_VALUES) {
+            for (float explore_frac : EXPLORE_FRACTIONS) {
+                csv_file << ",recall@" << knn << "@" << std::fixed << std::setprecision(2) << (explore_frac * 100.0f);
+                csv_file << ",centroids_explored@" << knn << "@" << std::fixed << std::setprecision(2) << (explore_frac * 100.0f);
+                csv_file << ",vectors_explored@" << knn << "@" << std::fixed << std::setprecision(2) << (explore_frac * 100.0f);
+            }
+        }
+
+        csv_file << ",config\n";
+    }
+
+    // Get current timestamp
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm;
+    localtime_r(&now_time_t, &now_tm);
+    char timestamp[32];
+    std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &now_tm);
+
+    // Write data row
+    csv_file << timestamp << "," << algorithm << "," << dataset << "," << n_iters << ","
+             << actual_iterations << "," << dimensionality << "," << data_size << "," << n_clusters << ","
+             << std::fixed << std::setprecision(2) << construction_time_ms << "," << threads << ","
+             << std::setprecision(6) << final_objective;
+
+    // Write KNN=10 results
+    for (const auto& [centroids_to_explore, explore_frac, recall, avg_vectors] : results_knn_10) {
+        csv_file << "," << std::setprecision(6) << recall;
+        csv_file << "," << centroids_to_explore;
+        csv_file << "," << std::setprecision(2) << avg_vectors;
+    }
+
+    // Write KNN=100 results
+    for (const auto& [centroids_to_explore, explore_frac, recall, avg_vectors] : results_knn_100) {
+        csv_file << "," << std::setprecision(6) << recall;
+        csv_file << "," << centroids_to_explore;
+        csv_file << "," << std::setprecision(2) << avg_vectors;
+    }
+
+    // Serialize config_dict to JSON
+    std::ostringstream config_json_ss;
+    config_json_ss << "{";
+    bool first = true;
+    for (const auto& [key, value] : config_dict) {
+        if (!first) {
+            config_json_ss << ",";
+        }
+        config_json_ss << "\"" << key << "\":" << value;
+        first = false;
+    }
+    config_json_ss << "}";
+    std::string config_json = config_json_ss.str();
+
+    // Write config JSON (escape quotes for CSV)
+    std::string escaped_config = config_json;
+    size_t pos = 0;
+    while ((pos = escaped_config.find("\"", pos)) != std::string::npos) {
+        escaped_config.replace(pos, 1, "\"\"");
+        pos += 2;
+    }
+    csv_file << ",\"" << escaped_config << "\"\n";
+
+    csv_file.close();
+    std::cout << "Results written to: " << csv_path << std::endl;
 }
 
 } // namespace bench_utils

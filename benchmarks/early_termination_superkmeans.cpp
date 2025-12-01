@@ -21,7 +21,7 @@
 
 int main(int argc, char* argv[]) {
     // Experiment configuration
-    const std::string experiment_name = "end_to_end";
+    const std::string experiment_name = "early_termination";
     const std::string algorithm = "superkmeans";
 
     // Choose dataset by name. You can also pass the dataset name as the first CLI argument.
@@ -89,7 +89,8 @@ int main(int argc, char* argv[]) {
     config.ann_explore_fraction = 0.01f;
     config.unrotate_centroids = true;
     config.perform_assignments = false;
-    config.early_termination = false;
+    config.early_termination = true;
+    config.tol = 1e-8f;
     config.sampling_fraction = sampling_fraction;
     config.use_blas_only = false;
 

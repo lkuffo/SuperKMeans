@@ -1,7 +1,11 @@
 """Utility functions for K-means benchmarking."""
 
+import csv
 import json
 import numpy as np
+import os
+import time
+from pathlib import Path
 
 
 # Dataset configurations: name -> (num_vectors, num_dimensions)
@@ -29,6 +33,10 @@ EXPLORE_FRACTIONS = [
 
 # KNN values to test
 KNN_VALUES = [10, 100]
+
+# Benchmark configuration
+MAX_ITERS = 25
+N_QUERIES = 1000
 
 
 def load_ground_truth(filename):
@@ -58,7 +66,7 @@ def compute_recall(gt_dict, assignments, queries, centroids, num_centroids, knn)
     Returns:
         List of tuples (centroids_to_explore, explore_fraction, recall, avg_vectors_to_visit)
     """
-    n_queries = len(gt_dict)
+    n_queries = queries.shape[0]
 
     # Count cluster sizes to compute vectors to visit
     cluster_sizes = np.bincount(assignments, minlength=num_centroids)
@@ -120,3 +128,129 @@ def print_recall_results(results, knn):
     print(f"\n--- Recall@{knn} ---")
     for centroids_to_explore, explore_frac, recall, avg_vectors in results:
         print(f"Recall@{centroids_to_explore:4d} ({explore_frac*100:5.2f}% centroids, {avg_vectors:8.0f} avg vectors): {recall:.4f}")
+
+
+class Timer:
+    """Simple timer context manager for measuring execution time."""
+
+    def __init__(self):
+        self.start_time = None
+        self.elapsed_ms = 0
+
+    def __enter__(self):
+        self.start_time = time.perf_counter()
+        return self
+
+    def __exit__(self, *args):
+        self.elapsed_ms = (time.perf_counter() - self.start_time) * 1000.0
+
+    def get_milliseconds(self):
+        return self.elapsed_ms
+
+
+def write_results_to_csv(
+    experiment_name,
+    algorithm,
+    dataset,
+    n_iters,
+    actual_iterations,
+    dimensionality,
+    data_size,
+    n_clusters,
+    construction_time_ms,
+    threads,
+    final_objective,
+    config_dict,
+    results_knn_10,
+    results_knn_100
+):
+    """Write results to CSV file.
+
+    Args:
+        experiment_name: Name of the experiment (e.g., "end_to_end")
+        algorithm: Name of the algorithm (e.g., "scikit", "fastkmeans")
+        dataset: Dataset name
+        n_iters: Number of iterations (max requested)
+        actual_iterations: Actual iterations performed (may be less if early termination)
+        dimensionality: Data dimensionality
+        data_size: Number of data points
+        n_clusters: Number of clusters
+        construction_time_ms: Construction time in milliseconds
+        threads: Number of threads used
+        final_objective: Final k-means objective value
+        config_dict: Dictionary with algorithm-specific configuration (will be serialized to JSON)
+        results_knn_10: Results for KNN=10
+        results_knn_100: Results for KNN=100
+    """
+    # Get architecture from environment variable
+    arch = os.environ.get('SKM_ARCH', 'default')
+
+    # Get the benchmarks directory (where this script is located)
+    benchmarks_dir = Path(__file__).parent
+
+    # Create results directory
+    results_dir = benchmarks_dir / 'results' / arch
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    # CSV file path
+    csv_path = results_dir / f'{experiment_name}.csv'
+
+    # Check if file exists to determine if we need to write header
+    file_exists = csv_path.exists()
+
+    # Get current timestamp
+    from datetime import datetime
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # Prepare header
+    header = ['timestamp', 'algorithm', 'dataset', 'n_iters', 'actual_iterations', 'dimensionality',
+              'data_size', 'n_clusters', 'construction_time_ms', 'threads', 'final_objective']
+
+    # Add columns for each KNN and explore fraction combination
+    for knn in KNN_VALUES:
+        for explore_frac in EXPLORE_FRACTIONS:
+            header.append(f'recall@{knn}@{explore_frac*100:.2f}')
+            header.append(f'centroids_explored@{knn}@{explore_frac*100:.2f}')
+            header.append(f'vectors_explored@{knn}@{explore_frac*100:.2f}')
+
+    header.append('config')
+
+    # Prepare data row
+    row = [
+        timestamp,
+        algorithm,
+        dataset,
+        n_iters,
+        actual_iterations,
+        dimensionality,
+        data_size,
+        n_clusters,
+        f'{construction_time_ms:.2f}',
+        threads,
+        f'{final_objective:.6f}'
+    ]
+
+    # Add KNN=10 results
+    for centroids_to_explore, explore_frac, recall, avg_vectors in results_knn_10:
+        row.append(f'{recall:.6f}')
+        row.append(str(centroids_to_explore))
+        row.append(f'{avg_vectors:.2f}')
+
+    # Add KNN=100 results
+    for centroids_to_explore, explore_frac, recall, avg_vectors in results_knn_100:
+        row.append(f'{recall:.6f}')
+        row.append(str(centroids_to_explore))
+        row.append(f'{avg_vectors:.2f}')
+
+    # Add config as JSON string
+    config_json = json.dumps(config_dict)
+    row.append(config_json)
+
+    # Write to CSV
+    with open(csv_path, 'a', newline='') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(header)
+        writer.writerow(row)
+
+    print(f"Results written to: {csv_path}")
