@@ -40,6 +40,12 @@ KNN_VALUES = [10, 100]
 MAX_ITERS = 25
 N_QUERIES = 1000
 
+# Early termination benchmark configuration
+RECALL_TOL_VALUES = [0.01, 0.005, 0.001, 0.0005, 0.0001]
+FAISS_EARLY_TERM_ITERS = [10, 25]
+SCIKIT_EARLY_TERM_MAX_ITERS = 300
+SCIKIT_EARLY_TERM_TOL = 1e-8
+
 
 def load_ground_truth(filename):
     """Load ground truth from JSON file.

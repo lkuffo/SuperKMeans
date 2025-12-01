@@ -114,7 +114,7 @@ if __name__ == "__main__":
             "k": str(num_centroids),
             "niter": str(n_iter),
             "tol": str(km.tol),
-            "device": f'"{km.device}"',
+            "device": str(km.device),
             "seed": str(km.seed),
             "max_points_per_centroid": str(km.max_points_per_centroid),
             "verbose": str(km.verbose).lower(),

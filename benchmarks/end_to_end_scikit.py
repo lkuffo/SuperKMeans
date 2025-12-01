@@ -106,13 +106,13 @@ if __name__ == "__main__":
 
         # Create config dictionary with scikit-learn parameters
         config_dict = {
-            "init": f'"{km.init}"',
+            "init": str(km.init),
             "n_init": str(km.n_init),
             "max_iter": str(km.max_iter),
             "random_state": str(km.random_state),
             "copy_x": str(km.copy_x).lower(),
             "tol": str(km.tol),
-            "algorithm": f'"{km.algorithm}"'
+            "algorithm": str(km.algorithm)
         }
 
         # Write results to CSV

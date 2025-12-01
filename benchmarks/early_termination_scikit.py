@@ -16,7 +16,7 @@ import math
 import sys
 from bench_utils import (DATASET_PARAMS, load_ground_truth, compute_recall,
                          print_recall_results, KNN_VALUES, Timer, write_results_to_csv,
-                         MAX_ITERS, N_QUERIES)
+                         MAX_ITERS, N_QUERIES, SCIKIT_EARLY_TERM_MAX_ITERS, SCIKIT_EARLY_TERM_TOL)
 
 if __name__ == "__main__":
     # Experiment configuration
@@ -32,7 +32,7 @@ if __name__ == "__main__":
         )
     num_vectors, num_dimensions = DATASET_PARAMS[dataset]
     num_centroids = max(1, int(math.sqrt(num_vectors) * 4))
-    n_iter = 300
+    n_iter = SCIKIT_EARLY_TERM_MAX_ITERS
     threads = threads
 
     print(f"=== Running algorithm: {algorithm} ===")
@@ -56,7 +56,7 @@ if __name__ == "__main__":
         init='random',
         n_init=1,
         max_iter=n_iter,
-        tol=1e-8,  # Early termination tolerance
+        tol=SCIKIT_EARLY_TERM_TOL,  # Early termination tolerance
         verbose=0,
         random_state=42,
         copy_x=True
@@ -106,13 +106,13 @@ if __name__ == "__main__":
 
         # Create config dictionary with scikit-learn parameters
         config_dict = {
-            "init": f'"{km.init}"',
+            "init": str(km.init),
             "n_init": str(km.n_init),
             "max_iter": str(km.max_iter),
             "random_state": str(km.random_state),
             "copy_x": str(km.copy_x).lower(),
             "tol": str(km.tol),
-            "algorithm": f'"{km.algorithm}"'
+            "algorithm": str(km.algorithm)
         }
 
         # Write results to CSV

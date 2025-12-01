@@ -72,7 +72,7 @@ const int MAX_ITERS = 25;
 const int N_QUERIES = 1000;
 
 // Early termination benchmark configuration
-const std::vector<float> RECALL_TOL_VALUES = {0.01f, 0.005f, 0.001f, 0.0005f, 0.0001f};
+const std::vector<float> RECALL_TOL_VALUES = {0.02f, 0.01f, 0.005f, 0.001f, 0.0005f, 0.0001f};
 const std::vector<int> FAISS_EARLY_TERM_ITERS = {10, 25};
 const int SCIKIT_EARLY_TERM_MAX_ITERS = 300;
 const float SCIKIT_EARLY_TERM_TOL = 1e-8f;

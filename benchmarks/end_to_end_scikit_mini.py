@@ -104,7 +104,7 @@ if __name__ == "__main__":
 
         # Create config dictionary with MiniBatchKMeans parameters
         config_dict = {
-            "init": f'"{km.init}"',
+            "init": str(km.init),
             "n_init": str(km.n_init),
             "max_iter": str(km.max_iter),
             "random_state": str(km.random_state),

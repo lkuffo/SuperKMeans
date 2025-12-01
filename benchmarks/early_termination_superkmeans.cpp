@@ -81,104 +81,122 @@ int main(int argc, char* argv[]) {
     file_queries.read(reinterpret_cast<char*>(queries.data()), queries.size() * sizeof(float));
     file_queries.close();
 
-    skmeans::SuperKMeansConfig config;
-    config.iters = n_iters;
-    config.verbose = false;
-    config.n_threads = THREADS;
-    config.objective_k = 10;
-    config.ann_explore_fraction = 0.01f;
-    config.unrotate_centroids = true;
-    config.perform_assignments = false;
-    config.early_termination = true;
-    config.tol = 1e-8f;
-    config.sampling_fraction = sampling_fraction;
-    config.use_blas_only = false;
-
-    auto kmeans_state = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
-
-    // Time the training
-    bench_utils::TicToc timer;
-    timer.Tic();
-    std::vector<float> centroids = kmeans_state.Train(data.data(), n, queries.data(), n_queries);
-    timer.Toc();
-    double construction_time_ms = timer.GetMilliseconds();
-
-    // Get actual iterations and final objective
-    int actual_iterations = static_cast<int>(kmeans_state.iteration_stats.size());
-    double final_objective = kmeans_state.iteration_stats.back().objective;
-
-    std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
-    std::cout << "Actual iterations: " << actual_iterations << " (requested: " << n_iters << ")" << std::endl;
-    std::cout << "Final objective: " << final_objective << std::endl;
-
-    // Compute recall if ground truth file exists
+    // Ground truth file paths
     std::string gt_filename = path_root + "/" + dataset + ".json";
 
-    std::ifstream gt_file(gt_filename);
-    std::ifstream queries_file_check(filename_queries, std::ios::binary);
+    // Loop over sample_queries values: false, then true
+    std::vector<bool> sample_queries_values = {true, false};
+    for (bool sample_queries : sample_queries_values) {
+        std::cout << "\n##########################################" << std::endl;
+        std::cout << "# Running with sample_queries = " << (sample_queries ? "true" : "false") << std::endl;
+        std::cout << "##########################################" << std::endl;
 
-    if (gt_file.good() && queries_file_check.good()) {
-        gt_file.close();
-        queries_file_check.close();
-        std::cout << "\n--- Computing Recall ---" << std::endl;
-        std::cout << "Ground truth file: " << gt_filename << std::endl;
-        std::cout << "Queries file: " << filename_queries << std::endl;
+        // Loop over different recall_tol values
+        for (float recall_tol : bench_utils::RECALL_TOL_VALUES) {
+            std::cout << "\n========================================" << std::endl;
+            std::cout << "Running with recall_tol = " << recall_tol << std::endl;
+            std::cout << "========================================" << std::endl;
 
-        // Load ground truth
-        auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
-        std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size() << " from ground truth)" << std::endl;
+            skmeans::SuperKMeansConfig config;
+            config.iters = n_iters;
+            config.verbose = true;
+            config.n_threads = THREADS;
+            config.objective_k = 10;
+            config.ann_explore_fraction = 0.01f;
+            config.unrotate_centroids = true;
+            config.perform_assignments = false;
+            config.early_termination = true;
+            config.tol = 1e-8f;
+            config.recall_tol = recall_tol;
+            config.sample_queries = sample_queries;
+            config.sampling_fraction = sampling_fraction;
+            config.use_blas_only = false;
 
-        // Assign each data point to its nearest centroid using SuperKMeans::Assign()
-        auto assignments = kmeans_state.Assign(
-            data.data(), centroids.data(), n, n_clusters
-        );
+            auto kmeans_state = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                n_clusters, d, config
+            );
 
-        // Compute recall for both KNN values
-        auto results_knn_10 = bench_utils::compute_recall(
-            gt_map, assignments, queries.data(), centroids.data(),
-            n_queries, n_clusters, d, 10
-        );
-        bench_utils::print_recall_results(results_knn_10, 10);
+            // Time the training
+            bench_utils::TicToc timer;
+            timer.Tic();
+            std::vector<float> centroids = kmeans_state.Train(data.data(), n, queries.data(), n_queries);
+            timer.Toc();
+            double construction_time_ms = timer.GetMilliseconds();
 
-        auto results_knn_100 = bench_utils::compute_recall(
-            gt_map, assignments, queries.data(), centroids.data(),
-            n_queries, n_clusters, d, 100
-        );
-        bench_utils::print_recall_results(results_knn_100, 100);
+            // Get actual iterations and final objective
+            int actual_iterations = static_cast<int>(kmeans_state.iteration_stats.size());
+            double final_objective = kmeans_state.iteration_stats.back().objective;
 
-        // Create comprehensive config dictionary with all parameters
-        std::unordered_map<std::string, std::string> config_map;
-        config_map["iters"] = std::to_string(config.iters);
-        config_map["sampling_fraction"] = std::to_string(config.sampling_fraction);
-        config_map["n_threads"] = std::to_string(config.n_threads);
-        config_map["seed"] = std::to_string(config.seed);
-        config_map["use_blas_only"] = config.use_blas_only ? "true" : "false";
-        config_map["tol"] = std::to_string(config.tol);
-        config_map["recall_tol"] = std::to_string(config.recall_tol);
-        config_map["early_termination"] = config.early_termination ? "true" : "false";
-        config_map["sample_queries"] = config.sample_queries ? "true" : "false";
-        config_map["objective_k"] = std::to_string(config.objective_k);
-        config_map["ann_explore_fraction"] = std::to_string(config.ann_explore_fraction);
-        config_map["unrotate_centroids"] = config.unrotate_centroids ? "true" : "false";
-        config_map["perform_assignments"] = config.perform_assignments ? "true" : "false";
-        config_map["verbose"] = config.verbose ? "true" : "false";
+            std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
+            std::cout << "Actual iterations: " << actual_iterations << " (requested: " << n_iters << ")" << std::endl;
+            std::cout << "Final objective: " << final_objective << std::endl;
 
-        // Write results to CSV
-        bench_utils::write_results_to_csv(
-            experiment_name, algorithm, dataset, n_iters, actual_iterations,
-            static_cast<int>(d), n, static_cast<int>(n_clusters), construction_time_ms,
-            static_cast<int>(THREADS), final_objective, config_map,
-            results_knn_10, results_knn_100
-        );
-    } else {
-        if (!gt_file.good()) {
-            std::cout << "\nGround truth file not found: " << gt_filename << std::endl;
-        }
-        if (!queries_file_check.good()) {
-            std::cout << "Queries file not found: " << filename_queries << std::endl;
-        }
-        std::cout << "Skipping CSV output (recall computation requires ground truth)" << std::endl;
-    }
+            // Compute recall if ground truth file exists
+            std::ifstream gt_file(gt_filename);
+            std::ifstream queries_file_check(filename_queries, std::ios::binary);
+
+            if (gt_file.good() && queries_file_check.good()) {
+                gt_file.close();
+                queries_file_check.close();
+                std::cout << "\n--- Computing Recall ---" << std::endl;
+                std::cout << "Ground truth file: " << gt_filename << std::endl;
+                std::cout << "Queries file: " << filename_queries << std::endl;
+
+                // Load ground truth
+                auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+                std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size() << " from ground truth)" << std::endl;
+
+                // Assign each data point to its nearest centroid using SuperKMeans::Assign()
+                auto assignments = kmeans_state.Assign(
+                    data.data(), centroids.data(), n, n_clusters
+                );
+
+                // Compute recall for both KNN values
+                auto results_knn_10 = bench_utils::compute_recall(
+                    gt_map, assignments, queries.data(), centroids.data(),
+                    n_queries, n_clusters, d, 10
+                );
+                bench_utils::print_recall_results(results_knn_10, 10);
+
+                auto results_knn_100 = bench_utils::compute_recall(
+                    gt_map, assignments, queries.data(), centroids.data(),
+                    n_queries, n_clusters, d, 100
+                );
+                bench_utils::print_recall_results(results_knn_100, 100);
+
+                // Create comprehensive config dictionary with all parameters
+                std::unordered_map<std::string, std::string> config_map;
+                config_map["iters"] = std::to_string(config.iters);
+                config_map["sampling_fraction"] = std::to_string(config.sampling_fraction);
+                config_map["n_threads"] = std::to_string(config.n_threads);
+                config_map["seed"] = std::to_string(config.seed);
+                config_map["use_blas_only"] = config.use_blas_only ? "true" : "false";
+                config_map["tol"] = std::to_string(config.tol);
+                config_map["recall_tol"] = std::to_string(config.recall_tol);
+                config_map["early_termination"] = config.early_termination ? "true" : "false";
+                config_map["sample_queries"] = config.sample_queries ? "true" : "false";
+                config_map["objective_k"] = std::to_string(config.objective_k);
+                config_map["ann_explore_fraction"] = std::to_string(config.ann_explore_fraction);
+                config_map["unrotate_centroids"] = config.unrotate_centroids ? "true" : "false";
+                config_map["perform_assignments"] = config.perform_assignments ? "true" : "false";
+                config_map["verbose"] = config.verbose ? "true" : "false";
+
+                // Write results to CSV
+                bench_utils::write_results_to_csv(
+                    experiment_name, algorithm, dataset, n_iters, actual_iterations,
+                    static_cast<int>(d), n, static_cast<int>(n_clusters), construction_time_ms,
+                    static_cast<int>(THREADS), final_objective, config_map,
+                    results_knn_10, results_knn_100
+                );
+            } else {
+                if (!gt_file.good()) {
+                    std::cout << "\nGround truth file not found: " << gt_filename << std::endl;
+                }
+                if (!queries_file_check.good()) {
+                    std::cout << "Queries file not found: " << filename_queries << std::endl;
+                }
+                std::cout << "Skipping CSV output (recall computation requires ground truth)" << std::endl;
+            }
+        }  // End recall_tol loop
+    }  // End sample_queries loop
 }

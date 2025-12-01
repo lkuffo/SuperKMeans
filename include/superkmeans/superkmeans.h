@@ -208,7 +208,8 @@ class SuperKMeans {
             rotated_queries.resize(n_queries * _d);
             if (_config.sample_queries) {
                 std::cout << "Sampling queries from data..." << std::endl;
-                SampleVectors<false>(data_to_cluster, rotated_queries, _n_samples, n_queries);
+                // We skip the _n_clusters as we don't want the 1st iteration centroids to be the queries
+                SampleVectors<false>(data_to_cluster, rotated_queries, _n_samples, n_queries, _n_clusters);
             } else {
                 // We already did a validation step to ensure that queries is not nullptr
                 SKM_PROFILE_SCOPE("rotator");
@@ -1041,13 +1042,15 @@ class SuperKMeans {
      * @param out_buffer Output buffer for sampled (and optionally rotated) vectors
      * @param n Total number of input vectors
      * @param n_samples Number of vectors to sample
+     * @param n_skip Number of vectors to skip before starting taking samples
      */
     template <bool ROTATE = true>
     void SampleVectors(
         const vector_value_t* SKM_RESTRICT data,
         std::vector<vector_value_t>& out_buffer,
         const size_t n,
-        const size_t n_samples
+        const size_t n_samples,
+        const size_t n_skip = 0
     ) {
         out_buffer.resize(n_samples * _d);
         if (_config.verbose)
@@ -1066,7 +1069,7 @@ class SuperKMeans {
                 samples_tmp.resize(n_samples * _d);
                 memcpy(
                     (void*) samples_tmp.data(),
-                    (void*) data,
+                    (void*) (data + (n_skip * _d)),
                     sizeof(vector_value_t) * n_samples * _d
                 );
                 src_data = samples_tmp.data();
@@ -1074,7 +1077,7 @@ class SuperKMeans {
                 // No rotation: copy directly into output buffer
                 memcpy(
                     (void*) out_buffer.data(),
-                    (void*) data,
+                    (void*) (data + (n_skip * _d)),
                     sizeof(vector_value_t) * n_samples * _d
                 );
                 return;  // Done, no rotation needed

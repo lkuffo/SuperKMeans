@@ -42,9 +42,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "Compile options: " << faiss::get_compile_options() << std::endl;
 
-    // Test with two different iteration counts
-    std::vector<int> n_iters_values = {10, 25};
-
     std::vector<float> data;
     try {
         data.resize(n * d);
@@ -66,7 +63,7 @@ int main(int argc, char* argv[]) {
     std::string queries_filename = path_root + "/data_" + dataset + "_test.bin";
 
     // Loop over different iteration counts
-    for (int n_iters : n_iters_values) {
+    for (int n_iters : bench_utils::FAISS_EARLY_TERM_ITERS) {
         std::cout << "\n========================================" << std::endl;
         std::cout << "Running with n_iters = " << n_iters << std::endl;
         std::cout << "========================================" << std::endl;
