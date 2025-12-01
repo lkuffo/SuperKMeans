@@ -39,9 +39,8 @@ int main(int argc, char* argv[]) {
         std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
     int n_iters = bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
-    std::string path_root = std::string(CMAKE_SOURCE_DIR) + "/benchmarks";
-    std::string filename = path_root + "/data_" + dataset + ".bin";
-    std::string filename_queries = path_root + "/data_" + dataset + "_test.bin";
+    std::string filename = bench_utils::get_data_path(dataset);
+    std::string filename_queries = bench_utils::get_query_path(dataset);
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
@@ -111,7 +110,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Final objective: " << final_objective << std::endl;
 
     // Compute recall if ground truth file exists
-    std::string gt_filename = path_root + "/" + dataset + ".json";
+    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
 
     std::ifstream gt_file(gt_filename);
     std::ifstream queries_file_check(filename_queries, std::ios::binary);

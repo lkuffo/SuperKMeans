@@ -16,7 +16,7 @@ import math
 import sys
 from bench_utils import (DATASET_PARAMS, load_ground_truth, compute_recall,
                          print_recall_results, KNN_VALUES, Timer, write_results_to_csv,
-                         MAX_ITERS, N_QUERIES)
+                         MAX_ITERS, N_QUERIES, get_data_path, get_query_path, get_ground_truth_path)
 
 if __name__ == "__main__":
     # Experiment configuration
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     print(f"num_centroids={num_centroids}, threads={threads}, n_iter={n_iter}")
 
     # Load data file (expects float32, row-major, n*d values)
-    filename = f"data_{dataset}.bin"
+    filename = get_data_path(dataset)
     data = np.fromfile(filename, dtype=np.float32)
     if data.size != num_vectors * num_dimensions:
         raise ValueError(
@@ -76,8 +76,8 @@ if __name__ == "__main__":
     print(f"Final objective (inertia): {final_objective}")
 
     # Compute recall if ground truth file exists
-    gt_filename = f"{dataset}.json"
-    queries_filename = f"data_{dataset}_test.bin"
+    gt_filename = get_ground_truth_path(dataset)
+    queries_filename = get_query_path(dataset)
 
     if os.path.exists(gt_filename) and os.path.exists(queries_filename):
         print(f"\n--- Computing Recall ---")

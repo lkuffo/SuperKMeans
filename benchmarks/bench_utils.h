@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -14,6 +15,38 @@
 #include <vector>
 
 namespace bench_utils {
+
+// Path constants for benchmark data
+inline const std::string BENCHMARKS_ROOT = std::string(CMAKE_SOURCE_DIR) + "/benchmarks";
+inline const std::string DATA_DIR = BENCHMARKS_ROOT + "/data";
+inline const std::string GROUND_TRUTH_DIR = BENCHMARKS_ROOT + "/ground_truth";
+
+/**
+ * @brief Get the path to a data file.
+ * @param dataset Dataset name (e.g., "openai", "mxbai")
+ * @return Full path to the data file
+ */
+inline std::string get_data_path(const std::string& dataset) {
+    return DATA_DIR + "/data_" + dataset + ".bin";
+}
+
+/**
+ * @brief Get the path to a query data file.
+ * @param dataset Dataset name (e.g., "openai", "mxbai")
+ * @return Full path to the query data file
+ */
+inline std::string get_query_path(const std::string& dataset) {
+    return DATA_DIR + "/data_" + dataset + "_test.bin";
+}
+
+/**
+ * @brief Get the path to a ground truth file.
+ * @param dataset Dataset name (e.g., "openai", "mxbai")
+ * @return Full path to the ground truth file
+ */
+inline std::string get_ground_truth_path(const std::string& dataset) {
+    return GROUND_TRUTH_DIR + "/" + dataset + ".json";
+}
 
 /******************************************************************
  * Clock to benchmark algorithms runtime
@@ -148,10 +181,10 @@ inline std::unordered_map<int, std::vector<int>> parse_ground_truth_json(const s
  * @param n_clusters Number of clusters
  * @param d Dimensionality
  * @param knn Number of ground truth neighbors to consider
- * @return Vector of tuples (centroids_to_explore, explore_fraction, recall, avg_vectors_to_visit)
+ * @return Vector of tuples (centroids_to_explore, explore_fraction, recall_mean, recall_std, avg_vectors_to_visit)
  */
 template<typename AssignmentType>
-std::vector<std::tuple<int, float, float, float>> compute_recall(
+std::vector<std::tuple<int, float, float, float, float>> compute_recall(
     const std::unordered_map<int, std::vector<int>>& gt_map,
     const std::vector<AssignmentType>& assignments,
     const float* queries,
@@ -205,12 +238,12 @@ std::vector<std::tuple<int, float, float, float>> compute_recall(
         }
     }
 
-    std::vector<std::tuple<int, float, float, float>> results;
+    std::vector<std::tuple<int, float, float, float, float>> results;
     for (float explore_frac : EXPLORE_FRACTIONS) {
         int centroids_to_explore = std::max(1, static_cast<int>(n_clusters * explore_frac));
 
         // For each query, find top-N nearest centroids
-        float total_recall = 0.0f;
+        std::vector<float> query_recalls;
         size_t total_vectors_to_visit = 0;
 
         for (int query_idx = 0; query_idx < static_cast<int>(n_queries); ++query_idx) {
@@ -253,12 +286,29 @@ std::vector<std::tuple<int, float, float, float>> compute_recall(
             }
 
             float query_recall = static_cast<float>(found) / static_cast<float>(gt_count);
-            total_recall += query_recall;
+            query_recalls.push_back(query_recall);
         }
 
-        float average_recall = total_recall / static_cast<float>(n_queries);
+        // Compute mean and standard deviation
+        float average_recall = 0.0f;
+        for (float recall : query_recalls) {
+            average_recall += recall;
+        }
+        average_recall /= static_cast<float>(n_queries);
+
+        float std_recall = 0.0f;
+        if (query_recalls.size() > 1) {
+            float variance = 0.0f;
+            for (float recall : query_recalls) {
+                float diff = recall - average_recall;
+                variance += diff * diff;
+            }
+            variance /= static_cast<float>(query_recalls.size() - 1);  // Sample standard deviation (Bessel's correction)
+            std_recall = std::sqrt(variance);
+        }
+
         float avg_vectors_to_visit = static_cast<float>(total_vectors_to_visit) / static_cast<float>(n_queries);
-        results.push_back(std::make_tuple(centroids_to_explore, explore_frac, average_recall, avg_vectors_to_visit));
+        results.push_back(std::make_tuple(centroids_to_explore, explore_frac, average_recall, std_recall, avg_vectors_to_visit));
     }
 
     return results;
@@ -267,14 +317,14 @@ std::vector<std::tuple<int, float, float, float>> compute_recall(
 /**
  * @brief Print recall results in a formatted table.
  *
- * @param results Vector of tuples (centroids_to_explore, explore_fraction, recall, avg_vectors_to_visit)
+ * @param results Vector of tuples (centroids_to_explore, explore_fraction, recall_mean, recall_std, avg_vectors_to_visit)
  * @param knn KNN value used for this result set
  */
-inline void print_recall_results(const std::vector<std::tuple<int, float, float, float>>& results, int knn) {
+inline void print_recall_results(const std::vector<std::tuple<int, float, float, float, float>>& results, int knn) {
     printf("\n--- Recall@%d ---\n", knn);
-    for (const auto& [centroids_to_explore, explore_frac, recall, avg_vectors] : results) {
-        printf("Recall@%4d (%5.2f%% centroids, %8.0f avg vectors): %.4f\n",
-               centroids_to_explore, explore_frac * 100.0f, avg_vectors, recall);
+    for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] : results) {
+        printf("Recall@%4d (%5.2f%% centroids, %8.0f avg vectors): %.4f ± %.4f\n",
+               centroids_to_explore, explore_frac * 100.0f, avg_vectors, recall, std_recall);
     }
 }
 
@@ -331,8 +381,8 @@ inline void write_results_to_csv(
     int threads,
     double final_objective,
     const std::unordered_map<std::string, std::string>& config_dict,
-    const std::vector<std::tuple<int, float, float, float>>& results_knn_10,
-    const std::vector<std::tuple<int, float, float, float>>& results_knn_100
+    const std::vector<std::tuple<int, float, float, float, float>>& results_knn_10,
+    const std::vector<std::tuple<int, float, float, float, float>>& results_knn_100
 ) {
     // Get architecture from environment variable
     const char* arch_env = std::getenv("SKM_ARCH");
@@ -364,6 +414,7 @@ inline void write_results_to_csv(
         for (int knn : KNN_VALUES) {
             for (float explore_frac : EXPLORE_FRACTIONS) {
                 csv_file << ",recall@" << knn << "@" << std::fixed << std::setprecision(2) << (explore_frac * 100.0f);
+                csv_file << ",recall_std@" << knn << "@" << std::fixed << std::setprecision(2) << (explore_frac * 100.0f);
                 csv_file << ",centroids_explored@" << knn << "@" << std::fixed << std::setprecision(2) << (explore_frac * 100.0f);
                 csv_file << ",vectors_explored@" << knn << "@" << std::fixed << std::setprecision(2) << (explore_frac * 100.0f);
             }
@@ -387,15 +438,17 @@ inline void write_results_to_csv(
              << std::setprecision(6) << final_objective;
 
     // Write KNN=10 results
-    for (const auto& [centroids_to_explore, explore_frac, recall, avg_vectors] : results_knn_10) {
+    for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] : results_knn_10) {
         csv_file << "," << std::setprecision(6) << recall;
+        csv_file << "," << std::setprecision(6) << std_recall;
         csv_file << "," << centroids_to_explore;
         csv_file << "," << std::setprecision(2) << avg_vectors;
     }
 
     // Write KNN=100 results
-    for (const auto& [centroids_to_explore, explore_frac, recall, avg_vectors] : results_knn_100) {
+    for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] : results_knn_100) {
         csv_file << "," << std::setprecision(6) << recall;
+        csv_file << "," << std::setprecision(6) << std_recall;
         csv_file << "," << centroids_to_explore;
         csv_file << "," << std::setprecision(2) << avg_vectors;
     }

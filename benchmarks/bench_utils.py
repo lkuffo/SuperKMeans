@@ -8,6 +8,48 @@ import time
 from pathlib import Path
 
 
+# Path constants for benchmark data
+BENCHMARKS_ROOT = Path(__file__).parent
+DATA_DIR = BENCHMARKS_ROOT / 'data'
+GROUND_TRUTH_DIR = BENCHMARKS_ROOT / 'ground_truth'
+
+
+def get_data_path(dataset):
+    """Get the path to a data file.
+
+    Args:
+        dataset: Dataset name (e.g., "openai", "mxbai")
+
+    Returns:
+        Path to the data file
+    """
+    return DATA_DIR / f'data_{dataset}.bin'
+
+
+def get_query_path(dataset):
+    """Get the path to a query data file.
+
+    Args:
+        dataset: Dataset name (e.g., "openai", "mxbai")
+
+    Returns:
+        Path to the query data file
+    """
+    return DATA_DIR / f'data_{dataset}_test.bin'
+
+
+def get_ground_truth_path(dataset):
+    """Get the path to a ground truth file.
+
+    Args:
+        dataset: Dataset name (e.g., "openai", "mxbai")
+
+    Returns:
+        Path to the ground truth file
+    """
+    return GROUND_TRUTH_DIR / f'{dataset}.json'
+
+
 # Dataset configurations: name -> (num_vectors, num_dimensions)
 DATASET_PARAMS = {
     "mxbai": (769_382, 1024),
@@ -78,7 +120,7 @@ def compute_recall(gt_dict, assignments, queries, centroids, num_centroids, knn)
         knn: Number of ground truth neighbors to consider
 
     Returns:
-        List of tuples (centroids_to_explore, explore_fraction, recall, avg_vectors_to_visit)
+        List of tuples (centroids_to_explore, explore_fraction, recall_mean, recall_std, avg_vectors_to_visit)
     """
     n_queries = queries.shape[0]
 
@@ -99,8 +141,8 @@ def compute_recall(gt_dict, assignments, queries, centroids, num_centroids, knn)
         # Find top-N nearest centroids for each query
         top_centroid_indices = np.argsort(distances, axis=1)[:, :centroids_to_explore]
 
-        # Compute recall and vectors to visit
-        total_recall = 0.0
+        # Compute recall and vectors to visit for each query
+        query_recalls = []
         total_vectors_to_visit = 0
         for query_idx in range(n_queries):
             query_key = str(query_idx)
@@ -123,11 +165,13 @@ def compute_recall(gt_dict, assignments, queries, centroids, num_centroids, knn)
                     found += 1
 
             query_recall = found / len(gt_vector_ids)
-            total_recall += query_recall
+            query_recalls.append(query_recall)
 
-        average_recall = total_recall / n_queries
+        # Compute mean and standard deviation
+        average_recall = np.mean(query_recalls)
+        std_recall = np.std(query_recalls, ddof=1) if len(query_recalls) > 1 else 0.0
         avg_vectors_to_visit = total_vectors_to_visit / n_queries
-        results.append((centroids_to_explore, explore_frac, average_recall, avg_vectors_to_visit))
+        results.append((centroids_to_explore, explore_frac, average_recall, std_recall, avg_vectors_to_visit))
 
     return results
 
@@ -136,12 +180,12 @@ def print_recall_results(results, knn):
     """Print recall results in a formatted table.
 
     Args:
-        results: List of tuples (centroids_to_explore, explore_fraction, recall, avg_vectors_to_visit)
+        results: List of tuples (centroids_to_explore, explore_fraction, recall_mean, recall_std, avg_vectors_to_visit)
         knn: KNN value used for this result set
     """
     print(f"\n--- Recall@{knn} ---")
-    for centroids_to_explore, explore_frac, recall, avg_vectors in results:
-        print(f"Recall@{centroids_to_explore:4d} ({explore_frac*100:5.2f}% centroids, {avg_vectors:8.0f} avg vectors): {recall:.4f}")
+    for centroids_to_explore, explore_frac, recall, std_recall, avg_vectors in results:
+        print(f"Recall@{centroids_to_explore:4d} ({explore_frac*100:5.2f}% centroids, {avg_vectors:8.0f} avg vectors): {recall:.4f} ± {std_recall:.4f}")
 
 
 class Timer:
@@ -224,6 +268,7 @@ def write_results_to_csv(
     for knn in KNN_VALUES:
         for explore_frac in EXPLORE_FRACTIONS:
             header.append(f'recall@{knn}@{explore_frac*100:.2f}')
+            header.append(f'recall_std@{knn}@{explore_frac*100:.2f}')
             header.append(f'centroids_explored@{knn}@{explore_frac*100:.2f}')
             header.append(f'vectors_explored@{knn}@{explore_frac*100:.2f}')
 
@@ -245,14 +290,16 @@ def write_results_to_csv(
     ]
 
     # Add KNN=10 results
-    for centroids_to_explore, explore_frac, recall, avg_vectors in results_knn_10:
+    for centroids_to_explore, explore_frac, recall, std_recall, avg_vectors in results_knn_10:
         row.append(f'{recall:.6f}')
+        row.append(f'{std_recall:.6f}')
         row.append(str(centroids_to_explore))
         row.append(f'{avg_vectors:.2f}')
 
     # Add KNN=100 results
-    for centroids_to_explore, explore_frac, recall, avg_vectors in results_knn_100:
+    for centroids_to_explore, explore_frac, recall, std_recall, avg_vectors in results_knn_100:
         row.append(f'{recall:.6f}')
+        row.append(f'{std_recall:.6f}')
         row.append(str(centroids_to_explore))
         row.append(f'{avg_vectors:.2f}')
 

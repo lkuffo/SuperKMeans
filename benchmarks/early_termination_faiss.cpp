@@ -35,8 +35,7 @@ int main(int argc, char* argv[]) {
         std::max<int>(1u, static_cast<int>(std::sqrt(static_cast<double>(n)) * 4.0));
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
-    std::string path_root = std::string(CMAKE_SOURCE_DIR) + "/benchmarks";
-    std::string filename = path_root + "/data_" + dataset + ".bin";
+    std::string filename = bench_utils::get_data_path(dataset);
 
     std::cout << "=== Running algorithm: " << algorithm << " ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
@@ -59,8 +58,8 @@ int main(int argc, char* argv[]) {
     file.close();
 
     // Ground truth and query file paths
-    std::string gt_filename = path_root + "/" + dataset + ".json";
-    std::string queries_filename = path_root + "/data_" + dataset + "_test.bin";
+    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    std::string queries_filename = bench_utils::get_query_path(dataset);
 
     // Loop over different iteration counts
     for (int n_iters : bench_utils::FAISS_EARLY_TERM_ITERS) {
