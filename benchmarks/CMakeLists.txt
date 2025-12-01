@@ -53,7 +53,9 @@ endif()
 
 # Set FAISS optimization level based on detected CPU features
 set(FAISS_OPT_LEVEL "generic")
-if(HAS_AVX512)
+if(HAS_AVX512_SPR)
+    set(FAISS_OPT_LEVEL "avx512_spr")
+elseif(HAS_AVX512)
     set(FAISS_OPT_LEVEL "avx512")
 elseif(HAS_AVX2)
     set(FAISS_OPT_LEVEL "avx2")

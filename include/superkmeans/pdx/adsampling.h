@@ -1,5 +1,6 @@
 #pragma once
 
+#include <omp.h>
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/pdx/utils.h"
 
