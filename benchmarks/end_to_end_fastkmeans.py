@@ -18,10 +18,12 @@ from bench_utils import (DATASET_PARAMS, load_ground_truth, compute_recall,
 
 if __name__ == "__main__":
     # Experiment configuration
-    experiment_name = "end_to_end"
     algorithm = "fastkmeans"
 
     dataset = sys.argv[1] if len(sys.argv) > 1 else "openai"
+
+    # Experiment name can be passed as second argument (default: "end_to_end")
+    experiment_name = sys.argv[2] if len(sys.argv) > 2 else "end_to_end"
 
     if dataset not in DATASET_PARAMS:
         raise ValueError(

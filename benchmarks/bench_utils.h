@@ -77,6 +77,12 @@ const std::vector<int> FAISS_EARLY_TERM_ITERS = {10, 25};
 const int SCIKIT_EARLY_TERM_MAX_ITERS = 300;
 const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
+// Sampling fraction values for sampling experiment
+const std::vector<float> SAMPLING_FRACTION_VALUES = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 0.95f, 1.00f};
+
+// Iteration values for pareto experiment (grid search)
+const std::vector<int> PARETO_ITERS_VALUES = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25};
+
 /**
  * @brief Parse ground truth JSON file.
  *

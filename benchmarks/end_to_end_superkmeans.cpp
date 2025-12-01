@@ -21,11 +21,13 @@
 
 int main(int argc, char* argv[]) {
     // Experiment configuration
-    const std::string experiment_name = "end_to_end";
     const std::string algorithm = "superkmeans";
 
     // Choose dataset by name. You can also pass the dataset name as the first CLI argument.
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("openai");
+
+    // Experiment name can be passed as second argument (default: "end_to_end")
+    std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {

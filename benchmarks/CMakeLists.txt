@@ -33,3 +33,11 @@ target_link_libraries(early_termination_superkmeans.out PRIVATE ${BENCH_COMMON_L
 
 add_executable(early_termination_faiss.out early_termination_faiss.cpp)
 target_link_libraries(early_termination_faiss.out PRIVATE faiss ${BENCH_COMMON_LIBS})
+
+# Sampling benchmark
+add_executable(sampling_superkmeans.out sampling_superkmeans.cpp)
+target_link_libraries(sampling_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
+# Pareto benchmark (grid search)
+add_executable(pareto_superkmeans.out pareto_superkmeans.cpp)
+target_link_libraries(pareto_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
