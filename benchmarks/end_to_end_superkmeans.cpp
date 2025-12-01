@@ -21,7 +21,7 @@
 
 int main(int argc, char* argv[]) {
     // Choose dataset by name. You can also pass the dataset name as the first CLI argument.
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("openai");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {

@@ -16,7 +16,7 @@
 #include "bench_utils.h"
 
 int main(int argc, char* argv[]) {
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("openai");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {

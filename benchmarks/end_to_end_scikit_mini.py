@@ -8,7 +8,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = threads
 os.environ["VECLIB_MAXIMUM_THREADS"] = threads
 
 
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, MiniBatchKMeans
 import numpy as np
 import os
 import time
@@ -17,7 +17,7 @@ import sys
 from bench_utils import DATASET_PARAMS, load_ground_truth, compute_recall, print_recall_results, KNN_VALUES
 
 if __name__ == "__main__":
-    dataset = sys.argv[1] if len(sys.argv) > 1 else "mxbai"
+    dataset = sys.argv[1] if len(sys.argv) > 1 else "openai"
 
     if dataset not in DATASET_PARAMS:
         raise ValueError(
@@ -27,7 +27,7 @@ if __name__ == "__main__":
     num_vectors, num_dimensions = DATASET_PARAMS[dataset]
     num_centroids = max(1, int(math.sqrt(num_vectors) * 4))
     threads = 10
-    n_iter = 2
+    n_iter = 25
 
     print(f"Dataset: {dataset}")
     print(f"num_vectors={num_vectors}, num_dimensions={num_dimensions}")
@@ -44,14 +44,14 @@ if __name__ == "__main__":
     data = data.reshape(num_vectors, num_dimensions)
 
     start = time.time()
-    km = KMeans(
+    km = MiniBatchKMeans(
         n_clusters=num_centroids,
         init='random',
+        # batch_size=1000,
         n_init=1,
-        max_iter=n_iter,
+        max_iter=5,
         verbose=1,
-        random_state=42,
-        copy_x=True
+        random_state=42
     )
     km.fit(data)
     end = time.time()
@@ -78,6 +78,10 @@ if __name__ == "__main__":
         # Get sklearn assignments (cluster labels for each data point)
         assignments = km.labels_  # shape: (num_vectors,)
         centroids = km.cluster_centers_  # shape: (num_centroids, num_dimensions)
+        print(f'MiniBatchKMeans produced {len(centroids)} centroids')
+        for i, c in enumerate(centroids):
+            print(f'Centroid {i}: {len([x for x in assignments if x == i])}')
+            
 
         # Compute recall for different KNN values
         for knn in KNN_VALUES:

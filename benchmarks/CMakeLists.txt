@@ -20,9 +20,9 @@ add_executable(bench_real_datasets.out bench_real_datasets.cpp)
 target_link_libraries(bench_real_datasets.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # SuperKMeans benchmark on real datasets with recall computation
-add_executable(bench_superkmeans.out bench_superkmeans.cpp)
-target_link_libraries(bench_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+add_executable(end_to_end_superkmeans.out end_to_end_superkmeans.cpp)
+target_link_libraries(end_to_end_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # FAISS benchmark on real datasets with recall computation
-add_executable(bench_kmeans_faiss.out bench_kmeans_faiss.cpp)
-target_link_libraries(bench_kmeans_faiss.out PRIVATE faiss ${BENCH_COMMON_LIBS})
+add_executable(end_to_end_faiss.out end_to_end_faiss.cpp)
+target_link_libraries(end_to_end_faiss.out PRIVATE faiss ${BENCH_COMMON_LIBS})

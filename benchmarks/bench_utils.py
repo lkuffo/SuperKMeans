@@ -56,9 +56,12 @@ def compute_recall(gt_dict, assignments, queries, centroids, num_centroids, knn)
         knn: Number of ground truth neighbors to consider
 
     Returns:
-        List of tuples (centroids_to_explore, explore_fraction, recall)
+        List of tuples (centroids_to_explore, explore_fraction, recall, avg_vectors_to_visit)
     """
     n_queries = len(gt_dict)
+
+    # Count cluster sizes to compute vectors to visit
+    cluster_sizes = np.bincount(assignments, minlength=num_centroids)
 
     # Compute distances from queries to centroids
     # Using L2 distance: ||q - c||^2 = ||q||^2 + ||c||^2 - 2*q·c
@@ -74,15 +77,21 @@ def compute_recall(gt_dict, assignments, queries, centroids, num_centroids, knn)
         # Find top-N nearest centroids for each query
         top_centroid_indices = np.argsort(distances, axis=1)[:, :centroids_to_explore]
 
-        # Compute recall
+        # Compute recall and vectors to visit
         total_recall = 0.0
+        total_vectors_to_visit = 0
         for query_idx in range(n_queries):
             query_key = str(query_idx)
             if query_key not in gt_dict:
                 continue
 
             gt_vector_ids = gt_dict[query_key][:knn]  # List of ground truth vector IDs
-            top_centroids = set(top_centroid_indices[query_idx])  # Top N centroids for this query
+            top_centroids_list = top_centroid_indices[query_idx]  # Top N centroids for this query
+            top_centroids = set(top_centroids_list)
+
+            # Count vectors to visit for this query
+            vectors_to_visit = np.sum(cluster_sizes[top_centroids_list])
+            total_vectors_to_visit += vectors_to_visit
 
             # Count how many ground truth vectors have their assigned centroid in the top N
             found = 0
@@ -95,7 +104,8 @@ def compute_recall(gt_dict, assignments, queries, centroids, num_centroids, knn)
             total_recall += query_recall
 
         average_recall = total_recall / n_queries
-        results.append((centroids_to_explore, explore_frac, average_recall))
+        avg_vectors_to_visit = total_vectors_to_visit / n_queries
+        results.append((centroids_to_explore, explore_frac, average_recall, avg_vectors_to_visit))
 
     return results
 
@@ -104,9 +114,9 @@ def print_recall_results(results, knn):
     """Print recall results in a formatted table.
 
     Args:
-        results: List of tuples (centroids_to_explore, explore_fraction, recall)
+        results: List of tuples (centroids_to_explore, explore_fraction, recall, avg_vectors_to_visit)
         knn: KNN value used for this result set
     """
     print(f"\n--- Recall@{knn} ---")
-    for centroids_to_explore, explore_frac, recall in results:
-        print(f"Recall@{centroids_to_explore:4d} ({explore_frac*100:5.2f}% of centroids): {recall:.4f}")
+    for centroids_to_explore, explore_frac, recall, avg_vectors in results:
+        print(f"Recall@{centroids_to_explore:4d} ({explore_frac*100:5.2f}% centroids, {avg_vectors:8.0f} avg vectors): {recall:.4f}")

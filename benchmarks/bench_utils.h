@@ -99,10 +99,10 @@ inline std::unordered_map<int, std::vector<int>> parse_ground_truth_json(const s
  * @param n_clusters Number of clusters
  * @param d Dimensionality
  * @param knn Number of ground truth neighbors to consider
- * @return Vector of tuples (centroids_to_explore, explore_fraction, recall)
+ * @return Vector of tuples (centroids_to_explore, explore_fraction, recall, avg_vectors_to_visit)
  */
 template<typename AssignmentType>
-std::vector<std::tuple<int, float, float>> compute_recall(
+std::vector<std::tuple<int, float, float, float>> compute_recall(
     const std::unordered_map<int, std::vector<int>>& gt_map,
     const std::vector<AssignmentType>& assignments,
     const float* queries,
@@ -112,6 +112,12 @@ std::vector<std::tuple<int, float, float>> compute_recall(
     size_t d,
     int knn
 ) {
+    // Count cluster sizes to compute vectors to visit
+    std::vector<size_t> cluster_sizes(n_clusters, 0);
+    for (const auto& assignment : assignments) {
+        cluster_sizes[static_cast<size_t>(assignment)]++;
+    }
+
     // Compute distances from queries to centroids
     // Using L2 distance: ||q - c||^2 = ||q||^2 + ||c||^2 - 2*q·c
     std::vector<float> query_norms(n_queries);
@@ -150,12 +156,13 @@ std::vector<std::tuple<int, float, float>> compute_recall(
         }
     }
 
-    std::vector<std::tuple<int, float, float>> results;
+    std::vector<std::tuple<int, float, float, float>> results;
     for (float explore_frac : EXPLORE_FRACTIONS) {
         int centroids_to_explore = std::max(1, static_cast<int>(n_clusters * explore_frac));
 
         // For each query, find top-N nearest centroids
         float total_recall = 0.0f;
+        size_t total_vectors_to_visit = 0;
 
         for (int query_idx = 0; query_idx < static_cast<int>(n_queries); ++query_idx) {
             if (gt_map.find(query_idx) == gt_map.end()) {
@@ -173,11 +180,15 @@ std::vector<std::tuple<int, float, float>> compute_recall(
                             query_distances.begin() + centroids_to_explore,
                             query_distances.end());
 
-            // Create set of top centroid indices
+            // Create set of top centroid indices and count vectors to visit
             std::unordered_set<int> top_centroids;
+            size_t vectors_to_visit = 0;
             for (int t = 0; t < centroids_to_explore; ++t) {
-                top_centroids.insert(query_distances[t].second);
+                int centroid_idx = query_distances[t].second;
+                top_centroids.insert(centroid_idx);
+                vectors_to_visit += cluster_sizes[centroid_idx];
             }
+            total_vectors_to_visit += vectors_to_visit;
 
             // Check how many ground truth vectors have their assigned centroid in top-N
             const auto& gt_vector_ids = gt_map.at(query_idx);
@@ -197,7 +208,8 @@ std::vector<std::tuple<int, float, float>> compute_recall(
         }
 
         float average_recall = total_recall / static_cast<float>(gt_map.size());
-        results.push_back(std::make_tuple(centroids_to_explore, explore_frac, average_recall));
+        float avg_vectors_to_visit = static_cast<float>(total_vectors_to_visit) / static_cast<float>(gt_map.size());
+        results.push_back(std::make_tuple(centroids_to_explore, explore_frac, average_recall, avg_vectors_to_visit));
     }
 
     return results;
@@ -206,14 +218,14 @@ std::vector<std::tuple<int, float, float>> compute_recall(
 /**
  * @brief Print recall results in a formatted table.
  *
- * @param results Vector of tuples (centroids_to_explore, explore_fraction, recall)
+ * @param results Vector of tuples (centroids_to_explore, explore_fraction, recall, avg_vectors_to_visit)
  * @param knn KNN value used for this result set
  */
-inline void print_recall_results(const std::vector<std::tuple<int, float, float>>& results, int knn) {
+inline void print_recall_results(const std::vector<std::tuple<int, float, float, float>>& results, int knn) {
     printf("\n--- Recall@%d ---\n", knn);
-    for (const auto& [centroids_to_explore, explore_frac, recall] : results) {
-        printf("Recall@%4d (%5.2f%% of centroids): %.4f\n",
-               centroids_to_explore, explore_frac * 100.0f, recall);
+    for (const auto& [centroids_to_explore, explore_frac, recall, avg_vectors] : results) {
+        printf("Recall@%4d (%5.2f%% centroids, %8.0f avg vectors): %.4f\n",
+               centroids_to_explore, explore_frac * 100.0f, avg_vectors, recall);
     }
 }
 
