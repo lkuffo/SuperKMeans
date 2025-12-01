@@ -1,10 +1,90 @@
 # Benchmark suite for SuperKMeans
 
+# Detect CPU features for FAISS optimization
+set(HAS_AVX512 OFF)
+set(HAS_AVX512_SPR OFF)
+set(HAS_AVX2 OFF)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    include(CheckCXXCompilerFlag)
+
+    # Check for AVX-512 support (highest priority)
+    check_cxx_compiler_flag("-mavx512f" HAS_AVX512)
+    if(HAS_AVX512)
+        # Check for Sapphire Rapids specific features
+        check_cxx_compiler_flag("-mavx512fp16" HAS_AVX512FP16)
+        check_cxx_compiler_flag("-mavx512bf16" HAS_AVX512BF16)
+
+        if(HAS_AVX512FP16 AND HAS_AVX512BF16)
+            set(HAS_AVX512_SPR ON)
+            message(STATUS "Sapphire Rapids CPU detected (AVX512_FP16, AVX512_BF16)")
+        else()
+            message(STATUS "AVX-512 CPU detected")
+        endif()
+    else()
+        # Check for AVX2 support (fallback)
+        check_cxx_compiler_flag("-mavx2" HAS_AVX2)
+        if(HAS_AVX2)
+            message(STATUS "AVX2 CPU detected")
+        else()
+            message(STATUS "No AVX2/AVX-512 support detected")
+        endif()
+    endif()
+endif()
+
+# Set FAISS optimization level based on detected CPU features
+set(FAISS_OPT_LEVEL "generic")
+if(HAS_AVX512)
+    set(FAISS_OPT_LEVEL "avx512")
+elseif(HAS_AVX2)
+    set(FAISS_OPT_LEVEL "avx2")
+endif()
+
+message(STATUS "FAISS will be built with optimization level: ${FAISS_OPT_LEVEL}")
+
+# Fetch and build FAISS
+include(FetchContent)
+set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "disable python" FORCE)
+set(FAISS_ENABLE_GPU OFF CACHE BOOL "disable gpu" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "disable faiss tests" FORCE)
+set(BUILD_SHARED_LIBS ON CACHE BOOL "shared libs" FORCE)
+set(FAISS_OPT_LEVEL "${FAISS_OPT_LEVEL}" CACHE STRING "CPU optimization level" FORCE)
+
+FetchContent_Declare(
+    faiss
+    GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
+    GIT_TAG        v1.11.0
+)
+FetchContent_MakeAvailable(faiss)
+
 # Common benchmark dependencies
 set(BENCH_COMMON_LIBS
     ${BLAS_LINK_LIBRARIES}
     faiss
 )
+
+# Link architecture-specific FAISS libraries (mutually exclusive - only the best available)
+if(HAS_AVX512)
+    if(HAS_AVX512_SPR)
+        message(STATUS "Linking FAISS with Sapphire Rapids optimizations")
+    else()
+        message(STATUS "Linking FAISS with AVX-512 optimizations")
+    endif()
+    if(TARGET faiss_avx512)
+        list(APPEND BENCH_COMMON_LIBS faiss_avx512)
+    else()
+        message(WARNING "faiss_avx512 target not found, falling back to base faiss")
+    endif()
+elseif(HAS_AVX2)
+    message(STATUS "Linking FAISS with AVX2 optimizations")
+    if(TARGET faiss_avx2)
+        list(APPEND BENCH_COMMON_LIBS faiss_avx2)
+    else()
+        message(WARNING "faiss_avx2 target not found, falling back to base faiss")
+    endif()
+else()
+    message(STATUS "Linking FAISS with generic optimizations only")
+endif()
 
 if (FFTW_FOUND)
     message(STATUS "Linking FFTW: ${FFTW_FLOAT_THREADS_LIB}")
