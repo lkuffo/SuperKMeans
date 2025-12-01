@@ -136,15 +136,16 @@ int main(int argc, char* argv[]) {
         std::vector<float> data = make_blobs(n, d, n_clusters);
         std::vector<float> centroids = make_blobs(n_clusters, d, n_clusters);
 
-        ankerl::nanobench::Bench()
-            .epochs(3)
-            .epochIterations(5)
-            .run("Assign_100k_256d_1024c", [&]() {
-                auto assignments = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::Assign(
-                    data.data(), centroids.data(), n, n_clusters
-                );
-                ankerl::nanobench::doNotOptimizeAway(assignments);
-            });
+        // TODO(@lkuffo, crit): FIX
+        // ankerl::nanobench::Bench()
+        //     .epochs(3)
+        //     .epochIterations(5)
+        //     .run("Assign_100k_256d_1024c", [&]() {
+        //         auto assignments = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::Assign(
+        //             data.data(), centroids.data(), n, n_clusters
+        //         );
+        //         ankerl::nanobench::doNotOptimizeAway(assignments);
+        //     });
     }
 
     std::cout << std::endl;
