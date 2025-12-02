@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
     const int d = it->second.second;
     const int n_clusters =
         std::max<int>(1u, static_cast<int>(std::sqrt(static_cast<double>(n)) * 4.0));
-    int n_iters = bench_utils::MAX_ITERS;
+    int n_iters = 5; // bench_utils::MAX_ITERS;
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
     std::string filename = bench_utils::get_data_path(dataset);
@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
     // Set up clustering parameters
     faiss::ClusteringParameters cp;
     cp.niter = n_iters;
-    cp.verbose = false;
+    cp.verbose = true;
     cp.max_points_per_centroid = 999999; // We don't want to take samples
     cp.nredo = 1;
 
