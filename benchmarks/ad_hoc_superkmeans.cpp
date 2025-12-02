@@ -41,7 +41,7 @@ int main(int argc, char* argv[]) {
     const size_t d = it->second.second;
     const size_t n_clusters =
         std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
-    int n_iters = bench_utils::MAX_ITERS;
+    int n_iters = 5; // bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
         );
     bench_utils::TicToc timer;
     timer.Tic();
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 0; i++) {
         auto _tmp_state = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
            n_clusters, d, config
         );
@@ -124,7 +124,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Actual iterations: " << actual_iterations << " (requested: " << n_iters << ")" << std::endl;
     std::cout << "Final objective: " << final_objective << std::endl;
 
-    return 0;
+    // return 0;
 
     // Compute recall if ground truth file exists
     std::string gt_filename = bench_utils::get_ground_truth_path(dataset);

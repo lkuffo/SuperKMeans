@@ -69,6 +69,25 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
         }
     }
 
+    static void BlasMatrixMultiplicationColumnMajor(
+        const data_t* SKM_RESTRICT batch_x_p,
+        const data_t* SKM_RESTRICT batch_y_p,
+        const size_t batch_n_x,
+        const size_t batch_n_y,
+        const size_t d,
+        const size_t partial_d,
+        float* SKM_RESTRICT all_distances_buf
+    ) {
+        Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
+        Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, partial_d);
+        Eigen::Map<const MatrixR> y_matrix(batch_y_p, partial_d, batch_n_y);
+
+        if (partial_d > 0 && partial_d < d) {
+            // Partial multiplication: use only first partial_d dimensions
+            distances_matrix.noalias() = x_matrix * y_matrix;
+        }
+    }
+
   public:
 
     /**
@@ -103,7 +122,6 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
     ) {
         SKM_PROFILE_SCOPE("search");
         SKM_PROFILE_SCOPE("search/1st_blas");
-        std::cout << "Threads: " << g_n_threads << std::endl;
         std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             auto batch_n_x = X_BATCH_SIZE;
@@ -295,6 +313,12 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
             if (i + X_BATCH_SIZE > n_x) {
                 batch_n_x = n_x - i;
             }
+            MatrixR materialize_x_left_cols;
+            {
+                SKM_PROFILE_SCOPE("search/leftCols");
+                auto x_matrix_p = Eigen::Map<const MatrixR>(batch_x_p, batch_n_x, d);
+                materialize_x_left_cols = x_matrix_p.leftCols(partial_d).eval();
+            }
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 auto batch_n_y = Y_BATCH_SIZE;
                 auto batch_y_p = y + (j * d);
@@ -303,7 +327,10 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 }
                 {
                     SKM_PROFILE_SCOPE("search/blas");
-                    BlasMatrixMultiplication(batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
+                    // assert(partial_d <= pdx_centroids.searcher->pdx_data.num_vertical_dimensions);
+                    auto batch_y_column_p = pdx_centroids.searcher->pdx_data.clusters[j / VECTOR_CHUNK_SIZE].data;
+                    BlasMatrixMultiplicationColumnMajor(materialize_x_left_cols.data(), batch_y_column_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
+                    // BlasMatrixMultiplication(batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
                 }
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
                 {
