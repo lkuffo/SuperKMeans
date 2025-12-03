@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
         );
     bench_utils::TicToc timer;
     timer.Tic();
-    for (int i = 0; i < 0; i++) {
+    for (int i = 0; i < 1; i++) {
         auto _tmp_state = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
            n_clusters, d, config
         );
