@@ -192,10 +192,15 @@ class ADSamplingPruner {
             int n0 = static_cast<int>(num_dimensions); // length of each 1D transform
             int howmany = static_cast<int>(n); // number of transforms (one per row)
             fftw_r2r_kind kind[1] = {FFTW_REDFT10};
+#ifdef __AVX2__
+            // Use FFTW_ESTIMATE to avoid AVX/AVX-512 codepath bugs with non-power-of-2 sizes
+            auto flag = FFTW_ESTIMATE;
+#else
             auto flag = FFTW_MEASURE;
-            if (IsPowerOf2(num_dimensions)) { 
+            if (IsPowerOf2(num_dimensions)) {
                 flag = FFTW_ESTIMATE;
             }
+#endif
             fftwf_plan plan = fftwf_plan_many_r2r(
                 1,
                 &n0,
@@ -252,10 +257,15 @@ class ADSamplingPruner {
             int n0 = static_cast<int>(num_dimensions);
             int howmany = static_cast<int>(n);
             fftw_r2r_kind kind[1] = {FFTW_REDFT01};  // DCT-III (inverse of DCT-II)
+#ifdef __AVX2__
+            // Use FFTW_ESTIMATE to avoid AVX/AVX-512 codepath bugs with non-power-of-2 sizes
+            auto flag = FFTW_ESTIMATE;
+#else
             auto flag = FFTW_MEASURE;
             if (IsPowerOf2(num_dimensions)) {
                 flag = FFTW_ESTIMATE;
             }
+#endif
             fftwf_plan plan = fftwf_plan_many_r2r(
                 1,
                 &n0,

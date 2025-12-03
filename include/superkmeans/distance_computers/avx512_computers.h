@@ -362,6 +362,9 @@ class SIMDUtilsComputer<Quantization::f32> {
                 );
 
                 // Update count by popcount of mask
+                // TODO(@lkuffo, crit): Bottleneck
+                // The bottleneck is the add. Maybe we should use a local variable
+                // and then at the end replace the incoming variable
                 n_vectors_not_pruned += _mm_popcnt_u32(cmp_mask);
             }
             // else: all comparisons failed, skip these 16 elements
