@@ -112,8 +112,8 @@ else()
 endif()
 
 if (FFTW_FOUND)
-    message(STATUS "Linking FFTW: ${FFTW_FLOAT_THREADS_LIB}")
-    list(APPEND BENCH_COMMON_LIBS ${FFTW_FLOAT_LIB} ${FFTW_FLOAT_THREADS_LIB})
+    message(STATUS "Linking FFTW: ${FFTW_FLOAT_OPENMP_LIB}")
+    list(APPEND BENCH_COMMON_LIBS ${FFTW_FLOAT_LIB} ${FFTW_FLOAT_OPENMP_LIB})
 endif()
 
 # Main benchmark: KMeans performance with synthetic data (vs FAISS)
