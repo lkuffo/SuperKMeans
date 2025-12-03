@@ -201,11 +201,16 @@ class ADSamplingPruner {
             if (IsPowerOf2(num_dimensions)) {
                 flag = FFTW_ESTIMATE;
             }
+
+            // Create intermediary buffer to avoid FFTW_MEASURE corrupting input
+            std::vector<float> temp_buffer(n * num_dimensions);
+            std::memcpy(temp_buffer.data(), out_buffer, n * num_dimensions * sizeof(float));
+
             fftwf_plan plan = fftwf_plan_many_r2r(
                 1,
                 &n0,
                 howmany,
-                out.data(), /*in*/
+                temp_buffer.data(), /*in*/
                 NULL,
                 1,
                 n0,         /*inembed, istride, idist*/
@@ -244,13 +249,17 @@ class ADSamplingPruner {
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
             // Copy input to output buffer for in-place transform
             std::memcpy(out_buffer, rotated_vectors, n * num_dimensions * sizeof(float));
-            
+
             // Undo scaling (inverse of forward scaling)
             const float inv_s0 = std::sqrt(4.0f * num_dimensions);
             const float inv_s = std::sqrt(2.0f * num_dimensions);
             out.col(0) *= inv_s0;
             out.rightCols(num_dimensions - 1) *= inv_s;
-            
+
+            // Create intermediary buffer to avoid FFTW_MEASURE corrupting input
+            std::vector<float> temp_buffer(n * num_dimensions);
+            std::memcpy(temp_buffer.data(), out_buffer, n * num_dimensions * sizeof(float));
+
             // Apply inverse DCT (DCT-III = FFTW_REDFT01)
             fftwf_init_threads();
             fftwf_plan_with_nthreads(g_n_threads);
@@ -265,7 +274,7 @@ class ADSamplingPruner {
                 1,
                 &n0,
                 howmany,
-                out.data(),
+                temp_buffer.data(),
                 NULL, 1, n0,
                 out.data(),
                 NULL, 1, n0,
@@ -274,10 +283,10 @@ class ADSamplingPruner {
             );
             fftwf_execute(plan);
             fftwf_destroy_plan(plan);
-            
+
             // FFTW's DCT-III needs normalization by 1/(2*n)
             out *= (1.0f / (2.0f * num_dimensions));
-            
+
             // Undo FlipSign (FlipSign is its own inverse)
             FlipSign(out_buffer, out_buffer, n);
             return;
