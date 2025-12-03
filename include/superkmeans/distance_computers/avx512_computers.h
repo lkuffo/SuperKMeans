@@ -339,10 +339,7 @@ class SIMDUtilsComputer<Quantization::f32> {
 
         // Process 16 elements at a time
         for (; vector_idx < n_vectors_simd; vector_idx += k_simd_width) {
-            // Load 16 distances
             __m512 distances = _mm512_loadu_ps(pruning_distances + vector_idx);
-
-            // Compare: dist < threshold, produces a mask
             __mmask16 cmp_mask = _mm512_cmp_ps_mask(distances, threshold_vec, _CMP_LT_OQ);
 
             // Branch hint: likely that no elements passed (98% of the time)
@@ -361,16 +358,10 @@ class SIMDUtilsComputer<Quantization::f32> {
                     indices
                 );
 
-                // Update count by popcount of mask
-                // TODO(@lkuffo, crit): Bottleneck
-                // The bottleneck is the add. Maybe we should use a local variable
-                // and then at the end replace the incoming variable
                 n_vectors_not_pruned += _mm_popcnt_u32(cmp_mask);
             }
-            // else: all comparisons failed, skip these 16 elements
         }
-
-        // Handle remaining elements (< 16)
+        // Tail
         for (; vector_idx < n_vectors; ++vector_idx) {
             pruning_positions[n_vectors_not_pruned] = vector_idx;
             n_vectors_not_pruned += pruning_distances[vector_idx] < pruning_threshold;
