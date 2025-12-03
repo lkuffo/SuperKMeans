@@ -15,7 +15,7 @@ include(CTest)
 
 # Find BLAS library (optional but recommended)
 # Automatically finds: Accelerate on macOS, MKL/OpenBLAS on Linux, etc.
-# set(BLAS_LIBRARIES "/opt/homebrew/opt/openblas/lib/libopenblas.dylib" STRING "Force a BLAS library")
+# set(BLAS_LIBRARIES "/opt/homebrew/opt/openblas/lib/libopenblas.dylib" CACHE STRING "Force a BLAS library")
 find_package(BLAS QUIET)
 if (BLAS_FOUND)
     message(STATUS "BLAS library found: ${BLAS_LIBRARIES}")

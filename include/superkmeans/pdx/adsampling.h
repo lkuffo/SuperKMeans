@@ -202,16 +202,12 @@ class ADSamplingPruner {
                 flag = FFTW_ESTIMATE;
             }
 
-            // Create intermediary buffer to avoid FFTW_MEASURE corrupting input
-            std::vector<float> temp_buffer(n * num_dimensions);
-            std::memcpy(temp_buffer.data(), out_buffer, n * num_dimensions * sizeof(float));
-
             fftwf_plan_with_nthreads(g_n_threads);
             fftwf_plan plan = fftwf_plan_many_r2r(
                 1,
                 &n0,
                 howmany,
-                temp_buffer.data(), /*in*/
+                out.data(), /*in*/
                 NULL,
                 1,
                 n0,         /*inembed, istride, idist*/
