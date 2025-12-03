@@ -162,3 +162,11 @@ target_link_libraries(microbenchmark_flip_sign.out PRIVATE ${BENCH_COMMON_LIBS})
 # Microbenchmark for Horizontal L2 distance kernels
 add_executable(microbenchmark_horizontal_kernels.out microbenchmark_horizontal_kernels.cpp)
 target_link_libraries(microbenchmark_horizontal_kernels.out PRIVATE ${BENCH_COMMON_LIBS})
+
+# Correctness test for FlipSign
+add_executable(test_flip_sign_correctness.out test_flip_sign_correctness.cpp)
+target_link_libraries(test_flip_sign_correctness.out PRIVATE ${BENCH_COMMON_LIBS})
+
+# Correctness test for DCT rotation
+add_executable(test_dct_rotation_correctness.out test_dct_rotation_correctness.cpp)
+target_link_libraries(test_dct_rotation_correctness.out PRIVATE ${BENCH_COMMON_LIBS})

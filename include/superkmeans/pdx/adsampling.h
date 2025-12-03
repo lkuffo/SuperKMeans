@@ -92,6 +92,11 @@ class ADSamplingPruner {
                 Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
                     matrix_p, 1, num_dimensions
                 );
+            // Initialize flip_masks from the matrix
+            flip_masks.resize(num_dimensions);
+            for (size_t i = 0; i < num_dimensions; ++i) {
+                flip_masks[i] = (matrix(i) < 0.0f ? 0x80000000u : 0u);
+            }
         } else {
             matrix =
                 Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
