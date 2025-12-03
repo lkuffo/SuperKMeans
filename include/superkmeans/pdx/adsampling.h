@@ -3,6 +3,7 @@
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/pdx/utils.h"
 #include <omp.h>
+#include <random>
 
 #include <Eigen/Eigen/Dense>
 #ifdef HAS_FFTW
