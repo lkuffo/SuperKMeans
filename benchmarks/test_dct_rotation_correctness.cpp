@@ -2,12 +2,127 @@
 #include <vector>
 #include <random>
 #include <cmath>
+#include <fstream>
 #include "superkmeans/pdx/adsampling.h"
+#include "bench_utils.h"
 
 using namespace skmeans;
 
 int main(int argc, char** argv) {
-    // Test multiple dimensionalities
+    bool test_fmnist = true;
+
+    // Check if we should test with fmnist dataset
+    if (argc > 1 && std::string(argv[1]) == "fmnist") {
+        test_fmnist = true;
+    }
+
+    if (test_fmnist) {
+        std::cout << "\n=== Testing with FMNIST dataset ===" << std::endl;
+
+        // Get fmnist parameters
+        auto it = bench_utils::DATASET_PARAMS.find("fmnist");
+        if (it == bench_utils::DATASET_PARAMS.end()) {
+            std::cerr << "FMNIST dataset not found in DATASET_PARAMS" << std::endl;
+            return 1;
+        }
+
+        const size_t n = it->second.first;
+        const size_t num_dims = it->second.second;
+
+        std::cout << "Loading FMNIST data (n=" << n << ", d=" << num_dims << ")" << std::endl;
+
+        // Load data
+        std::string filename = std::string(CMAKE_SOURCE_DIR) + "/benchmarks/data/data_fmnist.bin";
+        std::vector<float> data(n * num_dims);
+
+        std::ifstream file(filename, std::ios::binary);
+        if (!file) {
+            std::cerr << "Failed to open " << filename << std::endl;
+            std::cerr << "Please run setup_data.py to generate the dataset files." << std::endl;
+            return 1;
+        }
+        file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
+        file.close();
+        std::cout << "Loaded data from " << filename << std::endl;
+
+        // Prepare buffers for rotation test
+        std::vector<float> rotated(n * num_dims);
+        std::vector<float> unrotated(n * num_dims);
+
+        // Create pruner
+        ADSamplingPruner<Quantization::f32> pruner(num_dims, 2.1f, 42);
+
+        // Rotate
+        std::cout << "Rotating " << n << " vectors..." << std::endl;
+        pruner.Rotate(data.data(), rotated.data(), n);
+
+        // Check for NaN or inf in rotated data
+        bool has_invalid = false;
+        for (size_t i = 0; i < rotated.size(); ++i) {
+            if (std::isnan(rotated[i]) || std::isinf(rotated[i])) {
+                has_invalid = true;
+                std::cout << "✗ INVALID VALUE at index " << i << ": " << rotated[i] << std::endl;
+                break;
+            }
+        }
+        if (has_invalid) {
+            std::cout << "✗ Rotation produced NaN/Inf - FAILED" << std::endl;
+        }
+
+        // Print first few values after rotation
+        std::cout << "First 5 rotated values: ";
+        for (size_t i = 0; i < num_dims; ++i) {
+            std::cout << rotated[i] << " ";
+        }
+        std::cout << std::endl;
+
+        std::cout << "First 5 original values: ";
+        for (size_t i = 0; i < num_dims; ++i) {
+            std::cout << data[i] << " ";
+        }
+        std::cout << std::endl;
+
+        // Unrotate
+        std::cout << "Unrotating..." << std::endl;
+        pruner.Unrotate(rotated.data(), unrotated.data(), n);
+
+        // Verify correctness
+        float max_error = 0.0f;
+        float avg_error = 0.0f;
+        size_t n_errors = 0;
+
+        for (size_t i = 0; i < data.size(); ++i) {
+            float error = std::abs(unrotated[i] - data[i]);
+            avg_error += error;
+            if (error > max_error) {
+                max_error = error;
+            }
+            if (error > 1e-3f) {
+                n_errors++;
+                if (n_errors <= 10) {
+                    std::cout << "Large error at index " << i
+                              << " (vec " << (i / num_dims) << ", dim " << (i % num_dims) << "): "
+                              << "original=" << data[i] << ", "
+                              << "unrotated=" << unrotated[i] << ", "
+                              << "error=" << error << std::endl;
+                }
+            }
+        }
+
+        avg_error /= data.size();
+
+        std::cout << "Max error: " << max_error << std::endl;
+        std::cout << "Avg error: " << avg_error << std::endl;
+        std::cout << "Errors > 1e-3: " << n_errors << " / " << data.size() << std::endl;
+
+        if (max_error < 1e-3f) {
+            std::cout << "✓ DCT rotation is CORRECT for FMNIST (dim=" << num_dims << ")" << std::endl;
+        } else {
+            std::cout << "✗ DCT rotation is INCORRECT for FMNIST (dim=" << num_dims << ")" << std::endl;
+        }
+    }
+
+    // Original synthetic tests
     std::vector<size_t> dims_to_test = {768, 1024, 1536};  // Non-power-of-2
 
     if (argc > 1) {
