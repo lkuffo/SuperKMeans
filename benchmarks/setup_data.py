@@ -1,4 +1,3 @@
-import sklearn.datasets
 import numpy as np
 import os
 import h5py
@@ -109,5 +108,70 @@ if __name__ == "__main__":
     # train.tofile("./data/data_wiki.bin")
     # test.tofile("./data/data_wiki_test.bin")
     # print('wiki', len(train), len(test), len(train[0]))
+
+    # Download and process Cohere Wikipedia embeddings from HuggingFace
+    from datasets import load_dataset
+
+    print("Downloading Cohere Wikipedia embeddings from HuggingFace...")
+    dataset = load_dataset("Cohere/wikipedia-22-12-en-embeddings", split="train", streaming=True)
+
+    # Process and write embeddings in chunks directly to file
+    print("Extracting and writing embeddings in batches...")
+
+    batch_size = 10000  # Fetch 10k embeddings per batch from HuggingFace
+    write_chunk_size = 100000  # Write to disk every 100k embeddings
+    embedding_dim = 768
+
+    train_file = "./data/data_cohere.bin"
+    test_file = "./data/data_cohere_test.bin"
+
+    # Preallocate write buffer
+    write_buffer = np.empty((write_chunk_size, embedding_dim), dtype=np.float32)
+    buffer_idx = 0
+    total_count = 0
+    test_size = 1000
+
+    # Preallocate test buffer
+    test_buffer = np.empty((test_size, embedding_dim), dtype=np.float32)
+    test_idx = 0
+
+    with open(train_file, 'wb') as f_train:
+        # Use iter with batch_size for faster streaming
+        for batch in dataset.iter(batch_size=batch_size):
+            print('Receiving batch')
+            batch_embeddings = np.array(batch['emb'], dtype=np.float32)
+            batch_len = len(batch_embeddings)
+
+            for i in range(batch_len):
+                write_buffer[buffer_idx] = batch_embeddings[i]
+                buffer_idx += 1
+                total_count += 1
+
+                # Write chunk to file when buffer is full
+                if buffer_idx >= write_chunk_size:
+                    write_buffer.tofile(f_train)
+                    print(f"Processed and wrote {total_count} samples...")
+                    buffer_idx = 0
+
+        # Handle remaining samples
+        remaining = buffer_idx
+
+        if remaining > test_size:
+            # Write the part before the last test_size samples
+            write_buffer[:remaining - test_size].tofile(f_train)
+            # Copy last test_size to test buffer
+            test_buffer[:test_size] = write_buffer[remaining - test_size:remaining]
+            test_idx = test_size
+        else:
+            # All remaining samples go to test
+            test_buffer[:remaining] = write_buffer[:remaining]
+            test_idx = remaining
+
+    # Write test file
+    test_buffer[:test_idx].tofile(test_file)
+
+    train_count = total_count - test_idx
+    print(f"Done! Wrote {train_count} train samples and {test_idx} test samples")
+    print(f'cohere: train={train_count}, test={test_idx}, dim={embedding_dim}')
 
     print("Done")

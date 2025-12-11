@@ -22,7 +22,7 @@ if __name__ == "__main__":
     # Experiment configuration
     algorithm = "scikit"
 
-    dataset = sys.argv[1] if len(sys.argv) > 1 else "clip"
+    dataset = sys.argv[1] if len(sys.argv) > 1 else "sift"
 
     # Experiment name can be passed as second argument (default: "end_to_end")
     experiment_name = sys.argv[2] if len(sys.argv) > 2 else "end_to_end"
