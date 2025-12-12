@@ -319,11 +319,11 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 batch_n_x = n_x - i;
             }
             MatrixR materialize_x_left_cols;
-            // {
-            //     SKM_PROFILE_SCOPE("search/leftCols");
-            //     auto x_matrix_p = Eigen::Map<const MatrixR>(batch_x_p, batch_n_x, d);
-            //     materialize_x_left_cols = x_matrix_p.leftCols(partial_d).eval();
-            // }
+            {
+                SKM_PROFILE_SCOPE("search/leftCols");
+                auto x_matrix_p = Eigen::Map<const MatrixR>(batch_x_p, batch_n_x, d);
+                materialize_x_left_cols = x_matrix_p.leftCols(partial_d).eval();
+            }
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 auto batch_n_y = Y_BATCH_SIZE;
                 auto batch_y_p = y + (j * d);
@@ -332,15 +332,14 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 }
                 {
                     SKM_PROFILE_SCOPE("search/blas");
-                    BlasMatrixMultiplication(
-                        batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
-                    );
-                    // assert(partial_d <=
-                    // pdx_centroids.searcher->pdx_data.num_vertical_dimensions); auto
-                    // batch_y_column_p = pdx_centroids.searcher->pdx_data.clusters[j /
-                    // VECTOR_CHUNK_SIZE].data;
-                    // BlasMatrixMultiplicationColumnMajor(materialize_x_left_cols.data(),
-                    // batch_y_column_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
+                    // BlasMatrixMultiplication(
+                    //     batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
+                    // );
+                    assert(partial_d <= pdx_centroids.searcher->pdx_data.num_vertical_dimensions);
+                    auto batch_y_column_p =
+                        pdx_centroids.searcher->pdx_data.clusters[j / VECTOR_CHUNK_SIZE].data;
+                    BlasMatrixMultiplicationColumnMajor(materialize_x_left_cols.data(),
+                        batch_y_column_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
                 }
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
                 {

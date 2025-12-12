@@ -34,7 +34,7 @@ if __name__ == "__main__":
         )
     num_vectors, num_dimensions = DATASET_PARAMS[dataset]
     num_centroids = max(1, int(math.sqrt(num_vectors) * 4))
-    n_iter = 25  # MAX_ITERS
+    n_iter = 10  # MAX_ITERS
     threads = threads
 
     print(f"=== Running algorithm: {algorithm} ===")
