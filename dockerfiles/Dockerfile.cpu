@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y \
     wget \
     cmake \
     libomp-dev \
-    libopenblas-dev \
 		gnupg \
 		software-properties-common \
 		lsb-release \ 
@@ -23,20 +22,23 @@ RUN wget https://apt.llvm.org/llvm.sh && \
     ./llvm.sh 18 && \
     rm llvm.sh
 
-# Install the clang/lldb/lld tooling
-#RUN apt-get update && \
-#    apt-get install -y \
-#        clang-18 \
-#        lldb-18 \
-#        lld-18 \
-#        clangd-18 && \
-#    rm -rf /var/lib/apt/lists/*
-
 # Verify compiler works
 RUN clang-18 --version
+# Link clang to CXX
+ENV CC=/usr/bin/clang-18
+ENV CXX=/usr/bin/clang++-18
 
-# Install Python packages
+RUN git clone https://github.com/xianyi/OpenBLAS.git --branch v0.3.30 && \
+	cd OpenBLAS && \
+  make TARGET=SKYLAKEX DYNAMIC_ARCH=0 USE_OPENMP=1 NUM_THREADS=128 && \ 
+	make install PREFIX=/usr && \
+	ldconfig
+
+RUN ls -l /usr/lib/libopenblas* 
+
+# Need to add the last two variables, otherwise Make won't find the OpenBLAS (and CMake will lie to you that it found them)
+# cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O3 -mavx512f -fopenmp -march=znver4" -DBLA_VENDOR=OpenBLAS -DBLAS_LIBRARIES=/usr/lib/libopenblas.so
+
+
 RUN pip3 install numpy scikit-learn h5py --break-system-packages 
 
-# Link clang to CXX
-ENV CXX=/usr/bin/clang++-18
