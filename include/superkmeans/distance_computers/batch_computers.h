@@ -19,6 +19,13 @@
 // Use Eigen's BLAS declarations from Eigen/src/Core/util/BlasUtil.h
 
 namespace skmeans {
+using distance_t = skmeans_distance_t<Quantization::f32>;
+using data_t = skmeans_value_t<Quantization::f32>;
+using norms_t = skmeans_value_t<Quantization::f32>;
+using knn_candidate_t = KNNCandidate<Quantization::f32>;
+using layout_t = PDXLayout<Quantization::f32, DistanceFunction::l2>;
+using MatrixR = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using MatrixC = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
 namespace gpu {
 
@@ -38,10 +45,33 @@ inline void check_CUDA_error(cudaError_t code, const char *file, int line, bool 
 
 #define CUDA_SAFE_CALL(ans) check_CUDA_error((ans), __FILE__, __LINE__)
 
+	class ManagedCudaStream {
+		public:
+			ManagedCudaStream() {
+				CUDA_SAFE_CALL(cudaStreamCreate(&_stream));
+			}
+
+			~ManagedCudaStream() {
+				CUDA_SAFE_CALL(cudaStreamDestroy(_stream));
+			}
+
+			void synchronize() {
+				CUDA_SAFE_CALL(cudaStreamSynchronize(_stream));
+			}
+			
+			cudaStream_t get() const {
+				return _stream;
+			}
+			
+		private:
+			cudaStream_t _stream;
+	};
+
 	class ManagedCublasHandle {
 		public:
-			ManagedCublasHandle() {
+			ManagedCublasHandle(cudaStream_t stream) {
 				cublasCreate(&handle);
+				cublasSetStream(handle, stream);
 			}
 			~ManagedCublasHandle() {
 				cublasDestroy(handle);
@@ -77,6 +107,64 @@ inline void check_CUDA_error(cudaError_t code, const char *file, int line, bool 
 			T* _dev_ptr{nullptr};
 			std::size_t _size;
 	};
+
+	class BatchedMatrixMultiplier {
+		public:
+		BatchedMatrixMultiplier( 
+				const cudaStream_t stream,
+				const std::size_t batch_n_x, 
+				const std::size_t batch_n_y, 
+				const std::size_t d) : 
+			_cublas_handle(stream),
+			_batch_x_dev_p(batch_n_x * d * sizeof(data_t)), 
+			_batch_y_dev_p(batch_n_y * d * sizeof(data_t)), 
+			_all_distances_dev_p(batch_n_y * batch_n_x * sizeof(float)) ,
+			m(static_cast<int>(batch_n_y)),  // Rows of result (swapped for row-major)
+			n(static_cast<int>(batch_n_x)),  // Cols of result (swapped for row-major)
+			k(static_cast<int>(d)),  // Inner dimension
+			lda(static_cast<int>(d)),  // Leading dimension of y (row stride in row-major)
+			ldb(static_cast<int>(d)),  // Leading dimension of x (row stride in row-major)
+			ldc(static_cast<int>(batch_n_y))  // Leading dimension of distances
+		{
+			}
+
+		void multiply(const data_t* SKM_RESTRICT batch_x_p,
+        const data_t* SKM_RESTRICT batch_y_p,
+        float* SKM_RESTRICT all_distances_buf
+				) {
+
+
+				_batch_x_dev_p.copy_to_device(batch_x_p);
+				_batch_y_dev_p.copy_to_device(batch_y_p);
+
+				// TODO I think if you reverse A & B, you might not have to transpose at all
+				cublasSgemm(_cublas_handle.handle, CUBLAS_OP_T, CUBLAS_OP_N,
+						m, n, k, 
+						&ALPHA,
+						_batch_y_dev_p.get(), ldb,
+						_batch_x_dev_p.get(), lda,
+						&BETA,
+						_all_distances_dev_p.get(), ldc);
+
+				_all_distances_dev_p.copy_to_host(all_distances_buf);
+		}
+
+		~BatchedMatrixMultiplier() {}
+
+		private:
+			static constexpr float ALPHA = 1.0f;
+			static constexpr float BETA = 0.0f;
+			ManagedCublasHandle _cublas_handle;
+			gpu::DeviceBuffer<data_t> _batch_x_dev_p;
+			gpu::DeviceBuffer<data_t> _batch_y_dev_p;
+			gpu::DeviceBuffer<float> _all_distances_dev_p;
+			int m;
+			int n;
+			int k;
+			int lda;
+			int ldb;
+			int ldc;
+	};
 }
 
 template <DistanceFunction alpha, Quantization q>
@@ -88,13 +176,6 @@ class BatchComputer<DistanceFunction::l2, Quantization::u8> {};
 template <>
 class BatchComputer<DistanceFunction::l2, Quantization::f32> {
 
-    using distance_t = skmeans_distance_t<Quantization::f32>;
-    using data_t = skmeans_value_t<Quantization::f32>;
-    using norms_t = skmeans_value_t<Quantization::f32>;
-    using knn_candidate_t = KNNCandidate<Quantization::f32>;
-    using layout_t = PDXLayout<Quantization::f32, DistanceFunction::l2>;
-    using MatrixR = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-    using MatrixC = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
   private:
     static void CuBlasMatrixMultiplication(
@@ -114,46 +195,15 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
         // To compute C = A * B^T, we call: sgemm('T', 'N', n, m, k, alpha, B, ldb, A, lda, beta, C, ldc)
         // This is the standard row-major to column-major translation
 
-        const char trans_a = 'T';  // Transpose flag for first operand
-        const char trans_b = 'N';  // No transpose for second operand
-
-        int m = static_cast<int>(batch_n_y);  // Rows of result (swapped for row-major)
-        int n = static_cast<int>(batch_n_x);  // Cols of result (swapped for row-major)
-        int k = static_cast<int>(partial_d > 0 && partial_d < d ? partial_d : d);  // Inner dimension
-
-        float alpha = 1.0f;
-        float beta = 0.0f;
-
-        int lda = static_cast<int>(d);  // Leading dimension of y (row stride in row-major)
-        int ldb = static_cast<int>(d);  // Leading dimension of x (row stride in row-major)
-        int ldc = static_cast<int>(batch_n_y);  // Leading dimension of distances
 
 				// ===============
 				// NEW CUDA STUFF
 				// ===============
-				const std::size_t x_size = batch_n_x * d * sizeof(data_t);
-				const std::size_t y_size = batch_n_y * d * sizeof(data_t);
-				const std::size_t result_size = batch_n_y * batch_n_x * sizeof(float);
+				auto stream = gpu::ManagedCudaStream();
+				gpu::BatchedMatrixMultiplier(stream.get(), batch_n_x, batch_n_y, d).multiply(batch_x_p, batch_y_p, all_distances_buf);
 
-				auto batch_x_dev_p = gpu::DeviceBuffer<data_t>(x_size);
-				auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(y_size);
-				auto all_distances_dev_p = gpu::DeviceBuffer<float>(result_size);
+				stream.synchronize();
 
-				auto cublas_handle = gpu::ManagedCublasHandle();
-
-				batch_x_dev_p.copy_to_device(batch_x_p);
-				batch_y_dev_p.copy_to_device(batch_y_p);
-
-				// TODO I think if you reverse A & B, you might not have to transpose at all
-				cublasSgemm(cublas_handle.handle, CUBLAS_OP_T, CUBLAS_OP_N,
-						m, n, k, 
-						&alpha,
-						batch_y_dev_p.get(), ldb,
-						batch_x_dev_p.get(), lda,
-						&beta,
-						all_distances_dev_p.get(), ldc);
-
-				all_distances_dev_p.copy_to_host(all_distances_buf);
 
 				// ===============
 				// ===============
@@ -302,7 +352,6 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 if (j + Y_BATCH_SIZE > n_y) {
                     batch_n_y = n_y - j;
                 }
-                //BlasMatrixMultiplication(
                 CuBlasMatrixMultiplication(
                     batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf
                 );
