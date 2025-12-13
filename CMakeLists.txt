@@ -51,6 +51,17 @@ else()
     message(WARNING "FFTW (+float capabilities) not found, we recommend you install it")
 endif()
 
+# ============
+# CUDA Stuff
+if (USE_CUDA)
+	message("Cuda is enabled")
+	enable_language(CUDA)
+	set(CMAKE_CUDA_STANDARD 17)
+	find_package(CUDAToolkit REQUIRED)
+	add_definitions(-DUSE_CUDA)
+endif()
+# ============
+
 # CMAKE_SOURCE_DIR: ----------------------------------------------------------------------------------------------------
 add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 

@@ -10,10 +10,74 @@
 #include "superkmeans/profiler.h"
 #include <Eigen/Eigen/Dense>
 
+#include <cstddef>
+
+#include <cuda_runtime.h>
+#include <cublas_v2.h>
+
 // Eigen already declares sgemm_, so we don't need to redeclare it
 // Use Eigen's BLAS declarations from Eigen/src/Core/util/BlasUtil.h
 
 namespace skmeans {
+
+namespace gpu {
+
+inline void check_CUDA_error(cudaError_t code, const char *file, int line, bool abort = true)
+{
+    if (code != cudaSuccess)
+    {
+        fprintf(stderr,
+                "CUDA Error: %s (%d) at %s:%d\n",
+                cudaGetErrorString(code),
+                code,
+                file,
+                line);
+        if (abort) exit(code);
+    }
+}
+
+#define CUDA_SAFE_CALL(ans) check_CUDA_error((ans), __FILE__, __LINE__)
+
+	class ManagedCublasHandle {
+		public:
+			ManagedCublasHandle() {
+				cublasCreate(&handle);
+			}
+			~ManagedCublasHandle() {
+				cublasDestroy(handle);
+			}
+
+			cublasHandle_t handle;
+	};
+
+	template <typename T>
+	class DeviceBuffer {
+	public:
+			DeviceBuffer(std::size_t size) : _size(size) {
+					CUDA_SAFE_CALL(cudaMalloc(&_dev_ptr, _size));
+			}
+
+			~DeviceBuffer() {
+					if (_dev_ptr) {
+						CUDA_SAFE_CALL(cudaFree(_dev_ptr));
+					};
+			}
+
+			void copy_to_device(const T* host_ptr) {
+					CUDA_SAFE_CALL(cudaMemcpy(reinterpret_cast<void*>(_dev_ptr), reinterpret_cast<const void*>(host_ptr), _size, cudaMemcpyHostToDevice));
+			}
+
+			void copy_to_host(T* host_ptr) {
+					CUDA_SAFE_CALL(cudaMemcpy(reinterpret_cast<void*>(host_ptr), reinterpret_cast<const void*>(_dev_ptr), _size, cudaMemcpyDeviceToHost));
+			}
+
+			T* get() const { return _dev_ptr; }
+
+	private:
+			T* _dev_ptr{nullptr};
+			std::size_t _size;
+	};
+}
 
 template <DistanceFunction alpha, Quantization q>
 class BatchComputer {};
@@ -33,6 +97,92 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
     using MatrixC = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
   private:
+    static void CuBlasMatrixMultiplication(
+        const data_t* SKM_RESTRICT batch_x_p,
+        const data_t* SKM_RESTRICT batch_y_p,
+        const size_t batch_n_x,
+        const size_t batch_n_y,
+        const size_t d,
+        const size_t partial_d,
+        float* SKM_RESTRICT all_distances_buf
+    ) {
+        // Direct BLAS sgemm implementation
+        // Compute: distances = x * y^T (all row-major)
+        // where x is batch_n_x × d, y is batch_n_y × d, distances is batch_n_x × batch_n_y
+        //
+        // For row-major matrices with column-major BLAS (Fortran interface):
+        // To compute C = A * B^T, we call: sgemm('T', 'N', n, m, k, alpha, B, ldb, A, lda, beta, C, ldc)
+        // This is the standard row-major to column-major translation
+
+        const char trans_a = 'T';  // Transpose flag for first operand
+        const char trans_b = 'N';  // No transpose for second operand
+
+        int m = static_cast<int>(batch_n_y);  // Rows of result (swapped for row-major)
+        int n = static_cast<int>(batch_n_x);  // Cols of result (swapped for row-major)
+        int k = static_cast<int>(partial_d > 0 && partial_d < d ? partial_d : d);  // Inner dimension
+
+        float alpha = 1.0f;
+        float beta = 0.0f;
+
+        int lda = static_cast<int>(d);  // Leading dimension of y (row stride in row-major)
+        int ldb = static_cast<int>(d);  // Leading dimension of x (row stride in row-major)
+        int ldc = static_cast<int>(batch_n_y);  // Leading dimension of distances
+
+				// ===============
+				// NEW CUDA STUFF
+				// ===============
+				const std::size_t x_size = batch_n_x * d * sizeof(data_t);
+				const std::size_t y_size = batch_n_y * d * sizeof(data_t);
+				const std::size_t result_size = batch_n_y * batch_n_x * sizeof(float);
+
+				auto batch_x_dev_p = gpu::DeviceBuffer<data_t>(x_size);
+				auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(y_size);
+				auto all_distances_dev_p = gpu::DeviceBuffer<float>(result_size);
+
+				auto cublas_handle = gpu::ManagedCublasHandle();
+
+				batch_x_dev_p.copy_to_device(batch_x_p);
+				batch_y_dev_p.copy_to_device(batch_y_p);
+
+				// TODO I think if you reverse A & B, you might not have to transpose at all
+				cublasSgemm(cublas_handle.handle, CUBLAS_OP_T, CUBLAS_OP_N,
+						m, n, k, 
+						&alpha,
+						batch_y_dev_p.get(), ldb,
+						batch_x_dev_p.get(), lda,
+						&beta,
+						all_distances_dev_p.get(), ldc);
+
+				all_distances_dev_p.copy_to_host(all_distances_buf);
+
+				// ===============
+				// ===============
+
+				// CPU
+        // sgemm_(
+        //     &trans_a, &trans_b,
+        //     &m, &n, &k,
+        //     &alpha,
+        //     batch_y_p, &lda,  // y is first operand (transposed)
+        //     batch_x_p, &ldb,  // x is second operand (not transposed)
+        //     &beta,
+        //     all_distances_buf, &ldc
+        // );
+
+        // Old Eigen implementation (commented out):
+        // Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
+        // Eigen::Map<const MatrixR> x_matrix(batch_x_p, batch_n_x, d);
+        // Eigen::Map<const MatrixR> y_matrix(batch_y_p, batch_n_y, d);
+        //
+        // if (partial_d > 0 && partial_d < d) {
+        //     // Partial multiplication: use only first partial_d dimensions
+        //     distances_matrix.noalias() =
+        //         x_matrix.leftCols(partial_d) * y_matrix.leftCols(partial_d).transpose();
+        // } else {
+        //     // Full multiplication: use all dimensions
+        //     distances_matrix.noalias() = x_matrix * y_matrix.transpose();
+        // }
+    }
     /**
      * @brief Performs BLAS matrix multiplication: distances = x * y^T
      * Note that Eigen internally uses BLAS for matrix multiplication, so we can use it directly.
@@ -152,7 +302,8 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 if (j + Y_BATCH_SIZE > n_y) {
                     batch_n_y = n_y - j;
                 }
-                BlasMatrixMultiplication(
+                //BlasMatrixMultiplication(
+                CuBlasMatrixMultiplication(
                     batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf
                 );
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
