@@ -78,8 +78,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(faiss)
 
 # Common benchmark dependencies
-# If MKL is found, BLAS_LINK_LIBRARIES is empty; and vice-versa
-set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES})
+# TODO Only link if CUDA is enabled
+if (USE_CUDA)
+	set(CUDA_LIBS PRIVATE CUDA::cudart CUDA::cublas)
+	# If MKL is found, BLAS_LINK_LIBRARIES is empty; and vice-versa
+	set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES} ${CUDA_LIBS})
+else()
+	set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES} )
+endif()
 set(FAISS_COMMON_LIBS faiss)
 
 # Link architecture-specific FAISS libraries (mutually exclusive - only the best available)
