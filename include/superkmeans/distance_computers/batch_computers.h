@@ -147,8 +147,16 @@ class BatchedMatrixMultiplier {
           _all_distances_dev_p(compute_buffer_size<float>(max_batch_n_y, max_batch_n_x), stream)
     {}
 
-    void multiply(
+		void load_x_batch(
         const data_t* SKM_RESTRICT batch_x_p,
+        const size_t batch_n_x,
+        const size_t d) {
+        const auto size_x = compute_buffer_size<data_t>(batch_n_x, d);
+        _batch_x_dev_p.copy_to_device(batch_x_p, size_x);
+		}
+
+    void multiply(
+        //const data_t* SKM_RESTRICT batch_x_p,
         const data_t* SKM_RESTRICT batch_y_p,
         const size_t batch_n_x,
         const size_t batch_n_y,
@@ -163,11 +171,9 @@ class BatchedMatrixMultiplier {
         const int ldb(static_cast<int>(d)); // Leading dimension of x (row stride in row-major)
         const int ldc(static_cast<int>(batch_n_y)); // Leading dimension of distances
 
-        const auto size_x = compute_buffer_size<data_t>(batch_n_x, d);
         const auto size_y = compute_buffer_size<data_t>(batch_n_y, d);
         const auto size_out = compute_buffer_size<float>(batch_n_x, batch_n_y);
 
-        _batch_x_dev_p.copy_to_device(batch_x_p, size_x);
         _batch_y_dev_p.copy_to_device(batch_y_p, size_y);
 
         // TODO I think if you reverse A & B, you might not have to transpose at all
@@ -329,7 +335,7 @@ static void FindNearestNeighbor(
     std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
 
     auto stream = gpu::ManagedCudaStream();
-    auto multiplyer = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
+    auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
 
     for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
         auto batch_n_x = X_BATCH_SIZE;
@@ -337,15 +343,27 @@ static void FindNearestNeighbor(
         if (i + X_BATCH_SIZE > n_x) {
             batch_n_x = n_x - i;
         }
+				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
             auto batch_n_y = Y_BATCH_SIZE;
             auto batch_y_p = y + (j * d);
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
-						multiplyer.multiply(batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, all_distances_buf);
+						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, all_distances_buf);
 						stream.synchronize();
             Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
+						// Idea: Make the rest of the loop into a kernel
+						// Downside: this would add more data to be transferred to GPU, instead of from GPU (which is less contested)
+						// So let's wait for now
+						// Outside vars
+						// - i
+						// - batch_n_x
+						// - batch_n_y
+						// - norms_x [needs to be batched into GPU]
+						// - norms_y [needs to be batched into GPU]
+						// - out_distances [needs to be batched out of GPU]
+						// - out_knn [needs to be batched out of GPU]
 #pragma omp parallel for num_threads(g_n_threads)
             for (size_t r = 0; r < batch_n_x; ++r) {
                 const auto i_idx = i + r;
@@ -356,6 +374,7 @@ static void FindNearestNeighbor(
                     row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
                 }
                 uint32_t knn_idx;
+								// Calculate minimal value of row
                 auto batch_top_1 = distances_matrix.row(r).minCoeff(&knn_idx);
                 if (batch_top_1 < out_distances[i_idx]) {
                     out_distances[i_idx] = std::max(0.0f, batch_top_1);
