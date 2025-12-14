@@ -29,6 +29,8 @@ using MatrixC = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen:
 
 namespace gpu {
 
+cudaStream_t DEFAULT_STREAM = 0;
+
 inline void check_CUDA_error(cudaError_t code, const char* file, int line, bool abort = true) {
     if (code != cudaSuccess) {
         fprintf(
@@ -143,7 +145,7 @@ class BatchedMatrixMultiplier {
     )
         : _cublas_handle(stream),
           _batch_x_dev_p(compute_buffer_size<data_t>(max_batch_n_x, d), stream),
-          _batch_y_dev_p(compute_buffer_size<data_t>(max_batch_n_y, d), stream),
+          //_batch_y_dev_p(compute_buffer_size<data_t>(max_batch_n_y, d), stream),
           _all_distances_dev_p(compute_buffer_size<float>(max_batch_n_y, max_batch_n_x), stream)
     {}
 
@@ -171,10 +173,10 @@ class BatchedMatrixMultiplier {
         const int ldb(static_cast<int>(d)); // Leading dimension of x (row stride in row-major)
         const int ldc(static_cast<int>(batch_n_y)); // Leading dimension of distances
 
-        const auto size_y = compute_buffer_size<data_t>(batch_n_y, d);
+        //const auto size_y = compute_buffer_size<data_t>(batch_n_y, d);
         const auto size_out = compute_buffer_size<float>(batch_n_x, batch_n_y);
 
-        _batch_y_dev_p.copy_to_device(batch_y_p, size_y);
+        //_batch_y_dev_p.copy_to_device(batch_y_p, size_y);
 
         // TODO I think if you reverse A & B, you might not have to transpose at all
         cublasSgemm(
@@ -185,7 +187,7 @@ class BatchedMatrixMultiplier {
             n,
             k,
             &ALPHA,
-            _batch_y_dev_p.get(),
+            batch_y_p,
             ldb,
             _batch_x_dev_p.get(),
             lda,
@@ -204,7 +206,7 @@ class BatchedMatrixMultiplier {
     static constexpr float BETA = 0.0f;
     ManagedCublasHandle _cublas_handle;
     gpu::DeviceBuffer<data_t> _batch_x_dev_p;
-    gpu::DeviceBuffer<data_t> _batch_y_dev_p;
+    // gpu::DeviceBuffer<data_t> _batch_y_dev_p;
     gpu::DeviceBuffer<float> _all_distances_dev_p;
 };
 }
@@ -334,6 +336,8 @@ static void FindNearestNeighbor(
     SKM_PROFILE_SCOPE("search/1st_blas");
     std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
 
+		auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
+		batch_y_dev_p.copy_to_device(y);
     auto stream = gpu::ManagedCudaStream();
     auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
 
@@ -346,7 +350,7 @@ static void FindNearestNeighbor(
 				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
             auto batch_n_y = Y_BATCH_SIZE;
-            auto batch_y_p = y + (j * d);
+            auto batch_y_p = batch_y_dev_p.get() + (j * d);
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
