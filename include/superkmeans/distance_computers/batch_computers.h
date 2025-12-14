@@ -376,7 +376,6 @@ static void FindNearestNeighbor(
                 batch_n_y = n_y - j;
             }
 						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf_dev.get());
-						stream.synchronize();
 
 						kernels::first_blas(
 								batch_n_x,

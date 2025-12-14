@@ -120,15 +120,15 @@ void first_blas(
     const cudaStream_t stream
 ) {
 	//printf("Checking norms_x\n");
-	health_check_buffer(norms_x, i + batch_n_x);
+	//health_check_buffer(norms_x, i + batch_n_x);
 	// printf("Checking norms_y\n");
-	health_check_buffer(norms_y, j + batch_n_y);
+	//health_check_buffer(norms_y, j + batch_n_y);
 	// printf("Checking all_distances_buffer\n");
-	health_check_buffer(all_distances_buffer, batch_n_x * batch_n_y);
+	//health_check_buffer(all_distances_buffer, batch_n_x * batch_n_y);
 	// printf("Checking distances\n");
-	health_check_buffer(out_distances, i + batch_n_x);
+	//health_check_buffer(out_distances, i + batch_n_x);
 	// printf("Checking out_knn\n");
-	health_check_buffer(out_knn, i + batch_n_x);
+	//health_check_buffer(out_knn, i + batch_n_x);
 		const auto max = std::numeric_limits<float>::max();
 
     const auto N_THREADS = 1024;
@@ -136,7 +136,7 @@ void first_blas(
     first_blas_kernel<<<n_blocks, N_THREADS, 0, stream>>>(
         batch_n_x, batch_n_y, i, j, norms_x, norms_y, all_distances_buffer, out_distances, out_knn, max
     );
-		CUDA_SAFE_CALL(cudaDeviceSynchronize());
+		//CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 
 /*
