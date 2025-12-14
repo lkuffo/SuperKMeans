@@ -163,11 +163,12 @@ class BatchedMatrixMultiplier {
         const size_t batch_n_x,
         const size_t batch_n_y,
         const size_t d,
+        const size_t partial_d,
         float* SKM_RESTRICT all_distances_buf
     ) {
         const int m(static_cast<int>(batch_n_y)); // Rows of result (swapped for row-major)
         const int n(static_cast<int>(batch_n_x)); // Cols of result (swapped for row-major)
-        const int k(static_cast<int>(d));         // Inner dimension
+        const int k(static_cast<int>(partial_d > 0 && partial_d < d ? partial_d : d)); // Inner dimension
 
         const int lda(static_cast<int>(d)); // Leading dimension of y (row stride in row-major)
         const int ldb(static_cast<int>(d)); // Leading dimension of x (row stride in row-major)
@@ -354,7 +355,7 @@ static void FindNearestNeighbor(
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
-						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, all_distances_buf);
+						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf);
 						stream.synchronize();
             Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
 						// Idea: Make the rest of the loop into a kernel
@@ -542,24 +543,32 @@ static void FindNearestNeighborWithPruning(
     size_t* out_not_pruned_counts = nullptr
 ) {
     SKM_PROFILE_SCOPE("search");
+		auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
+		batch_y_dev_p.copy_to_device(y);
+    auto stream = gpu::ManagedCudaStream();
+    auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
+
     for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
         auto batch_n_x = X_BATCH_SIZE;
         auto batch_x_p = x + (i * d);
         if (i + X_BATCH_SIZE > n_x) {
             batch_n_x = n_x - i;
         }
+				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
         MatrixR materialize_x_left_cols;
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
             auto batch_n_y = Y_BATCH_SIZE;
-            auto batch_y_p = y + (j * d);
+            //auto batch_y_p = y + (j * d);
+            auto batch_y_p = batch_y_dev_p.get() + (j * d);
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
             {
                 SKM_PROFILE_SCOPE("search/blas");
-                BlasMatrixMultiplication(
-                    batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
-                );
+								multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
+                // BlasMatrixMultiplication(
+                //     batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
+                // );
             }
             Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
             {
