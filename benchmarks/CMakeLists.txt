@@ -146,7 +146,7 @@ add_executable(pareto_superkmeans.out pareto_superkmeans.cpp)
 target_link_libraries(pareto_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # Ad-hoc benchmark (verbose mode, no CSV output)
-add_executable(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp)
+add_executable(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp ../include/superkmeans/distance_computers/kernels.cu)
 target_link_libraries(ad_hoc_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # Sweet pruning spot benchmark (grid search over pruning parameters)
