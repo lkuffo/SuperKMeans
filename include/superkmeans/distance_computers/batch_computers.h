@@ -133,6 +133,11 @@ class DeviceBuffer {
 };
 
 template <typename T>
+std::size_t compute_buffer_size(const std::size_t x) {
+		return x * sizeof(T);
+}
+
+template <typename T>
 std::size_t compute_buffer_size(const std::size_t x, const std::size_t y) {
 		return x * y * sizeof(T);
 }
@@ -338,7 +343,7 @@ static void FindNearestNeighbor(
 ) {
     SKM_PROFILE_SCOPE("search");
     SKM_PROFILE_SCOPE("search/1st_blas");
-		test();
+
     std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
 
 		auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
@@ -361,7 +366,34 @@ static void FindNearestNeighbor(
             }
 						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf);
 						stream.synchronize();
-            Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
+
+						auto norms_x_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_x),stream.get());
+						auto norms_y_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_y),stream.get());
+						auto all_distances_buf_dev = gpu::DeviceBuffer<float>(gpu::compute_buffer_size<float>(batch_n_x, batch_n_y),stream.get());
+						auto out_distances_dev = gpu::DeviceBuffer<distance_t>(gpu::compute_buffer_size<distance_t>(n_x),stream.get());
+						auto out_knn_dev = gpu::DeviceBuffer<uint32_t>(gpu::compute_buffer_size<uint32_t>(n_x),stream.get());
+						norms_x_dev.copy_to_device(norms_x);
+						norms_y_dev.copy_to_device(norms_y);
+						all_distances_buf_dev.copy_to_device(all_distances_buf);
+						out_distances_dev.copy_to_device(out_distances);
+						out_knn_dev.copy_to_device(out_knn);
+						kernels::first_blas(
+								batch_n_x,
+								batch_n_y,
+								i, 
+								j,
+								norms_x_dev.get(),
+								norms_y_dev.get(),
+								all_distances_buf_dev.get(),
+								out_distances_dev.get(),
+								out_knn_dev.get(),
+								stream.get()
+								);
+						// norms_x_dev.copy_to_host(norms_x);
+						// norms_y_dev.copy_to_host(norms_y);
+						all_distances_buf_dev.copy_to_host(all_distances_buf);
+						out_distances_dev.copy_to_host(out_distances);
+						out_knn_dev.copy_to_host(out_knn);
 						// Idea: Make the rest of the loop into a kernel
 						// Downside: this would add more data to be transferred to GPU, instead of from GPU (which is less contested)
 						// So let's wait for now
@@ -373,6 +405,8 @@ static void FindNearestNeighbor(
 						// - norms_y [needs to be batched into GPU]
 						// - out_distances [needs to be batched out of GPU]
 						// - out_knn [needs to be batched out of GPU]
+						/*
+            Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
 #pragma omp parallel for num_threads(g_n_threads)
             for (size_t r = 0; r < batch_n_x; ++r) {
                 const auto i_idx = i + r;
@@ -390,6 +424,7 @@ static void FindNearestNeighbor(
                     out_knn[i_idx] = j + knn_idx;
                 }
             }
+						*/
         }
     }
 }
