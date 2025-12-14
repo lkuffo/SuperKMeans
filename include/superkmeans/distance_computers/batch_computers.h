@@ -8,6 +8,9 @@
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/profiler.h"
+
+#include "superkmeans/distance_computers/kernels.cuh"
+
 #include <Eigen/Eigen/Dense>
 
 #include <cstddef>
@@ -335,6 +338,7 @@ static void FindNearestNeighbor(
 ) {
     SKM_PROFILE_SCOPE("search");
     SKM_PROFILE_SCOPE("search/1st_blas");
+		test();
     std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
 
 		auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
