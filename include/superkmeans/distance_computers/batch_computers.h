@@ -152,9 +152,9 @@ class BatchedMatrixMultiplier {
         const cudaStream_t stream
     )
         : _cublas_handle(stream),
-          _batch_x_dev_p(compute_buffer_size<data_t>(max_batch_n_x, d), stream),
+          _batch_x_dev_p(compute_buffer_size<data_t>(max_batch_n_x, d), stream)
           //_batch_y_dev_p(compute_buffer_size<data_t>(max_batch_n_y, d), stream),
-          _all_distances_dev_p(compute_buffer_size<float>(max_batch_n_y, max_batch_n_x), stream)
+          //_all_distances_dev_p(compute_buffer_size<float>(max_batch_n_y, max_batch_n_x), stream)
     {}
 
 		void load_x_batch(
@@ -183,7 +183,7 @@ class BatchedMatrixMultiplier {
         const int ldc(static_cast<int>(batch_n_y)); // Leading dimension of distances
 
         //const auto size_y = compute_buffer_size<data_t>(batch_n_y, d);
-        const auto size_out = compute_buffer_size<float>(batch_n_x, batch_n_y);
+        //const auto size_out = compute_buffer_size<float>(batch_n_x, batch_n_y);
 
         //_batch_y_dev_p.copy_to_device(batch_y_p, size_y);
 
@@ -201,11 +201,11 @@ class BatchedMatrixMultiplier {
             _batch_x_dev_p.get(),
             lda,
             &BETA,
-            _all_distances_dev_p.get(),
+            all_distances_buf,
             ldc
         );
 
-        _all_distances_dev_p.copy_to_host(all_distances_buf, size_out);
+        //_all_distances_dev_p.copy_to_host(all_distances_buf, size_out);
     }
 
     ~BatchedMatrixMultiplier() {}
@@ -216,7 +216,7 @@ class BatchedMatrixMultiplier {
     ManagedCublasHandle _cublas_handle;
     gpu::DeviceBuffer<data_t> _batch_x_dev_p;
     // gpu::DeviceBuffer<data_t> _batch_y_dev_p;
-    gpu::DeviceBuffer<float> _all_distances_dev_p;
+    //gpu::DeviceBuffer<float> _all_distances_dev_p;
 };
 }
 
@@ -351,6 +351,17 @@ static void FindNearestNeighbor(
     auto stream = gpu::ManagedCudaStream();
     auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
 
+		auto all_distances_buf_dev = gpu::DeviceBuffer<float>(gpu::compute_buffer_size<float>(X_BATCH_SIZE, Y_BATCH_SIZE),stream.get());
+		auto norms_x_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_x),stream.get());
+		auto norms_y_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_y),stream.get());
+		auto out_distances_dev = gpu::DeviceBuffer<distance_t>(gpu::compute_buffer_size<distance_t>(n_x),stream.get());
+		auto out_knn_dev = gpu::DeviceBuffer<uint32_t>(gpu::compute_buffer_size<uint32_t>(n_x),stream.get());
+		norms_x_dev.copy_to_device(norms_x);
+		norms_y_dev.copy_to_device(norms_y);
+		//all_distances_buf_dev.copy_to_device(all_distances_buf);
+		out_distances_dev.copy_to_device(out_distances);
+		out_knn_dev.copy_to_device(out_knn);
+
     for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
         auto batch_n_x = X_BATCH_SIZE;
         auto batch_x_p = x + (i * d);
@@ -364,19 +375,9 @@ static void FindNearestNeighbor(
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
-						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf);
+						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf_dev.get());
 						stream.synchronize();
 
-						auto norms_x_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_x),stream.get());
-						auto norms_y_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_y),stream.get());
-						auto all_distances_buf_dev = gpu::DeviceBuffer<float>(gpu::compute_buffer_size<float>(batch_n_x, batch_n_y),stream.get());
-						auto out_distances_dev = gpu::DeviceBuffer<distance_t>(gpu::compute_buffer_size<distance_t>(n_x),stream.get());
-						auto out_knn_dev = gpu::DeviceBuffer<uint32_t>(gpu::compute_buffer_size<uint32_t>(n_x),stream.get());
-						norms_x_dev.copy_to_device(norms_x);
-						norms_y_dev.copy_to_device(norms_y);
-						all_distances_buf_dev.copy_to_device(all_distances_buf);
-						out_distances_dev.copy_to_device(out_distances);
-						out_knn_dev.copy_to_device(out_knn);
 						kernels::first_blas(
 								batch_n_x,
 								batch_n_y,
@@ -391,9 +392,7 @@ static void FindNearestNeighbor(
 								);
 						// norms_x_dev.copy_to_host(norms_x);
 						// norms_y_dev.copy_to_host(norms_y);
-						all_distances_buf_dev.copy_to_host(all_distances_buf);
-						out_distances_dev.copy_to_host(out_distances);
-						out_knn_dev.copy_to_host(out_knn);
+						//all_distances_buf_dev.copy_to_host(all_distances_buf);
 						// Idea: Make the rest of the loop into a kernel
 						// Downside: this would add more data to be transferred to GPU, instead of from GPU (which is less contested)
 						// So let's wait for now
@@ -427,6 +426,9 @@ static void FindNearestNeighbor(
 						*/
         }
     }
+		out_distances_dev.copy_to_host(out_distances);
+		out_knn_dev.copy_to_host(out_knn);
+		stream.synchronize();
 }
 
 /**
@@ -582,10 +584,10 @@ static void FindNearestNeighborWithPruning(
     size_t* out_not_pruned_counts = nullptr
 ) {
     SKM_PROFILE_SCOPE("search");
-		auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
-		batch_y_dev_p.copy_to_device(y);
-    auto stream = gpu::ManagedCudaStream();
-    auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
+		//auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
+		//batch_y_dev_p.copy_to_device(y);
+    //auto stream = gpu::ManagedCudaStream();
+    //auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
 
     for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
         auto batch_n_x = X_BATCH_SIZE;
@@ -593,21 +595,21 @@ static void FindNearestNeighborWithPruning(
         if (i + X_BATCH_SIZE > n_x) {
             batch_n_x = n_x - i;
         }
-				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
+				//multiplier.load_x_batch(batch_x_p, batch_n_x, d);
         MatrixR materialize_x_left_cols;
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
             auto batch_n_y = Y_BATCH_SIZE;
-            //auto batch_y_p = y + (j * d);
-            auto batch_y_p = batch_y_dev_p.get() + (j * d);
+            auto batch_y_p = y + (j * d);
+            //auto batch_y_p = batch_y_dev_p.get() + (j * d);
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
             {
                 SKM_PROFILE_SCOPE("search/blas");
-								multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
-                // BlasMatrixMultiplication(
-                //     batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
-                // );
+								//multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
+                BlasMatrixMultiplication(
+                    batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
+                );
             }
             Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
             {
