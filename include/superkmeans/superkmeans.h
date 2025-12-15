@@ -154,9 +154,6 @@ class SuperKMeans {
             _centroid_norms.resize(_n_clusters);
         }
         std::vector<distance_t> all_distances(X_BATCH_SIZE * Y_BATCH_SIZE);
-
-        // TODO(@lkuffo, med): If metric is dp, normalize the vectors so we can use l2
-
         if (_config.verbose) {
             std::cout << "Generating centroids..." << std::endl;
         }
