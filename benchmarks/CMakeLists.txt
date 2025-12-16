@@ -117,6 +117,13 @@ target_link_libraries(end_to_end_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(end_to_end_faiss.out end_to_end_faiss.cpp)
 target_link_libraries(end_to_end_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
 
+# Varying K benchmarks (vary n_clusters instead of dataset)
+add_executable(varying_k_superkmeans.out varying_k_superkmeans.cpp)
+target_link_libraries(varying_k_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
+add_executable(varying_k_faiss.out varying_k_faiss.cpp)
+target_link_libraries(varying_k_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
+
 # Early termination benchmarks
 add_executable(early_termination_superkmeans.out early_termination_superkmeans.cpp)
 target_link_libraries(early_termination_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})

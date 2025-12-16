@@ -97,6 +97,9 @@ SAMPLING_FRACTION_VALUES = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95]
 # Iteration values for pareto experiment (grid search)
 PARETO_ITERS_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
 
+# n_clusters values for varying_k experiment
+VARYING_K_VALUES = [10, 100, 1000, 10000, 100000]
+
 
 def load_ground_truth(filename):
     """Load ground truth from JSON file.
@@ -264,17 +267,21 @@ def write_results_to_csv(
     from datetime import datetime
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+    # Determine if we have recall data
+    has_recall_data = len(results_knn_10) > 0 or len(results_knn_100) > 0
+
     # Prepare header
     header = ['timestamp', 'algorithm', 'dataset', 'n_iters', 'actual_iterations', 'dimensionality',
               'data_size', 'n_clusters', 'construction_time_ms', 'threads', 'final_objective']
 
-    # Add columns for each KNN and explore fraction combination
-    for knn in KNN_VALUES:
-        for explore_frac in EXPLORE_FRACTIONS:
-            header.append(f'recall@{knn}@{explore_frac * 100:.2f}')
-            header.append(f'recall_std@{knn}@{explore_frac * 100:.2f}')
-            header.append(f'centroids_explored@{knn}@{explore_frac * 100:.2f}')
-            header.append(f'vectors_explored@{knn}@{explore_frac * 100:.2f}')
+    # Add columns for each KNN and explore fraction combination (only if we have recall data)
+    if has_recall_data:
+        for knn in KNN_VALUES:
+            for explore_frac in EXPLORE_FRACTIONS:
+                header.append(f'recall@{knn}@{explore_frac * 100:.2f}')
+                header.append(f'recall_std@{knn}@{explore_frac * 100:.2f}')
+                header.append(f'centroids_explored@{knn}@{explore_frac * 100:.2f}')
+                header.append(f'vectors_explored@{knn}@{explore_frac * 100:.2f}')
 
     header.append('config')
 
@@ -293,19 +300,21 @@ def write_results_to_csv(
         f'{final_objective:.6f}'
     ]
 
-    # Add KNN=10 results
-    for centroids_to_explore, explore_frac, recall, std_recall, avg_vectors in results_knn_10:
-        row.append(f'{recall:.6f}')
-        row.append(f'{std_recall:.6f}')
-        row.append(str(centroids_to_explore))
-        row.append(f'{avg_vectors:.2f}')
+    # Add recall results only if we have data
+    if has_recall_data:
+        # Add KNN=10 results
+        for centroids_to_explore, explore_frac, recall, std_recall, avg_vectors in results_knn_10:
+            row.append(f'{recall:.6f}')
+            row.append(f'{std_recall:.6f}')
+            row.append(str(centroids_to_explore))
+            row.append(f'{avg_vectors:.2f}')
 
-    # Add KNN=100 results
-    for centroids_to_explore, explore_frac, recall, std_recall, avg_vectors in results_knn_100:
-        row.append(f'{recall:.6f}')
-        row.append(f'{std_recall:.6f}')
-        row.append(str(centroids_to_explore))
-        row.append(f'{avg_vectors:.2f}')
+        # Add KNN=100 results
+        for centroids_to_explore, explore_frac, recall, std_recall, avg_vectors in results_knn_100:
+            row.append(f'{recall:.6f}')
+            row.append(f'{std_recall:.6f}')
+            row.append(str(centroids_to_explore))
+            row.append(f'{avg_vectors:.2f}')
 
     # Add config as JSON string
     config_json = json.dumps(config_dict)

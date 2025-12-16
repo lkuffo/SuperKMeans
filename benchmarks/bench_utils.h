@@ -128,6 +128,9 @@ const std::vector<float> SAMPLING_FRACTION_VALUES =
 const std::vector<int> PARETO_ITERS_VALUES = {1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13,
                                               14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25};
 
+// n_clusters values for varying_k experiment
+const std::vector<int> VARYING_K_VALUES = {10, 100, 1000, 10000, 100000};
+
 /**
  * @brief Parse ground truth JSON file.
  *
