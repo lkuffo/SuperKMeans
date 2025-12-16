@@ -456,23 +456,28 @@ inline void write_results_to_csv(
         return;
     }
 
+    // Determine if we have recall data
+    bool has_recall_data = !results_knn_10.empty() || !results_knn_100.empty();
+
     // Write header if file is new
     if (!file_exists) {
         csv_file << "timestamp,algorithm,dataset,n_iters,actual_iterations,dimensionality,data_"
                     "size,n_clusters,"
                  << "construction_time_ms,threads,final_objective";
 
-        // Add columns for each KNN and explore fraction combination
-        for (int knn : KNN_VALUES) {
-            for (float explore_frac : EXPLORE_FRACTIONS) {
-                csv_file << ",recall@" << knn << "@" << std::fixed << std::setprecision(2)
-                         << (explore_frac * 100.0f);
-                csv_file << ",recall_std@" << knn << "@" << std::fixed << std::setprecision(2)
-                         << (explore_frac * 100.0f);
-                csv_file << ",centroids_explored@" << knn << "@" << std::fixed
-                         << std::setprecision(2) << (explore_frac * 100.0f);
-                csv_file << ",vectors_explored@" << knn << "@" << std::fixed << std::setprecision(2)
-                         << (explore_frac * 100.0f);
+        // Add columns for each KNN and explore fraction combination (only if we have recall data)
+        if (has_recall_data) {
+            for (int knn : KNN_VALUES) {
+                for (float explore_frac : EXPLORE_FRACTIONS) {
+                    csv_file << ",recall@" << knn << "@" << std::fixed << std::setprecision(2)
+                             << (explore_frac * 100.0f);
+                    csv_file << ",recall_std@" << knn << "@" << std::fixed << std::setprecision(2)
+                             << (explore_frac * 100.0f);
+                    csv_file << ",centroids_explored@" << knn << "@" << std::fixed
+                             << std::setprecision(2) << (explore_frac * 100.0f);
+                    csv_file << ",vectors_explored@" << knn << "@" << std::fixed << std::setprecision(2)
+                             << (explore_frac * 100.0f);
+                }
             }
         }
 
@@ -493,22 +498,25 @@ inline void write_results_to_csv(
              << "," << std::fixed << std::setprecision(2) << construction_time_ms << "," << threads
              << "," << std::setprecision(6) << final_objective;
 
-    // Write KNN=10 results
-    for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] :
-         results_knn_10) {
-        csv_file << "," << std::setprecision(6) << recall;
-        csv_file << "," << std::setprecision(6) << std_recall;
-        csv_file << "," << centroids_to_explore;
-        csv_file << "," << std::setprecision(2) << avg_vectors;
-    }
+    // Write recall results only if we have data
+    if (has_recall_data) {
+        // Write KNN=10 results
+        for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] :
+             results_knn_10) {
+            csv_file << "," << std::setprecision(6) << recall;
+            csv_file << "," << std::setprecision(6) << std_recall;
+            csv_file << "," << centroids_to_explore;
+            csv_file << "," << std::setprecision(2) << avg_vectors;
+        }
 
-    // Write KNN=100 results
-    for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] :
-         results_knn_100) {
-        csv_file << "," << std::setprecision(6) << recall;
-        csv_file << "," << std::setprecision(6) << std_recall;
-        csv_file << "," << centroids_to_explore;
-        csv_file << "," << std::setprecision(2) << avg_vectors;
+        // Write KNN=100 results
+        for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] :
+             results_knn_100) {
+            csv_file << "," << std::setprecision(6) << recall;
+            csv_file << "," << std::setprecision(6) << std_recall;
+            csv_file << "," << centroids_to_explore;
+            csv_file << "," << std::setprecision(2) << avg_vectors;
+        }
     }
 
     // Serialize config_dict to JSON

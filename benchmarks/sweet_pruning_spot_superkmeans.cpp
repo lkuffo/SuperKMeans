@@ -162,17 +162,10 @@ int main(int argc, char* argv[]) {
                       << "Objective: " << final_objective << ", "
                       << "Iterations: " << actual_iterations << std::endl;
 
-            // Assign each data point to its nearest centroid
-            auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
-
-            // Compute recall for both KNN values
-            auto results_knn_10 = bench_utils::compute_recall(
-                gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
-            );
-
-            auto results_knn_100 = bench_utils::compute_recall(
-                gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
-            );
+            // Skip assignment and recall computation for this benchmark
+            // We only care about training time and objective for the pruning parameter sweep
+            std::vector<std::tuple<int, float, float, float, float>> results_knn_10;   // Empty
+            std::vector<std::tuple<int, float, float, float, float>> results_knn_100;  // Empty
 
             // Create comprehensive config dictionary with all parameters
             std::unordered_map<std::string, std::string> config_map;
