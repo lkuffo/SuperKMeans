@@ -40,7 +40,7 @@ struct SuperKMeansConfig {
     // Pruning parameters
     float min_not_pruned_pct = 0.03f; ///< Minimum percentage of vectors not pruned (3% = 97% pruned)
     float max_not_pruned_pct = 0.05f; ///< Maximum percentage of vectors not pruned (5% = 95% pruned)
-    float adjustment_factor_for_partial_d = 0.10f; ///< Adjustment factor for partial_d tuning (10%)
+    float adjustment_factor_for_partial_d = 0.20f; ///< Adjustment factor for partial_d tuning (20%)
 
     // Output parameters
     bool unrotate_centroids = true;   ///< Whether to unrotate centroids before returning
