@@ -101,8 +101,9 @@ SAMPLING_FRACTION_VALUES = [0.90, 0.80, 0.70, 0.60, 0.50, 0.40, 0.30, 0.20, 0.10
 PARETO_ITERS_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
 
 # n_clusters values for varying_k experiment
-VARYING_K_VALUES = [10, 100, 1000, 10000, 100000]
-
+# VARYING_K_VALUES = [10, 100, 1000, 10000, 100000]
+# For Cohere
+VARYING_K_VALUES = [1000, 10000, 100000, 350000]
 
 def load_ground_truth(filename):
     """Load ground truth from JSON file.
