@@ -52,6 +52,16 @@ class ManagedCudaStream {
 
     ~ManagedCudaStream() { CUDA_SAFE_CALL(cudaStreamDestroy(_stream)); }
 
+    ManagedCudaStream(const ManagedCudaStream&) = delete;
+    ManagedCudaStream& operator=(const ManagedCudaStream&) = delete;
+    ManagedCudaStream& operator=(ManagedCudaStream&& other) = delete;
+
+    ManagedCudaStream(ManagedCudaStream&& other) noexcept
+        : _stream(other._stream) {
+        other._stream = nullptr;
+    }
+
+
     void synchronize() { CUDA_SAFE_CALL(cudaStreamSynchronize(_stream)); }
 
     cudaStream_t get() const { return _stream; }
@@ -83,6 +93,19 @@ class DeviceBuffer {
             CUDA_SAFE_CALL(cudaFree(_dev_ptr));
         };
     }
+
+    DeviceBuffer(const DeviceBuffer&) = delete;
+    DeviceBuffer& operator=(const DeviceBuffer&) = delete;
+    DeviceBuffer& operator=(DeviceBuffer&& other) = delete;
+
+    DeviceBuffer(DeviceBuffer&& other) noexcept
+        : _dev_ptr(other._dev_ptr),
+          _size(other._size),
+          _stream(other._stream) {
+        other._dev_ptr = nullptr;
+        other._size = 0;
+    }
+
 
     void copy_to_device(const T* host_ptr) {
         CUDA_SAFE_CALL(cudaMemcpyAsync(
@@ -157,6 +180,14 @@ class BatchedMatrixMultiplier {
           //_all_distances_dev_p(compute_buffer_size<float>(max_batch_n_y, max_batch_n_x), stream)
     {}
 
+		
+    ~BatchedMatrixMultiplier() {}
+    BatchedMatrixMultiplier(const BatchedMatrixMultiplier&) = delete;
+    BatchedMatrixMultiplier& operator=(const BatchedMatrixMultiplier&) = delete;
+    BatchedMatrixMultiplier& operator=(BatchedMatrixMultiplier&&) = delete;
+
+    BatchedMatrixMultiplier(BatchedMatrixMultiplier&&) = default;
+
 		void load_x_batch(
         const data_t* SKM_RESTRICT batch_x_p,
         const size_t batch_n_x,
@@ -208,7 +239,6 @@ class BatchedMatrixMultiplier {
         //_all_distances_dev_p.copy_to_host(all_distances_buf, size_out);
     }
 
-    ~BatchedMatrixMultiplier() {}
 
   private:
     static constexpr float ALPHA = 1.0f;
@@ -351,7 +381,19 @@ static void FindNearestNeighbor(
     auto stream = gpu::ManagedCudaStream();
     auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
 
-		auto all_distances_buf_dev = gpu::DeviceBuffer<float>(gpu::compute_buffer_size<float>(X_BATCH_SIZE, Y_BATCH_SIZE),stream.get());
+		constexpr int32_t N_BATCH_STREAMS = 4;
+		auto batch_streams = std::vector<gpu::ManagedCudaStream>(4);
+		auto batch_multipliers = std::vector<gpu::BatchedMatrixMultiplier>();
+		auto batch_all_distances_buffers_dev = std::vector<gpu::DeviceBuffer<float>>();
+
+		batch_multipliers.reserve(N_BATCH_STREAMS);
+		batch_all_distances_buffers_dev.reserve(N_BATCH_STREAMS);
+
+		for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
+			batch_multipliers.emplace_back(X_BATCH_SIZE, Y_BATCH_SIZE, d, batch_streams[i].get());
+			batch_all_distances_buffers_dev.emplace_back(gpu::compute_buffer_size<float>(X_BATCH_SIZE, Y_BATCH_SIZE),batch_streams[i].get());
+		}
+
 		auto norms_x_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_x),stream.get());
 		auto norms_y_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_y),stream.get());
 		auto out_distances_dev = gpu::DeviceBuffer<distance_t>(gpu::compute_buffer_size<distance_t>(n_x),stream.get());
@@ -361,21 +403,28 @@ static void FindNearestNeighbor(
 		//all_distances_buf_dev.copy_to_device(all_distances_buf);
 		out_distances_dev.copy_to_device(out_distances);
 		out_knn_dev.copy_to_device(out_knn);
+		stream.synchronize();
 
+		size_t iteration_count = 0;
     for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
         auto batch_n_x = X_BATCH_SIZE;
         auto batch_x_p = x + (i * d);
         if (i + X_BATCH_SIZE > n_x) {
             batch_n_x = n_x - i;
         }
-				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
+
+				auto batch_stream_index = iteration_count % N_BATCH_STREAMS;
+				++iteration_count;
+
+				batch_multipliers[batch_stream_index].load_x_batch(batch_x_p, batch_n_x, d);
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
             auto batch_n_y = Y_BATCH_SIZE;
             auto batch_y_p = batch_y_dev_p.get() + (j * d);
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
-						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf_dev.get());
+						batch_multipliers[batch_stream_index].multiply(batch_y_p, batch_n_x, batch_n_y, d, 0, 
+								batch_all_distances_buffers_dev[batch_stream_index].get());
 
 						kernels::first_blas(
 								batch_n_x,
@@ -384,10 +433,10 @@ static void FindNearestNeighbor(
 								j,
 								norms_x_dev.get(),
 								norms_y_dev.get(),
-								all_distances_buf_dev.get(),
+								batch_all_distances_buffers_dev[batch_stream_index].get(),
 								out_distances_dev.get(),
 								out_knn_dev.get(),
-								stream.get()
+								batch_streams[batch_stream_index].get()
 								);
 						// norms_x_dev.copy_to_host(norms_x);
 						// norms_y_dev.copy_to_host(norms_y);
@@ -425,6 +474,10 @@ static void FindNearestNeighbor(
 						*/
         }
     }
+		stream.synchronize();
+		for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
+			batch_streams[i].synchronize();
+		}
 		out_distances_dev.copy_to_host(out_distances);
 		out_knn_dev.copy_to_host(out_knn);
 		stream.synchronize();
