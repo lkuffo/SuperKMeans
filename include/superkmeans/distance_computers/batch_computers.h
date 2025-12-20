@@ -424,6 +424,13 @@ static void FindNearestNeighborWithPruning(
     auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
 		auto all_distances_buf_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<float>(X_BATCH_SIZE, Y_BATCH_SIZE),stream.get());
 
+		auto norms_x_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_x),stream.get());
+		auto norms_y_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_y),stream.get());
+		norms_x_dev.copy_to_device(norms_x);
+		norms_y_dev.copy_to_device(norms_y);
+
+		stream.synchronize();
+
     for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
         auto batch_n_x = X_BATCH_SIZE;
         auto batch_x_p = x + (i * d);
@@ -442,26 +449,37 @@ static void FindNearestNeighborWithPruning(
             {
                 SKM_PROFILE_SCOPE("search/blas");
 								multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf_dev.get());
-								all_distances_buf_dev.copy_to_host(all_distances_buf, gpu::compute_buffer_size<float>(batch_n_x, batch_n_y));
 
                 /*BlasMatrixMultiplication(
                     batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
                 );*/
             }
-            Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
             {
                 SKM_PROFILE_SCOPE("search/norms");
-#pragma omp parallel for num_threads(g_n_threads)
-                for (size_t r = 0; r < batch_n_x; ++r) {
-                    const auto i_idx = i + r;
-                    const float norm_x_i = norms_x[i_idx];
-                    float* row_p = distances_matrix.data() + r * batch_n_y;
-#pragma clang loop vectorize(enable)
-                    for (size_t c = 0; c < batch_n_y; ++c) {
-                        row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
-                    }
-                }
+								kernels::norms(
+									batch_n_x,
+									batch_n_y,
+									i,
+									j,
+									norms_x_dev.get(),
+									norms_y_dev.get(),
+									all_distances_buf_dev.get(),
+									stream.get()
+								);
+// #pragma omp parallel for num_threads(g_n_threads)
+//                 for (size_t r = 0; r < batch_n_x; ++r) {
+//                     const auto i_idx = i + r;
+//                     const float norm_x_i = norms_x[i_idx];
+//                     float* row_p = all_distances_buf + r * batch_n_y;
+// #pragma clang loop vectorize(enable)
+//                     for (size_t c = 0; c < batch_n_y; ++c) {
+//                         row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
+//                     }
+//                 }
+								all_distances_buf_dev.copy_to_host(all_distances_buf, gpu::compute_buffer_size<float>(batch_n_x, batch_n_y));
             }
+						stream.synchronize();
+            Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
             {
                 SKM_PROFILE_SCOPE("search/pdx");
 #pragma omp parallel for num_threads(g_n_threads) schedule(dynamic, 8)
