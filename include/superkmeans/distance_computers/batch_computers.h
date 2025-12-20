@@ -418,10 +418,11 @@ static void FindNearestNeighborWithPruning(
     size_t* out_not_pruned_counts = nullptr
 ) {
     SKM_PROFILE_SCOPE("search");
-		//auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
-		//batch_y_dev_p.copy_to_device(y);
-    //auto stream = gpu::ManagedCudaStream();
-    //auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
+		auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
+		batch_y_dev_p.copy_to_device(y);
+    auto stream = gpu::ManagedCudaStream();
+    auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
+		auto all_distances_buf_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<float>(X_BATCH_SIZE, Y_BATCH_SIZE),stream.get());
 
     for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
         auto batch_n_x = X_BATCH_SIZE;
@@ -429,21 +430,23 @@ static void FindNearestNeighborWithPruning(
         if (i + X_BATCH_SIZE > n_x) {
             batch_n_x = n_x - i;
         }
-				//multiplier.load_x_batch(batch_x_p, batch_n_x, d);
+				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
         MatrixR materialize_x_left_cols;
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
             auto batch_n_y = Y_BATCH_SIZE;
-            auto batch_y_p = y + (j * d);
-            //auto batch_y_p = batch_y_dev_p.get() + (j * d);
+            //auto batch_y_p = y + (j * d);
+            auto batch_y_p = batch_y_dev_p.get() + (j * d);
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
             {
                 SKM_PROFILE_SCOPE("search/blas");
-								//multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf);
-                BlasMatrixMultiplication(
+								multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf_dev.get());
+								all_distances_buf_dev.copy_to_host(all_distances_buf, gpu::compute_buffer_size<float>(batch_n_x, batch_n_y));
+
+                /*BlasMatrixMultiplication(
                     batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
-                );
+                );*/
             }
             Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
             {
