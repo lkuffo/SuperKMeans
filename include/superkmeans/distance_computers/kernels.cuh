@@ -32,5 +32,16 @@ void first_blas(
     const cudaStream_t stream
 );
 
+void norms(
+    const int batch_n_x,
+    const int batch_n_y,
+    const int i,
+    const int j,
+    const norms_t* norms_x,
+    const norms_t* norms_y,
+    float* all_distances_buffer,
+    const cudaStream_t stream
+);
+
 }
 }
