@@ -14,6 +14,13 @@
 #include "avx512_computers.h"
 #endif
 
+// This is completely unnecessary, but in cmakelists I need to properly 
+// add the correct simd flag to kernels.cu
+// Otherwise it complains it cannot find a definition for SIMDComputer
+#ifdef USE_CUDA
+#include "avx512_computers.h"
+#endif
+
 namespace skmeans {
 
 template <DistanceFunction alpha, Quantization q>
