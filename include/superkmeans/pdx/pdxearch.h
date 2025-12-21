@@ -305,111 +305,6 @@ class PDXearch {
 			}
 		}
 
-    template <Quantization Q = q>
-    SKM_NO_INLINE void GPUPrune(
-        const skmeans_value_t<Q>* SKM_RESTRICT query,
-				const CLUSTER_TYPE& cluster,
-        uint32_t* pruning_positions, // Preallocated buffer[PDX_VECTOR_SIZE], undefined content
-        skmeans_distance_t<Q>* pruning_distances, // all_distances_buf
-        KNNCandidate<Q>& best_candidate, // initially prev centroid, then updated
-        size_t& n_vectors_not_pruned, // initially 0, then updated 
-        uint32_t current_dimension_idx, //??
-        size_t &initial_not_pruned_out
-    ) {
-				const auto num_dimensions = pdx_data.num_dimensions;
-				const auto num_horizontal_dimensions = pdx_data.num_horizontal_dimensions;
-				const auto num_vertical_dimensions = pdx_data.num_vertical_dimensions;
-				const auto ratios = pruner.ratios;
-				const auto prev_best_candidate_distance = best_candidate.distance;
-        const skmeans_value_t<Q>* SKM_RESTRICT data = cluster.data;
-        const size_t n_vectors = cluster.num_embeddings;
-        const uint32_t* vector_indices = cluster.indices;
-        const skmeans_value_t<Q>* SKM_RESTRICT aux_vertical_dimensions_in_horizontal_layout = cluster.aux_vertical_dimensions_in_horizontal_layout;
-
-				auto pruning_threshold = prev_best_candidate_distance * ratios[current_dimension_idx];
-
-				GPUInitializeNotPrunedVectors(
-						n_vectors_not_pruned, 
-						pruning_threshold, 
-						pruning_positions, 
-						pruning_distances, 
-						n_vectors);
-        // Record the initial n_vectors_not_pruned if requested
-				// WARNING: Need to do this without memory write, this is expensive
-				initial_not_pruned_out = n_vectors_not_pruned;
-
-        // Early exit if all vectors were pruned
-				if (n_vectors_not_pruned == 0) {
-					return;
-				}
-
-        // Early exit if the only remaining point is the one that was initially the best candidate
-        if (n_vectors_not_pruned == 1 && vector_indices[pruning_positions[0]] == best_candidate.index) {
-            n_vectors_not_pruned = 0;
-            return;
-        }
-
-
-        size_t current_vertical_dimension = current_dimension_idx;
-				const bool has_horizontal_dimensions = num_horizontal_dimensions > 0;
-				if (has_horizontal_dimensions) {
-					for (size_t current_horizontal_dimension = 0; current_horizontal_dimension < num_horizontal_dimensions; current_horizontal_dimension += H_DIM_SIZE) {
-							size_t offset_data = (num_vertical_dimensions * n_vectors) +
-																	 (current_horizontal_dimension * n_vectors);
-							size_t offset_query = num_vertical_dimensions + current_horizontal_dimension;
-							// Can do a collaborative load for pruning_positions, and then supply 
-							// first thread in warp with values by downshifting them with shuffle_sync
-							// Can do a collaborative write for pruning_distances, by upshifting values
-							// and then doing a single write
-							for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
-									size_t v_idx = pruning_positions[vector_idx];
-									size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
-									pruning_distances[v_idx] += GPUDistanceHorizontalFixedDimensions<H_DIM_SIZE>(
-										query + offset_query,
-										data + data_pos
-									);
-							}
-							
-							current_dimension_idx += H_DIM_SIZE;
-							pruning_threshold = prev_best_candidate_distance * ratios[current_dimension_idx];
-							GPUUpdateNotPrunedVectors(
-									n_vectors_not_pruned, 
-									pruning_threshold, 
-									pruning_positions, 
-									pruning_distances);
-							if (n_vectors_not_pruned == 0) {
-								break;
-							}
-					}
-				}
-        // GO THROUGH THE REST IN THE VERTICAL
-				if (n_vectors_not_pruned && current_vertical_dimension < num_vertical_dimensions) {
-						size_t dimensions_left = num_vertical_dimensions - current_vertical_dimension;
-						size_t offset_query = current_vertical_dimension;
-						// Can do a collaborative load for pruning_positions, and then supply 
-						// first thread in warp with values by downshifting them with shuffle_sync
-						// Can do a collaborative write for pruning_distances, by upshifting values
-						// and then doing a single write
-						for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
-								size_t v_idx = pruning_positions[vector_idx];
-								auto data_pos = aux_vertical_dimensions_in_horizontal_layout +
-																(v_idx * num_vertical_dimensions) +
-																current_vertical_dimension;
-								pruning_distances[v_idx] += GPUDistanceHorizontal(
-									query + offset_query,
-									data_pos,
-									dimensions_left
-								);
-						}
-						current_dimension_idx = num_dimensions;
-						pruning_threshold = prev_best_candidate_distance * ratios[current_dimension_idx];
-						GPUUpdateNotPrunedVectors(
-								n_vectors_not_pruned, 
-								pruning_threshold, 
-								pruning_positions, 
-								pruning_distances);
-				}
-    }
 
     /**
      * @brief Updates the best candidate from remaining non-pruned vectors.
@@ -528,54 +423,124 @@ class PDXearch {
         return top_embedding;
     }
 
-    SKM_NO_INLINE
-    KNNCandidate_t GPUTop1PartialSearchWithThresholdAndPartialDistances(
-        const float* SKM_RESTRICT query,
-        const float prev_pruning_threshold,
-        const uint32_t prev_top_1,
-        DISTANCES_TYPE* partial_pruning_distances, // all distances_buf
-        const uint32_t computed_distance_until,
-        const size_t start_cluster,
-        const size_t end_cluster,
-        size_t& initial_not_pruned_accum 
+    SKM_NO_INLINE void GPUPrune(
+        const skmeans_value_t<Quantization::f32>* SKM_RESTRICT query,
+        const size_t y_batch,
+        skmeans_distance_t<Quantization::f32>* pruning_distances, // all_distances_buf
+        KNNCandidate<Quantization::f32>& best_candidate, // initially prev centroid, then updated
+        uint32_t current_dimension_idx, //??
+        size_t &initial_not_pruned_accum
     ) {
 				// TODO Make shared
         alignas(64) thread_local uint32_t pruning_positions[PDX_VECTOR_SIZE];
 
-        // Setup previous top1
-        auto top_embedding = KNNCandidate<q>{};
-        top_embedding.index = prev_top_1;
-        top_embedding.distance = prev_pruning_threshold;
+				// Make a struct that we can pass in via kernel args to store it in the const memory
+				const CLUSTER_TYPE& y_batch_cluster = pdx_data.clusters[y_batch];
+				const auto num_dimensions = pdx_data.num_dimensions;
+				const auto num_horizontal_dimensions = pdx_data.num_horizontal_dimensions;
+				const auto num_vertical_dimensions = pdx_data.num_vertical_dimensions;
+				const auto ratios = pruner.ratios;
+				const auto prev_best_candidate_distance = best_candidate.distance;
+        const skmeans_value_t<Quantization::f32>* SKM_RESTRICT data = y_batch_cluster.data;
+        const size_t n_vectors = y_batch_cluster.num_embeddings;
+        const uint32_t* vector_indices = y_batch_cluster.indices;
+        const skmeans_value_t<Quantization::f32>* SKM_RESTRICT aux_vertical_dimensions_in_horizontal_layout = y_batch_cluster.aux_vertical_dimensions_in_horizontal_layout;
 
-				CLUSTER_TYPE& cluster = pdx_data.clusters[start_cluster];
-				auto pruning_distances = partial_pruning_distances;
-        size_t n_vectors_not_pruned = 0;
-				size_t initial_not_pruned = 0;
+				auto pruning_threshold = prev_best_candidate_distance * ratios[current_dimension_idx];
+				size_t n_vectors_not_pruned = 0;
 
-				GPUPrune(
-						query,
-						cluster,
-						pruning_positions,
-						pruning_distances,
-						top_embedding,
-						n_vectors_not_pruned,
-						computed_distance_until,
-						initial_not_pruned
-				);
+				GPUInitializeNotPrunedVectors(
+						n_vectors_not_pruned, 
+						pruning_threshold, 
+						pruning_positions, 
+						pruning_distances, 
+						n_vectors);
+        // Record the initial n_vectors_not_pruned if requested
+				// WARNING: Need to do this without memory write, this is expensive
+				initial_not_pruned_accum += n_vectors_not_pruned;
 
-				// Accumulate the initial not-pruned count for this cluster
-				initial_not_pruned_accum += initial_not_pruned;
+        // Early exit if all vectors were pruned
+				if (n_vectors_not_pruned == 0) {
+					return;
+				}
+
+        // Early exit if the only remaining point is the one that was initially the best candidate
+        if (n_vectors_not_pruned == 1 && vector_indices[pruning_positions[0]] == best_candidate.index) {
+            n_vectors_not_pruned = 0;
+            return;
+        }
+
+
+        size_t current_vertical_dimension = current_dimension_idx;
+				// TODO Make sure this is otherwise compiled away
+				const bool has_horizontal_dimensions = num_horizontal_dimensions > 0;
+				if (has_horizontal_dimensions) {
+					for (size_t current_horizontal_dimension = 0; current_horizontal_dimension < num_horizontal_dimensions; current_horizontal_dimension += H_DIM_SIZE) {
+							size_t offset_data = (num_vertical_dimensions * n_vectors) +
+																	 (current_horizontal_dimension * n_vectors);
+							size_t offset_query = num_vertical_dimensions + current_horizontal_dimension;
+							// Can do a collaborative load for pruning_positions, and then supply 
+							// first thread in warp with values by downshifting them with shuffle_sync
+							// Can do a collaborative write for pruning_distances, by upshifting values
+							// and then doing a single write
+							for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+									size_t v_idx = pruning_positions[vector_idx];
+									size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
+									pruning_distances[v_idx] += GPUDistanceHorizontalFixedDimensions<H_DIM_SIZE>(
+										query + offset_query,
+										data + data_pos
+									);
+							}
+							
+							current_dimension_idx += H_DIM_SIZE;
+							pruning_threshold = prev_best_candidate_distance * ratios[current_dimension_idx];
+							GPUUpdateNotPrunedVectors(
+									n_vectors_not_pruned, 
+									pruning_threshold, 
+									pruning_positions, 
+									pruning_distances);
+							if (n_vectors_not_pruned == 0) {
+								break;
+							}
+					}
+				}
+        // GO THROUGH THE REST IN THE VERTICAL
+				if (n_vectors_not_pruned && current_vertical_dimension < num_vertical_dimensions) {
+						size_t dimensions_left = num_vertical_dimensions - current_vertical_dimension;
+						size_t offset_query = current_vertical_dimension;
+						// Can do a collaborative load for pruning_positions, and then supply 
+						// first thread in warp with values by downshifting them with shuffle_sync
+						// Can do a collaborative write for pruning_distances, by upshifting values
+						// and then doing a single write
+						for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+								size_t v_idx = pruning_positions[vector_idx];
+								auto data_pos = aux_vertical_dimensions_in_horizontal_layout +
+																(v_idx * num_vertical_dimensions) +
+																current_vertical_dimension;
+								pruning_distances[v_idx] += GPUDistanceHorizontal(
+									query + offset_query,
+									data_pos,
+									dimensions_left
+								);
+						}
+						current_dimension_idx = num_dimensions;
+						pruning_threshold = prev_best_candidate_distance * ratios[current_dimension_idx];
+						GPUUpdateNotPrunedVectors(
+								n_vectors_not_pruned, 
+								pruning_threshold, 
+								pruning_positions, 
+								pruning_distances);
+				}
+
 				if (n_vectors_not_pruned) {
 						GPUSelectBestCandidate(
-								top_embedding,
+								best_candidate,
 								n_vectors_not_pruned,
-								cluster.indices,
+								vector_indices,
 								pruning_positions,
 								pruning_distances
 						);
 				}
-
-        return top_embedding;
     }
 };
 

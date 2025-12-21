@@ -434,9 +434,23 @@ static void FindNearestNeighborWithPruning(
     for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
         auto batch_n_x = X_BATCH_SIZE;
         auto batch_x_p = x + (i * d);
+
         if (i + X_BATCH_SIZE > n_x) {
             batch_n_x = n_x - i;
         }
+
+#pragma omp parallel for num_threads(g_n_threads) schedule(dynamic, 8)
+				for (size_t r = 0; r < batch_n_x; ++r) {
+						const auto i_idx = i + r;
+						auto data_p = x + (i_idx * d);
+						auto query_p = y + (out_knn[i_idx] * d);
+
+						out_distances[i_idx] =
+								DistanceComputer<DistanceFunction::l2, Quantization::f32>::Horizontal(
+										query_p, data_p, d
+								);
+				}
+
 				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
         MatrixR materialize_x_left_cols;
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
@@ -588,14 +602,19 @@ static void FindNearestNeighborWithPruning(
 =======
 =======
 						stream.synchronize();
+<<<<<<< HEAD
             Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
 >>>>>>> 99aaf0f (Implemented norms as a kernel)
+=======
+						auto current_y_batch = j / VECTOR_CHUNK_SIZE;
+>>>>>>> ef4ee65 (Removed the intermediate function call, and moved the initial x batch to)
             {
                 SKM_PROFILE_SCOPE("search/pdx");
 #pragma omp parallel for num_threads(g_n_threads) schedule(dynamic, 8)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const auto i_idx = i + r;
                     auto data_p = x + (i_idx * d);
+<<<<<<< HEAD
                     // Note that this will take the KNN from the previous batch loop
                     const auto prev_assignment = out_knn[i_idx];
                     distance_t dist_to_prev_centroid;
@@ -608,31 +627,27 @@ static void FindNearestNeighborWithPruning(
                         dist_to_prev_centroid = out_distances[i_idx];
 >>>>>>> 720976a (Removed repeated cudafree and cudamalloc)
                     }
+=======
+
+                    knn_candidate_t assigned_centroid{out_knn[i_idx], out_distances[i_idx]};
+>>>>>>> ef4ee65 (Removed the intermediate function call, and moved the initial x batch to)
 
                     // PDXearch per vector
-                    knn_candidate_t assignment;
-                    auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
+                    auto partial_distances_p = all_distances_buf + r * batch_n_y;
                     size_t local_not_pruned = 0;
-                    assignment =
-                        pdx_centroids.searcher->GPUTop1PartialSearchWithThresholdAndPartialDistances(
-                            data_p,
-                            dist_to_prev_centroid,
-                            prev_assignment,
-                            partial_distances_p,
-                            partial_d,
-                            j / VECTOR_CHUNK_SIZE, // start cluster_id
-                            (j + Y_BATCH_SIZE) /
-                                VECTOR_CHUNK_SIZE, // end cluster_id; We use Y_BATCH_SIZE
-                                                   // and not batch_n_y because otherwise we
-                                                   // would not go up until incomplete
-                                                   // clusters
-                            local_not_pruned
-                        );
-                    // Store not-pruned count for this X vector (accumulate across Y batches)
+
+										pdx_centroids.searcher->GPUPrune(
+												data_p,
+												current_y_batch,
+												partial_distances_p,
+												assigned_centroid,
+												partial_d,
+												local_not_pruned
+										);
+
 										out_not_pruned_counts[i_idx] += local_not_pruned;
-                    auto [assignment_idx, assignment_distance] = assignment;
-                    out_knn[i_idx] = assignment_idx;
-                    out_distances[i_idx] = assignment_distance;
+                    out_knn[i_idx] = assigned_centroid.index;
+                    out_distances[i_idx] = assigned_centroid.distance;
                 }
             }
         }
