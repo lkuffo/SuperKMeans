@@ -449,10 +449,6 @@ static void FindNearestNeighborWithPruning(
             {
                 SKM_PROFILE_SCOPE("search/blas");
 								multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf_dev.get());
-
-                /*BlasMatrixMultiplication(
-                    batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
-                );*/
             }
             {
                 SKM_PROFILE_SCOPE("search/norms");
@@ -466,16 +462,6 @@ static void FindNearestNeighborWithPruning(
 									all_distances_buf_dev.get(),
 									stream.get()
 								);
-// #pragma omp parallel for num_threads(g_n_threads)
-//                 for (size_t r = 0; r < batch_n_x; ++r) {
-//                     const auto i_idx = i + r;
-//                     const float norm_x_i = norms_x[i_idx];
-//                     float* row_p = all_distances_buf + r * batch_n_y;
-// #pragma clang loop vectorize(enable)
-//                     for (size_t c = 0; c < batch_n_y; ++c) {
-//                         row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
-//                     }
-//                 }
 								all_distances_buf_dev.copy_to_host(all_distances_buf, gpu::compute_buffer_size<float>(batch_n_x, batch_n_y));
             }
 <<<<<<< HEAD
@@ -628,7 +614,7 @@ static void FindNearestNeighborWithPruning(
                     auto partial_distances_p = distances_matrix.data() + r * batch_n_y;
                     size_t local_not_pruned = 0;
                     assignment =
-                        pdx_centroids.searcher->Top1PartialSearchWithThresholdAndPartialDistances(
+                        pdx_centroids.searcher->GPUTop1PartialSearchWithThresholdAndPartialDistances(
                             data_p,
                             dist_to_prev_centroid,
                             prev_assignment,
