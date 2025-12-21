@@ -153,8 +153,7 @@ static void FindNearestNeighbor(
     distance_t* SKM_RESTRICT out_distances,
     float* SKM_RESTRICT all_distances_buf
 ) {
-    SKM_PROFILE_SCOPE("search");
-    SKM_PROFILE_SCOPE("search/1st_blas");
+    SKM_PROFILE_SCOPE("1st_blas");
 
     std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
 
@@ -603,18 +602,19 @@ static void GPUPrune(
 }
 
 static void GPUSearchPDX(
-    const layout_t& pdx_centroids,
 		const size_t batch_n_x,
 		const size_t batch_n_y,
-		const size_t current_y_batch,
 		const size_t i,
 		const size_t d,
 		const uint32_t partial_d,
 		const data_t* SKM_RESTRICT x,
+		const ConstantPruneData constant_prune_data,
+		const ClusterPruneData cluster_prune_data,
 		uint32_t* SKM_RESTRICT out_knn,
 		distance_t* SKM_RESTRICT out_distances,
 		size_t* SKM_RESTRICT out_not_pruned_counts,
 		float* SKM_RESTRICT all_distances_buf) {
+
 #pragma omp parallel for num_threads(g_n_threads) schedule(dynamic, 8)
 	for (size_t r = 0; r < batch_n_x; ++r) {
 			const auto i_idx = i + r;
@@ -626,11 +626,10 @@ static void GPUSearchPDX(
 			auto partial_distances_p = all_distances_buf + r * batch_n_y;
 			size_t local_not_pruned = 0;
 
-			auto y_batch_cluster = pdx_centroids.searcher->pdx_data.clusters[current_y_batch];
 			GPUPrune(
 					data_p,
-					ConstantPruneData(pdx_centroids),
-					ClusterPruneData(y_batch_cluster),
+					constant_prune_data,
+					cluster_prune_data,
 					partial_distances_p,
 					assigned_centroid,
 					partial_d,
@@ -642,6 +641,26 @@ static void GPUSearchPDX(
 			out_distances[i_idx] = assigned_centroid.distance;
 	}
 }
+
+static void GPUCalculateDistanceToCurrentCentroids(
+		const size_t batch_n_x,
+		const size_t d,
+		const size_t i,
+		const data_t* SKM_RESTRICT x,
+		const data_t* SKM_RESTRICT y,
+		uint32_t* SKM_RESTRICT out_knn,
+		distance_t* SKM_RESTRICT out_distances) {
+	// TODO For all kernels, size_t is not necessary here
+	// TODO: do this collaboratively
+#pragma omp parallel for num_threads(g_n_threads) schedule(dynamic, 8)
+	for (size_t r = 0; r < batch_n_x; ++r) {
+			const auto i_idx = i + r;
+			auto data_p = x + (i_idx * d);
+			auto query_p = y + (out_knn[i_idx] * d);
+			out_distances[i_idx] = GPUDistanceHorizontal(query_p, data_p, d);
+	}
+}
+
 
 /**
  * @brief Finds nearest neighbors using partial BLAS computation with PDX pruning.
@@ -693,6 +712,17 @@ static void FindNearestNeighborWithPruning(
 		norms_x_dev.copy_to_device(norms_x);
 		norms_y_dev.copy_to_device(norms_y);
 
+		auto constant_prune_data = ConstantPruneData(pdx_centroids);
+
+		const size_t n_y_clusters = (n_y + Y_BATCH_SIZE - 1) / Y_BATCH_SIZE;
+		auto cluster_data = std::vector<ClusterPruneData>();
+		cluster_data.reserve(n_y_clusters);
+
+		for (size_t i = 0; i < n_y_clusters; ++i) {
+			auto y_batch_cluster = pdx_centroids.searcher->pdx_data.clusters[i];
+			cluster_data.emplace_back(y_batch_cluster);
+		}
+
 		stream.synchronize();
 
     for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
@@ -703,20 +733,18 @@ static void FindNearestNeighborWithPruning(
             batch_n_x = n_x - i;
         }
 
-#pragma omp parallel for num_threads(g_n_threads) schedule(dynamic, 8)
-				for (size_t r = 0; r < batch_n_x; ++r) {
-						const auto i_idx = i + r;
-						auto data_p = x + (i_idx * d);
-						auto query_p = y + (out_knn[i_idx] * d);
-
-						out_distances[i_idx] =
-								DistanceComputer<DistanceFunction::l2, Quantization::f32>::Horizontal(
-										query_p, data_p, d
-								);
-				}
+				GPUCalculateDistanceToCurrentCentroids(
+					batch_n_x,
+					d,
+					i,
+					x,
+					y,
+					out_knn,
+					out_distances);
 
 				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
         MatrixR materialize_x_left_cols;
+				size_t current_y_batch = 0;
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
             auto batch_n_y = Y_BATCH_SIZE;
             //auto batch_y_p = y + (j * d);
@@ -724,42 +752,36 @@ static void FindNearestNeighborWithPruning(
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
-            {
-                SKM_PROFILE_SCOPE("search/blas");
-								multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf_dev.get());
-            }
-            {
-                SKM_PROFILE_SCOPE("search/norms");
-								kernels::norms(
-									batch_n_x,
-									batch_n_y,
-									i,
-									j,
-									norms_x_dev.get(),
-									norms_y_dev.get(),
-									all_distances_buf_dev.get(),
-									stream.get()
-								);
-								all_distances_buf_dev.copy_to_host(all_distances_buf, gpu::compute_buffer_size<float>(batch_n_x, batch_n_y));
-            }
+
+						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf_dev.get());
+						kernels::norms(
+							batch_n_x,
+							batch_n_y,
+							i,
+							j,
+							norms_x_dev.get(),
+							norms_y_dev.get(),
+							all_distances_buf_dev.get(),
+							stream.get()
+						);
+						all_distances_buf_dev.copy_to_host(all_distances_buf, gpu::compute_buffer_size<float>(batch_n_x, batch_n_y));
 						stream.synchronize();
-						auto current_y_batch = j / VECTOR_CHUNK_SIZE;
-            {
-                SKM_PROFILE_SCOPE("search/pdx");
-								GPUSearchPDX(
-									pdx_centroids,
-									batch_n_x,
-									batch_n_y,
-									current_y_batch,
-									i,
-									d,
-									partial_d,
-									x,
-									out_knn,
-									out_distances,
-									out_not_pruned_counts,
-									all_distances_buf);
-            }
+
+						GPUSearchPDX(
+							batch_n_x,
+							batch_n_y,
+							i,
+							d,
+							partial_d,
+							x,
+							constant_prune_data,
+							cluster_data[current_y_batch],
+							out_knn,
+							out_distances,
+							out_not_pruned_counts,
+							all_distances_buf);
+
+						current_y_batch += 1;
         }
     }
 }
