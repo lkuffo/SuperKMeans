@@ -501,12 +501,10 @@ static void FindNearestNeighborWithPruning(
                                                    // and not batch_n_y because otherwise we
                                                    // would not go up until incomplete
                                                    // clusters
-                            out_not_pruned_counts != nullptr ? &local_not_pruned : nullptr
+                            local_not_pruned
                         );
                     // Store not-pruned count for this X vector (accumulate across Y batches)
-                    if (out_not_pruned_counts != nullptr) {
-                        out_not_pruned_counts[i_idx] += local_not_pruned;
-                    }
+										out_not_pruned_counts[i_idx] += local_not_pruned;
                     auto [assignment_idx, assignment_distance] = assignment;
                     out_knn[i_idx] = assignment_idx;
                     out_distances[i_idx] = assignment_distance;
