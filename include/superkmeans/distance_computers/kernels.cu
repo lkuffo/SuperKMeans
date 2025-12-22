@@ -25,51 +25,79 @@ inline void check_CUDA_error(cudaError_t code, const char* file, int line, bool 
 const uint32_t WARP_WIDTH = 32;
 const uint32_t FULL_MASK = 0xffffffff;
 
-
-template<typename T>
-__device__ T find_min(const T* data, const uint32_t size, const T max, uint32_t* min_index) {
-	T min = max;
-
-	for (int i{0}; i < size; ++i) {
-		auto current = data[i];
-		if (current < min) {
-			*min_index = i;
-			min = current;
-		}
+struct ThreadContext{
+	uint32_t thread_id;
+	uint32_t warp_id;
+	uint32_t lane_id;
+	__device__ ThreadContext() {
+		thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+		warp_id = thread_id / WARP_WIDTH;
+		lane_id = thread_id % WARP_WIDTH;
 	}
 
-	return min;
+	__device__ bool is_first_thread() const {
+		return thread_id == 0;
+	}
+	__device__ bool is_first_lane() const {
+		return lane_id == 0;
+	}
+};
+
+template <typename T>
+__device__ T find_min(const T* data, const uint32_t size, const T max, uint32_t* min_index) {
+    T min = max;
+
+    for (int i{0}; i < size; ++i) {
+        auto current = data[i];
+        if (current < min) {
+            *min_index = i;
+            min = current;
+        }
+    }
+
+    return min;
+}
+
+template <typename T>
+__device__ constexpr T max_of_either(const T a, const T b) {
+    if (a < b) {
+        return b;
+    }
+    return a;
 }
 
 template<typename T>
-__device__ constexpr T max_of_either(const T a, const T b) {
-	if (a < b) {
-		return b;
-	}
-	return a;
+__device__ __forceinline__
+T warp_reduce_sum(T value)
+{
+    for (int offset = WARP_WIDTH / 2; offset > 0; offset >>= 1) {
+        value += __shfl_down_sync(FULL_MASK, value, offset);
+    }
+
+    return value;  // valid in first lane only
 }
 
 struct IndexMinWarpReductionResult {
-	int32_t index;
-	float value;
+    int32_t index;
+    float value;
 };
 
-__device__ IndexMinWarpReductionResult index_min_warp_reduction(const int32_t index, const float value) {
-	auto send_index = index;
-	auto send_value = value;
+__device__ IndexMinWarpReductionResult
+index_min_warp_reduction(const int32_t index, const float value) {
+    auto send_index = index;
+    auto send_value = value;
 
-	for (int offset = 16; offset > 0; offset /= 2) {
-    auto receive_index = __shfl_down_sync(FULL_MASK, send_index, offset);
-    auto receive_value = __shfl_down_sync(FULL_MASK, send_value, offset);
+    for (int offset = 16; offset > 0; offset /= 2) {
+        auto receive_index = __shfl_down_sync(FULL_MASK, send_index, offset);
+        auto receive_value = __shfl_down_sync(FULL_MASK, send_value, offset);
 
-		if (receive_value < send_value) {
-			send_value = receive_value;
-			send_index = receive_index;
-		}
-	}
+        if (receive_value < send_value) {
+            send_value = receive_value;
+            send_index = receive_index;
+        }
+    }
 
-	return IndexMinWarpReductionResult{send_index, send_value};
-
+    return IndexMinWarpReductionResult{send_index, send_value};
 }
 
 __global__ void first_blas_kernel(
@@ -82,7 +110,7 @@ __global__ void first_blas_kernel(
     float* all_distances_buffer,
     distance_t* out_distances,
     uint32_t* out_knn,
-		const float max
+    const float max
 ) {
     auto warp_thread_index = threadIdx.x % WARP_WIDTH;
     auto global_thread_index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -95,26 +123,26 @@ __global__ void first_blas_kernel(
     const float norm_x_i = norms_x[item_index];
     float* row_p = all_distances_buffer + item_index * batch_n_y;
 
-		int32_t knn_idx = 0;
-		float batch_top_1 = max;
+    int32_t knn_idx = 0;
+    float batch_top_1 = max;
     for (uint32_t c = warp_thread_index; c < batch_n_y; c += WARP_WIDTH) {
         auto result = -2.0f * row_p[c] + norm_x_i + norms_y[c];
-				if (result < batch_top_1) {
-					knn_idx = c;
-					batch_top_1 = result;
-				}
+        if (result < batch_top_1) {
+            knn_idx = c;
+            batch_top_1 = result;
+        }
     }
 
-		auto result = index_min_warp_reduction(knn_idx, batch_top_1);
+    auto result = index_min_warp_reduction(knn_idx, batch_top_1);
 
-		if (warp_thread_index == 0) {
-			knn_idx = result.index;
-			batch_top_1 = result.value;
-			if (batch_top_1 < out_distances[item_index]) {
-					out_distances[item_index] = max_of_either<float>(0.0f, batch_top_1);
-					out_knn[item_index] = j + knn_idx;
-			}
-		}
+    if (warp_thread_index == 0) {
+        knn_idx = result.index;
+        batch_top_1 = result.value;
+        if (batch_top_1 < out_distances[item_index]) {
+            out_distances[item_index] = max_of_either<float>(0.0f, batch_top_1);
+            out_knn[item_index] = j + knn_idx;
+        }
+    }
 }
 
 __global__ void norms_kernel(
@@ -123,7 +151,7 @@ __global__ void norms_kernel(
     const norms_t* norms_x,
     const norms_t* norms_y,
     float* all_distances_buffer,
-		const float max
+    const float max
 ) {
     auto warp_thread_index = threadIdx.x % WARP_WIDTH;
     auto global_thread_index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -133,25 +161,25 @@ __global__ void norms_kernel(
         return;
     }
 
-		const float norm_x_i = norms_x[item_index];
-		float* row_p = all_distances_buffer + item_index * batch_n_y;
+    const float norm_x_i = norms_x[item_index];
+    float* row_p = all_distances_buffer + item_index * batch_n_y;
 
-		for (uint32_t c = warp_thread_index; c < batch_n_y; c += WARP_WIDTH) {
-				row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[c];
-		}
+    for (uint32_t c = warp_thread_index; c < batch_n_y; c += WARP_WIDTH) {
+        row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[c];
+    }
 }
 
-template<typename T>
+template <typename T>
 __global__ void health_check_buffer_kernel(const T* buffer, const std::size_t size) {
-	const std::size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::size_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
-	if (i >= size) {
-		return;
-	}
+    if (i >= size) {
+        return;
+    }
 
-	if (buffer[i] == 0.321497891f) {
-		printf("huh\n");
-	}
+    if (buffer[i] == 0.321497891f) {
+        printf("huh\n");
+    }
 }
 
 template <typename T>
@@ -159,15 +187,15 @@ constexpr T divide_round_up(const T a, const T b) {
     return (a + b - 1) / b;
 }
 
-template<typename T>
+template <typename T>
 void health_check_buffer(const T* buffer, const std::size_t size) {
     const auto N_THREADS = 1024;
     const auto n_blocks = divide_round_up<int32_t>(size, N_THREADS);
 
-		// printf("Pre Health Check\n");
-		health_check_buffer_kernel<<<n_blocks, N_THREADS>>>(buffer, size);
-		CUDA_SAFE_CALL(cudaDeviceSynchronize());
-		// printf("Post Health Check\n");
+    // printf("Pre Health Check\n");
+    health_check_buffer_kernel<<<n_blocks, N_THREADS>>>(buffer, size);
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    // printf("Post Health Check\n");
 }
 
 void first_blas(
@@ -182,31 +210,40 @@ void first_blas(
     uint32_t* out_knn,
     const cudaStream_t stream
 ) {
-	//printf("Checking norms_x\n");
-	//health_check_buffer(norms_x, i + batch_n_x);
-	// printf("Checking norms_y\n");
-	//health_check_buffer(norms_y, j + batch_n_y);
-	// printf("Checking all_distances_buffer\n");
-	//health_check_buffer(all_distances_buffer, batch_n_x * batch_n_y);
-	// printf("Checking distances\n");
-	//health_check_buffer(out_distances, i + batch_n_x);
-	// printf("Checking out_knn\n");
-	//health_check_buffer(out_knn, i + batch_n_x);
-		const auto max = std::numeric_limits<float>::max();
+    // printf("Checking norms_x\n");
+    // health_check_buffer(norms_x, i + batch_n_x);
+    //  printf("Checking norms_y\n");
+    // health_check_buffer(norms_y, j + batch_n_y);
+    //  printf("Checking all_distances_buffer\n");
+    // health_check_buffer(all_distances_buffer, batch_n_x * batch_n_y);
+    //  printf("Checking distances\n");
+    // health_check_buffer(out_distances, i + batch_n_x);
+    //  printf("Checking out_knn\n");
+    // health_check_buffer(out_knn, i + batch_n_x);
+    const auto max = std::numeric_limits<float>::max();
 
-		// ===============
-		// WARNING : It might be the case that batch_n_y % 32 == 0 is required, due to use of warp primitives
-		// NOTE: Other solutions are also possible, but did not test yet
-		// ===============
+    // ===============
+    // WARNING : It might be the case that batch_n_y % 32 == 0 is required, due to use of warp
+    // primitives NOTE: Other solutions are also possible, but did not test yet
+    // ===============
 
     const auto N_THREADS_PER_BLOCK = 1024;
     const auto N_THREADS_PER_ITEM = WARP_WIDTH;
-		const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
+    const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
     const auto n_blocks = divide_round_up<int32_t>(batch_n_x, ITEMS_PER_BLOCK);
     first_blas_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
-        batch_n_x, batch_n_y, i, j, norms_x + i, norms_y + j, all_distances_buffer, out_distances + i, out_knn + i, max
+        batch_n_x,
+        batch_n_y,
+        i,
+        j,
+        norms_x + i,
+        norms_y + j,
+        all_distances_buffer,
+        out_distances + i,
+        out_knn + i,
+        max
     );
-		//CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    // CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 
 void norms(
@@ -219,27 +256,105 @@ void norms(
     float* all_distances_buffer,
     const cudaStream_t stream
 ) {
-	// printf("Checking norms_x\n");
-	// health_check_buffer(norms_x, i + batch_n_x);
-	//  printf("Checking norms_y\n");
-	// health_check_buffer(norms_y, j + batch_n_y);
-	//  printf("Checking all_distances_buffer\n");
-	// health_check_buffer(all_distances_buffer, batch_n_x * batch_n_y);
-		const auto max = std::numeric_limits<float>::max();
+    // printf("Checking norms_x\n");
+    // health_check_buffer(norms_x, i + batch_n_x);
+    //  printf("Checking norms_y\n");
+    // health_check_buffer(norms_y, j + batch_n_y);
+    //  printf("Checking all_distances_buffer\n");
+    // health_check_buffer(all_distances_buffer, batch_n_x * batch_n_y);
+    const auto max = std::numeric_limits<float>::max();
 
-		// ===============
-		// WARNING : It might be the case that batch_n_y % 32 == 0 is required, due to use of warp primitives
-		// NOTE: Other solutions are also possible, but did not test yet
-		// ===============
+    // ===============
+    // WARNING : It might be the case that batch_n_y % 32 == 0 is required, due to use of warp
+    // primitives NOTE: Other solutions are also possible, but did not test yet
+    // ===============
 
     const auto N_THREADS_PER_BLOCK = 1024;
     const auto N_THREADS_PER_ITEM = WARP_WIDTH;
-		const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
+    const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
     const auto n_blocks = divide_round_up<int32_t>(batch_n_x, ITEMS_PER_BLOCK);
     norms_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
         batch_n_x, batch_n_y, norms_x + i, norms_y + j, all_distances_buffer, max
     );
-		CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
+
+
+__device__ skmeans_distance_t<Quantization::f32> warp_calculate_distance_horizontal_dimensions(
+    const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector1,
+    const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector2,
+    const uint32_t num_dimensions,
+		const ThreadContext& thread_context
+) {
+		// Assumes one warp collaborating 
+		// All threads in warp participate
+		// Only first thread returns relevant distance
+    skmeans_distance_t<Quantization::f32> distance = 0.0;
+    for (size_t dimension_idx = thread_context.lane_id; dimension_idx < num_dimensions; dimension_idx += WARP_WIDTH) {
+        skmeans_distance_t<Quantization::f32> to_multiply =
+            vector1[dimension_idx] - vector2[dimension_idx];
+        distance += to_multiply * to_multiply;
+    }
+
+		distance = warp_reduce_sum(distance);
+    return distance;
+};
+
+__global__ void kernel_calculate_distance_to_current_centroids(
+		const uint32_t n_x,
+		const uint32_t d,
+		const data_t* SKM_RESTRICT x,
+		const data_t* SKM_RESTRICT y,
+		uint32_t* SKM_RESTRICT out_knn,
+		distance_t* SKM_RESTRICT out_distances)
+{
+	const auto thread_context = ThreadContext();
+
+	size_t vector_index = thread_context.warp_id;
+
+	if (n_x <= vector_index) {
+		return;
+	}
+
+	auto query_p = y + (out_knn[vector_index] * d);
+	auto data_p = x + (vector_index * d);
+	auto distance = warp_calculate_distance_horizontal_dimensions(query_p, data_p, d, thread_context);
+
+	if (thread_context.is_first_lane()) {
+		out_distances[vector_index] = distance;
+	}
 }
+
+void GPUCalculateDistanceToCurrentCentroids(
+		const uint32_t n_x,
+		const uint32_t n_y,
+		const uint32_t d,
+		const data_t* SKM_RESTRICT x,
+		const data_t* SKM_RESTRICT y,
+		uint32_t* SKM_RESTRICT out_knn,
+		distance_t* SKM_RESTRICT out_distances, 
+		const cudaStream_t stream)
+{
+    // printf("Checking x\n");
+    // health_check_buffer(x, n_x * d);
+    // printf("Checking y\n");
+    // health_check_buffer(y, n_y * d);
+    // printf("Checking out_knn\n");
+    // health_check_buffer(out_knn, n_x);
+    // printf("Checking out_distances\n");
+    // health_check_buffer(out_distances, n_x);
+    // printf("Finished health checks\n");
+    const auto N_THREADS_PER_BLOCK = 256;
+    const auto N_THREADS_PER_ITEM = WARP_WIDTH;
+    const auto ITEMS_PER_BLOCK = divide_round_up<uint32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
+    const auto n_blocks = divide_round_up<uint32_t>(n_x, ITEMS_PER_BLOCK);
+    kernel_calculate_distance_to_current_centroids<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
+        n_x, d, x, y, out_knn, out_distances
+    );
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+
 }
+
+
+} // namespace kernels
+} // namespace skmeans
