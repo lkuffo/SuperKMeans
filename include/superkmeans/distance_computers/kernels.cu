@@ -624,7 +624,7 @@ void GPUSearchPDX(
         out_not_pruned_counts,
         all_distances_buf
     );
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    // CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 
 } // namespace kernels
