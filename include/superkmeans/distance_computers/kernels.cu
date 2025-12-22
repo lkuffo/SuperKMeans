@@ -269,7 +269,7 @@ void norms(
     // primitives NOTE: Other solutions are also possible, but did not test yet
     // ===============
 
-    const auto N_THREADS_PER_BLOCK = 1024;
+    const auto N_THREADS_PER_BLOCK = 256;
     const auto N_THREADS_PER_ITEM = WARP_WIDTH;
     const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
     const auto n_blocks = divide_round_up<int32_t>(batch_n_x, ITEMS_PER_BLOCK);

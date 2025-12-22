@@ -157,21 +157,23 @@ static void FindNearestNeighbor(
 
     std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
 
-		auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
-		batch_y_dev_p.copy_to_device(y);
+		auto y_dev = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
+		y_dev.copy_to_device(y);
     auto stream = gpu::ManagedCudaStream();
-    auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
+    auto multiplier = gpu::BatchedMatrixMultiplier(stream.get());
 
 		constexpr int32_t N_BATCH_STREAMS = 4;
 		auto batch_streams = std::vector<gpu::ManagedCudaStream>(4);
 		auto batch_multipliers = std::vector<gpu::BatchedMatrixMultiplier>();
+		auto batch_x_buffers_dev = std::vector<gpu::DeviceBuffer<data_t>>();
 		auto batch_all_distances_buffers_dev = std::vector<gpu::DeviceBuffer<float>>();
 
 		batch_multipliers.reserve(N_BATCH_STREAMS);
 		batch_all_distances_buffers_dev.reserve(N_BATCH_STREAMS);
 
 		for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
-			batch_multipliers.emplace_back(X_BATCH_SIZE, Y_BATCH_SIZE, d, batch_streams[i].get());
+			batch_multipliers.emplace_back(batch_streams[i].get());
+			batch_x_buffers_dev.emplace_back(gpu::compute_buffer_size<float>(X_BATCH_SIZE, d),batch_streams[i].get());
 			batch_all_distances_buffers_dev.emplace_back(gpu::compute_buffer_size<float>(X_BATCH_SIZE, Y_BATCH_SIZE),batch_streams[i].get());
 		}
 
@@ -197,14 +199,14 @@ static void FindNearestNeighbor(
 				auto batch_stream_index = iteration_count % N_BATCH_STREAMS;
 				++iteration_count;
 
-				batch_multipliers[batch_stream_index].load_x_batch(batch_x_p, batch_n_x, d);
+				batch_x_buffers_dev[batch_stream_index].copy_to_device(batch_x_p, gpu::compute_buffer_size<data_t>(batch_n_x, d));
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
             auto batch_n_y = Y_BATCH_SIZE;
-            auto batch_y_p = batch_y_dev_p.get() + (j * d);
+            auto batch_y_p = y_dev.get() + (j * d);
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
-						batch_multipliers[batch_stream_index].multiply(batch_y_p, batch_n_x, batch_n_y, d, 0, 
+						batch_multipliers[batch_stream_index].multiply(batch_x_buffers_dev[batch_stream_index].get(), batch_y_p, batch_n_x, batch_n_y, d, 0, 
 								batch_all_distances_buffers_dev[batch_stream_index].get());
 
 						kernels::first_blas(
@@ -219,40 +221,6 @@ static void FindNearestNeighbor(
 								out_knn_dev.get(),
 								batch_streams[batch_stream_index].get()
 								);
-						// norms_x_dev.copy_to_host(norms_x);
-						// norms_y_dev.copy_to_host(norms_y);
-						//all_distances_buf_dev.copy_to_host(all_distances_buf);
-						// Idea: Make the rest of the loop into a kernel
-						// Downside: this would add more data to be transferred to GPU, instead of from GPU (which is less contested)
-						// So let's wait for now
-						// Outside vars
-						// - i
-						// - batch_n_x
-						// - batch_n_y
-						// - norms_x [needs to be batched into GPU]
-						// - norms_y [needs to be batched into GPU]
-						// - out_distances [needs to be batched out of GPU]
-						// - out_knn [needs to be batched out of GPU]
-						/*
-            Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
-#pragma omp parallel for num_threads(g_n_threads)
-            for (size_t r = 0; r < batch_n_x; ++r) {
-                const auto i_idx = i + r;
-                const float norm_x_i = norms_x[i_idx];
-                float* row_p = distances_matrix.data() + r * batch_n_y;
-#pragma clang loop vectorize(enable)
-                for (size_t c = 0; c < batch_n_y; ++c) {
-                    row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
-                }
-                uint32_t knn_idx;
-								// Calculate minimal value of row
-                auto batch_top_1 = distances_matrix.row(r).minCoeff(&knn_idx);
-                if (batch_top_1 < out_distances[i_idx]) {
-                    out_distances[i_idx] = std::max(0.0f, batch_top_1);
-                    out_knn[i_idx] = j + knn_idx;
-                }
-            }
-						*/
         }
     }
 		stream.synchronize();
@@ -422,8 +390,9 @@ static void FindNearestNeighborWithPruning(
 		auto y_dev = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
 		y_dev.copy_to_device(y);
     auto stream = gpu::ManagedCudaStream();
-    auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
+    auto multiplier = gpu::BatchedMatrixMultiplier(stream.get());
 		auto all_distances_buf_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<float>(X_BATCH_SIZE, Y_BATCH_SIZE),stream.get());
+		auto batch_x_buffer_dev = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(X_BATCH_SIZE, d),stream.get());
 
 		auto norms_x_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_x),stream.get());
 		auto norms_y_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_y),stream.get());
@@ -451,8 +420,7 @@ static void FindNearestNeighborWithPruning(
             batch_n_x = n_x - i;
         }
 
-				auto batch_x_dev = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(batch_n_x, d),stream.get());
-				batch_x_dev.copy_to_device(batch_x_p);
+				batch_x_buffer_dev.copy_to_device(batch_x_p);
 
 				auto out_knn_batch_dev = gpu::DeviceBuffer<uint32_t>(gpu::compute_buffer_size<uint32_t>(batch_n_x),stream.get());
 				out_knn_batch_dev.copy_to_device(out_knn + i);
@@ -463,15 +431,13 @@ static void FindNearestNeighborWithPruning(
 					batch_n_x,
 					n_y,
 					d,
-					batch_x_dev.get(),
+					batch_x_buffer_dev.get(),
 					y_dev.get(),
 					out_knn_batch_dev.get(),
 					out_distances_batch_dev.get(),
 					stream.get());
-				// This copies too much, should only copy for current batch
 				out_distances_batch_dev.copy_to_host(out_distances + i);
 
-				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
         MatrixR materialize_x_left_cols;
 				size_t current_y_batch = 0;
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
@@ -690,7 +656,7 @@ static void FindNearestNeighborWithPruning(
             }
 =======
 
-						multiplier.multiply(batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf_dev.get());
+						multiplier.multiply(batch_x_buffer_dev.get(), batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf_dev.get());
 						kernels::norms(
 							batch_n_x,
 							batch_n_y,
