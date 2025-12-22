@@ -145,17 +145,7 @@ class BatchedMatrixMultiplier {
     using data_t = skmeans_value_t<Quantization::f32>;
 
   public:
-    BatchedMatrixMultiplier(
-        const std::size_t max_batch_n_x,
-        const std::size_t max_batch_n_y,
-        const std::size_t d,
-        const cudaStream_t stream
-    )
-        : _cublas_handle(stream),
-          _batch_x_dev_p(compute_buffer_size<data_t>(max_batch_n_x, d), stream)
-    //_batch_y_dev_p(compute_buffer_size<data_t>(max_batch_n_y, d), stream),
-    //_all_distances_dev_p(compute_buffer_size<float>(max_batch_n_y, max_batch_n_x), stream)
-    {}
+    BatchedMatrixMultiplier(const cudaStream_t stream) : _cublas_handle(stream) {}
 
     ~BatchedMatrixMultiplier() {}
     BatchedMatrixMultiplier(const BatchedMatrixMultiplier&) = delete;
@@ -164,17 +154,8 @@ class BatchedMatrixMultiplier {
 
     BatchedMatrixMultiplier(BatchedMatrixMultiplier&&) = default;
 
-    void load_x_batch(
-        const data_t* SKM_RESTRICT batch_x_p,
-        const size_t batch_n_x,
-        const size_t d
-    ) {
-        const auto size_x = compute_buffer_size<data_t>(batch_n_x, d);
-        _batch_x_dev_p.copy_to_device(batch_x_p, size_x);
-    }
-
     void multiply(
-        // const data_t* SKM_RESTRICT batch_x_p,
+        const data_t* SKM_RESTRICT batch_x_p,
         const data_t* SKM_RESTRICT batch_y_p,
         const size_t batch_n_x,
         const size_t batch_n_y,
@@ -182,6 +163,9 @@ class BatchedMatrixMultiplier {
         const size_t partial_d,
         float* SKM_RESTRICT all_distances_buf
     ) {
+        constexpr float ALPHA = 1.0f;
+        constexpr float BETA = 0.0f;
+
         const int m(static_cast<int>(batch_n_y)); // Rows of result (swapped for row-major)
         const int n(static_cast<int>(batch_n_x)); // Cols of result (swapped for row-major)
         const int k(
@@ -191,11 +175,6 @@ class BatchedMatrixMultiplier {
         const int lda(static_cast<int>(d)); // Leading dimension of y (row stride in row-major)
         const int ldb(static_cast<int>(d)); // Leading dimension of x (row stride in row-major)
         const int ldc(static_cast<int>(batch_n_y)); // Leading dimension of distances
-
-        // const auto size_y = compute_buffer_size<data_t>(batch_n_y, d);
-        // const auto size_out = compute_buffer_size<float>(batch_n_x, batch_n_y);
-
-        //_batch_y_dev_p.copy_to_device(batch_y_p, size_y);
 
         // TODO I think if you reverse A & B, you might not have to transpose at all
         cublasSgemm(
@@ -208,23 +187,16 @@ class BatchedMatrixMultiplier {
             &ALPHA,
             batch_y_p,
             ldb,
-            _batch_x_dev_p.get(),
+            batch_x_p,
             lda,
             &BETA,
             all_distances_buf,
             ldc
         );
-
-        //_all_distances_dev_p.copy_to_host(all_distances_buf, size_out);
     }
 
   private:
-    static constexpr float ALPHA = 1.0f;
-    static constexpr float BETA = 0.0f;
     ManagedCublasHandle _cublas_handle;
-    gpu::DeviceBuffer<data_t> _batch_x_dev_p;
-    // gpu::DeviceBuffer<data_t> _batch_y_dev_p;
-    // gpu::DeviceBuffer<float> _all_distances_dev_p;
 };
 } // namespace gpu
 } // namespace skmeans
