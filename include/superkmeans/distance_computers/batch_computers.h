@@ -419,8 +419,8 @@ static void FindNearestNeighborWithPruning(
     size_t* out_not_pruned_counts = nullptr
 ) {
     SKM_PROFILE_SCOPE("search");
-		auto batch_y_dev_p = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
-		batch_y_dev_p.copy_to_device(y);
+		auto y_dev = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), gpu::DEFAULT_STREAM);
+		y_dev.copy_to_device(y);
     auto stream = gpu::ManagedCudaStream();
     auto multiplier = gpu::BatchedMatrixMultiplier(X_BATCH_SIZE, Y_BATCH_SIZE, d, stream.get());
 		auto all_distances_buf_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<float>(X_BATCH_SIZE, Y_BATCH_SIZE),stream.get());
@@ -451,14 +451,25 @@ static void FindNearestNeighborWithPruning(
             batch_n_x = n_x - i;
         }
 
+				auto batch_x_dev = gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(batch_n_x, d),stream.get());
+				batch_x_dev.copy_to_device(batch_x_p);
+
+				auto out_knn_batch_dev = gpu::DeviceBuffer<uint32_t>(gpu::compute_buffer_size<uint32_t>(batch_n_x),stream.get());
+				out_knn_batch_dev.copy_to_device(out_knn + i);
+
+				auto out_distances_batch_dev = gpu::DeviceBuffer<distance_t>(gpu::compute_buffer_size<distance_t>(batch_n_x),stream.get());
+
 				kernels::GPUCalculateDistanceToCurrentCentroids(
 					batch_n_x,
+					n_y,
 					d,
-					i,
-					x,
-					y,
-					out_knn,
-					out_distances);
+					batch_x_dev.get(),
+					y_dev.get(),
+					out_knn_batch_dev.get(),
+					out_distances_batch_dev.get(),
+					stream.get());
+				// This copies too much, should only copy for current batch
+				out_distances_batch_dev.copy_to_host(out_distances + i);
 
 				multiplier.load_x_batch(batch_x_p, batch_n_x, d);
         MatrixR materialize_x_left_cols;
@@ -466,7 +477,7 @@ static void FindNearestNeighborWithPruning(
         for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
             auto batch_n_y = Y_BATCH_SIZE;
             //auto batch_y_p = y + (j * d);
-            auto batch_y_p = batch_y_dev_p.get() + (j * d);
+            auto batch_y_p = y_dev.get() + (j * d);
             if (j + Y_BATCH_SIZE > n_y) {
                 batch_n_y = n_y - j;
             }
