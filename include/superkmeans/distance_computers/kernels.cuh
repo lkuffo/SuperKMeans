@@ -336,7 +336,6 @@ static void GPUPrune(
 static void GPUSearchPDX(
     const size_t batch_n_x,
     const size_t batch_n_y,
-    const size_t i,
     const size_t d,
     const uint32_t partial_d,
     const data_t* SKM_RESTRICT x,
@@ -351,10 +350,9 @@ static void GPUSearchPDX(
 
 #pragma omp parallel for num_threads(g_n_threads) schedule(dynamic, 8)
     for (size_t r = 0; r < batch_n_x; ++r) {
-        const auto i_idx = i + r;
-        auto data_p = x + (i_idx * d);
+        auto data_p = x + (r * d);
 
-        knn_candidate_t assigned_centroid{out_knn[i_idx], out_distances[i_idx]};
+        knn_candidate_t assigned_centroid{out_knn[r], out_distances[r]};
 
         // PDXearch per vector
         auto partial_distances_p = all_distances_buf + r * batch_n_y;
@@ -370,9 +368,9 @@ static void GPUSearchPDX(
             local_not_pruned
         );
 
-        out_not_pruned_counts[i_idx] += local_not_pruned;
-        out_knn[i_idx] = assigned_centroid.index;
-        out_distances[i_idx] = assigned_centroid.distance;
+        out_not_pruned_counts[r] += local_not_pruned;
+        out_knn[r] = assigned_centroid.index;
+        out_distances[r] = assigned_centroid.distance;
     }
 }
 

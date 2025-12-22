@@ -673,15 +673,14 @@ static void FindNearestNeighborWithPruning(
 						kernels::GPUSearchPDX(
 							batch_n_x,
 							batch_n_y,
-							i,
 							d,
 							partial_d,
-							x,
+							batch_x_p,
 							constant_prune_data.as_view(),
 							cluster_data[current_y_batch].as_view(),
-							out_knn,
-							out_distances,
-							out_not_pruned_counts,
+							out_knn + i,
+							out_distances + i,
+							out_not_pruned_counts + i,
 							all_distances_buf);
 
 						current_y_batch += 1;
