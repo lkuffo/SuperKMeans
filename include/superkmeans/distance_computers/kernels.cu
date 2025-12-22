@@ -294,7 +294,7 @@ __device__ skmeans_distance_t<Quantization::f32> warp_calculate_distance_horizon
     return distance;
 };
 
-__global__ void kernel_calculate_distance_to_current_centroids(
+__global__ void calculate_distance_to_current_centroids_kernel(
     const uint32_t n_x,
     const uint32_t d,
     const data_t* SKM_RESTRICT x,
@@ -343,13 +343,13 @@ void GPUCalculateDistanceToCurrentCentroids(
     const auto N_THREADS_PER_ITEM = WARP_WIDTH;
     const auto ITEMS_PER_BLOCK = divide_round_up<uint32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
     const auto n_blocks = divide_round_up<uint32_t>(n_x, ITEMS_PER_BLOCK);
-    kernel_calculate_distance_to_current_centroids<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
+    calculate_distance_to_current_centroids_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
         n_x, d, x, y, out_knn, out_distances
     );
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 template <uint32_t NUM_DIMENSIONS>
-__device__ skmeans_distance_t<Quantization::f32> GPUDistanceHorizontalFixedDimensions(
+__device__ skmeans_distance_t<Quantization::f32> calculate_distance_with_fixed_horizontal_dimensions(
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector1,
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector2
 ) {
@@ -365,7 +365,7 @@ __device__ skmeans_distance_t<Quantization::f32> GPUDistanceHorizontalFixedDimen
     return distance;
 };
 
-__device__ skmeans_distance_t<Quantization::f32> GPUDistanceHorizontal(
+__device__ skmeans_distance_t<Quantization::f32> calculate_distance_with_horizontal_dimensions(
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector1,
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector2,
     const uint32_t num_dimensions
@@ -380,7 +380,7 @@ __device__ skmeans_distance_t<Quantization::f32> GPUDistanceHorizontal(
     return distance;
 };
 
-__device__ void GPUInitializeNotPrunedVectors(
+__device__ void initialize_pruning_positions_array(
     size_t& n_vectors_not_pruned,
     const skmeans_distance_t<Quantization::f32> pruning_threshold,
     uint32_t* pruning_positions,
@@ -397,7 +397,7 @@ __device__ void GPUInitializeNotPrunedVectors(
     }
 }
 
-__device__ void GPUUpdateNotPrunedVectors(
+__device__ void update_pruning_positions_array(
     size_t& n_vectors_not_pruned,
     const skmeans_distance_t<Quantization::f32> pruning_threshold,
     uint32_t* pruning_positions,
@@ -415,7 +415,7 @@ __device__ void GPUUpdateNotPrunedVectors(
     n_vectors_not_pruned = new_n_vectors_not_pruned;
 }
 
-__device__ void GPUSelectBestCandidate(
+__device__ void select_closest_vector(
     KNNCandidate<Quantization::f32>& best_candidate,
     const size_t n_vectors_not_pruned,
     const uint32_t* SKM_RESTRICT vector_indices,
@@ -434,15 +434,16 @@ __device__ void GPUSelectBestCandidate(
     }
 }
 
-__device__ void GPUPrune(
+__device__ void prune(
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT query,
     // const size_t y_batch,
     const ConstantPruneDataView constant_prune_data,
     const ClusterPruneDataView cluster_prune_data,
-    skmeans_distance_t<Quantization::f32>* pruning_distances, // all_distances_buf
-    KNNCandidate<Quantization::f32>& best_candidate, // initially prev centroid, then updated
-    uint32_t current_dimension_idx,                  //??
-    size_t& initial_not_pruned_accum
+    skmeans_distance_t<Quantization::f32>* pruning_distances, 
+    KNNCandidate<Quantization::f32>& best_candidate, 
+    uint32_t current_dimension_idx,                  
+    size_t& initial_not_pruned_accum,
+    const ThreadContext& thread_context
 ) {
     // TODO Make shared
     // alignas(64) 
@@ -454,7 +455,7 @@ __device__ void GPUPrune(
         prev_best_candidate_distance * constant_prune_data.ratios[current_dimension_idx];
     size_t n_vectors_not_pruned = 0;
 
-    GPUInitializeNotPrunedVectors(
+    initialize_pruning_positions_array(
         n_vectors_not_pruned,
         pruning_threshold,
         pruning_positions,
@@ -496,7 +497,7 @@ __device__ void GPUPrune(
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
-                pruning_distances[v_idx] += GPUDistanceHorizontalFixedDimensions<H_DIM_SIZE>(
+                pruning_distances[v_idx] += calculate_distance_with_fixed_horizontal_dimensions<H_DIM_SIZE>(
                     query + offset_query, cluster_prune_data.data + data_pos
                 );
             }
@@ -504,7 +505,7 @@ __device__ void GPUPrune(
             current_dimension_idx += H_DIM_SIZE;
             pruning_threshold =
                 prev_best_candidate_distance * constant_prune_data.ratios[current_dimension_idx];
-            GPUUpdateNotPrunedVectors(
+            update_pruning_positions_array(
                 n_vectors_not_pruned, pruning_threshold, pruning_positions, pruning_distances
             );
             if (n_vectors_not_pruned == 0) {
@@ -528,18 +529,18 @@ __device__ void GPUPrune(
                             (v_idx * constant_prune_data.num_vertical_dimensions) +
                             current_vertical_dimension;
             pruning_distances[v_idx] +=
-                GPUDistanceHorizontal(query + offset_query, data_pos, dimensions_left);
+                calculate_distance_with_horizontal_dimensions(query + offset_query, data_pos, dimensions_left);
         }
         current_dimension_idx = constant_prune_data.num_dimensions;
         pruning_threshold =
             prev_best_candidate_distance * constant_prune_data.ratios[current_dimension_idx];
-        GPUUpdateNotPrunedVectors(
+        update_pruning_positions_array(
             n_vectors_not_pruned, pruning_threshold, pruning_positions, pruning_distances
         );
     }
 
     if (n_vectors_not_pruned) {
-        GPUSelectBestCandidate(
+        select_closest_vector(
             best_candidate,
             n_vectors_not_pruned,
             cluster_prune_data.vector_indices,
@@ -549,7 +550,7 @@ __device__ void GPUPrune(
     }
 }
 
-__global__ void KernelGPUSearchPDX(
+__global__ void search_closest_centroid_with_pruning_kernel(
     const size_t batch_n_x,
     const size_t batch_n_y,
     const size_t d,
@@ -577,14 +578,15 @@ __global__ void KernelGPUSearchPDX(
     auto partial_distances_p = all_distances_buf + r * batch_n_y;
     size_t local_not_pruned = 0;
 
-    GPUPrune(
+    prune(
         data_p,
         constant_prune_data,
         cluster_prune_data,
         partial_distances_p,
         assigned_centroid,
         partial_d,
-        local_not_pruned
+        local_not_pruned,
+				thread_context
     );
 
     out_not_pruned_counts[r] += local_not_pruned;
@@ -611,7 +613,7 @@ void GPUSearchPDX(
     const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
     const auto n_blocks = divide_round_up<int32_t>(batch_n_x, ITEMS_PER_BLOCK);
 
-    KernelGPUSearchPDX<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
+    search_closest_centroid_with_pruning_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
         batch_n_x,
         batch_n_y,
         d,
