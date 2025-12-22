@@ -13,7 +13,7 @@ namespace skmeans {
 
 namespace gpu {
 
-cudaStream_t DEFAULT_STREAM = 0;
+constexpr cudaStream_t DEFAULT_STREAM = 0;
 
 inline void check_CUDA_error(cudaError_t code, const char* file, int line, bool abort = true) {
     if (code != cudaSuccess) {
