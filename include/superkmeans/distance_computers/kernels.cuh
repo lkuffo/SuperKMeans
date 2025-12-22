@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 
 #include <Eigen/Eigen/Dense>
+#include <memory>
 
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
@@ -127,18 +128,39 @@ static void GPUSelectBestCandidate(
     }
 }
 
+struct ConstantPruneDataView {
+    size_t num_dimensions;
+    size_t num_horizontal_dimensions;
+    size_t num_vertical_dimensions;
+    float* ratios;
+};
+
 class ConstantPruneData {
   public:
     size_t num_dimensions;
     size_t num_horizontal_dimensions;
     size_t num_vertical_dimensions;
-    std::vector<float> ratios;
+    std::unique_ptr<float[]> ratios;
 
     ConstantPruneData(const layout_t& pdx_centroids) {
         num_dimensions = pdx_centroids.searcher->pdx_data.num_dimensions;
         num_horizontal_dimensions = pdx_centroids.searcher->pdx_data.num_horizontal_dimensions;
         num_vertical_dimensions = pdx_centroids.searcher->pdx_data.num_vertical_dimensions;
-        ratios = pdx_centroids.searcher->pruner.ratios;
+        ratios = std::make_unique<float[]>(pdx_centroids.searcher->pruner.ratios.size());
+        std::copy(
+            pdx_centroids.searcher->pruner.ratios.begin(),
+            pdx_centroids.searcher->pruner.ratios.end(),
+            ratios.get()
+        );
+    }
+
+    ConstantPruneDataView as_view() const {
+        return ConstantPruneDataView{
+            num_dimensions,
+            num_horizontal_dimensions,
+            num_vertical_dimensions,
+            ratios.get(),
+        };
     }
 };
 
@@ -161,7 +183,7 @@ class ClusterPruneData {
 static void GPUPrune(
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT query,
     // const size_t y_batch,
-    const ConstantPruneData constant_prune_data,
+    const ConstantPruneDataView constant_prune_data,
     const ClusterPruneData cluster_prune_data,
     skmeans_distance_t<Quantization::f32>* pruning_distances, // all_distances_buf
     KNNCandidate<Quantization::f32>& best_candidate, // initially prev centroid, then updated
@@ -279,7 +301,7 @@ static void GPUSearchPDX(
     const size_t d,
     const uint32_t partial_d,
     const data_t* SKM_RESTRICT x,
-    const ConstantPruneData constant_prune_data,
+    const ConstantPruneDataView constant_prune_data,
     const ClusterPruneData cluster_prune_data,
     uint32_t* SKM_RESTRICT out_knn,
     distance_t* SKM_RESTRICT out_distances,
@@ -323,7 +345,7 @@ void GPUCalculateDistanceToCurrentCentroids(
     const data_t* SKM_RESTRICT y,
     uint32_t* SKM_RESTRICT out_knn,
     distance_t* SKM_RESTRICT out_distances,
-		const cudaStream_t stream
+    const cudaStream_t stream
 );
 
 } // namespace kernels
