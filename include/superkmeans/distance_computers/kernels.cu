@@ -225,6 +225,7 @@ void health_check_buffer(const T* buffer, const std::size_t size) {
     // printf("Pre Health Check\n");
     health_check_buffer_kernel<<<n_blocks, N_THREADS>>>(buffer, size);
     CUDA_SAFE_CALL(cudaDeviceSynchronize());
+
     // printf("Post Health Check\n");
 }
 
@@ -306,7 +307,7 @@ void norms(
     norms_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
         batch_n_x, batch_n_y, norms_x + i, norms_y + j, all_distances_buffer, max
     );
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    //CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 
 __device__ skmeans_distance_t<Quantization::f32> warp_calculate_distance_horizontal_dimensions(
@@ -382,7 +383,7 @@ void GPUCalculateDistanceToCurrentCentroids(
     calculate_distance_to_current_centroids_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
         n_x, d, x, y, out_knn, out_distances
     );
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    // CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 template <uint32_t NUM_DIMENSIONS>
 __device__ skmeans_distance_t<Quantization::f32>
