@@ -407,7 +407,7 @@ static void FindNearestNeighborWithPruning(
 
 		for (size_t i = 0; i < n_y_clusters; ++i) {
 			auto y_batch_cluster = pdx_centroids.searcher->pdx_data.clusters[i];
-			cluster_data.emplace_back(y_batch_cluster);
+			cluster_data.emplace_back(y_batch_cluster, constant_prune_data.as_view(), n_y);
 		}
 
 		stream.synchronize();
@@ -470,7 +470,7 @@ static void FindNearestNeighborWithPruning(
 							partial_d,
 							x,
 							constant_prune_data.as_view(),
-							cluster_data[current_y_batch],
+							cluster_data[current_y_batch].as_view(),
 							out_knn,
 							out_distances,
 							out_not_pruned_counts,
