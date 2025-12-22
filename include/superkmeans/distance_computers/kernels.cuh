@@ -164,19 +164,58 @@ class ConstantPruneData {
     }
 };
 
-class ClusterPruneData {
-  public:
+struct ClusterPruneDataView {
     skmeans_value_t<Quantization::f32>* data;
     size_t n_vectors;
     uint32_t* vector_indices;
     skmeans_value_t<Quantization::f32>* aux_vertical_dimensions_in_horizontal_layout;
+};
 
-    ClusterPruneData(Cluster<Quantization::f32> y_batch_cluster) {
-        data = y_batch_cluster.data;
+class ClusterPruneData {
+  public:
+    std::unique_ptr<skmeans_value_t<Quantization::f32>[]> data;
+    size_t n_vectors;
+    std::unique_ptr<uint32_t[]> vector_indices;
+    std::unique_ptr<skmeans_value_t<Quantization::f32>[]>
+        aux_vertical_dimensions_in_horizontal_layout;
+
+    ClusterPruneData(
+        Cluster<Quantization::f32> y_batch_cluster,
+        const ConstantPruneDataView& constant_prune_data,
+        const size_t n_centroids
+    ) {
+        const auto data_buffer_size =
+            y_batch_cluster.num_embeddings * constant_prune_data.num_dimensions;
+        data = std::make_unique<skmeans_value_t<Quantization::f32>[]>(data_buffer_size);
+        std::copy(y_batch_cluster.data, y_batch_cluster.data + data_buffer_size, data.get());
+
         n_vectors = y_batch_cluster.num_embeddings;
-        vector_indices = y_batch_cluster.indices;
+        vector_indices = std::make_unique<uint32_t[]>(y_batch_cluster.num_embeddings);
+        std::copy(
+            y_batch_cluster.indices,
+            y_batch_cluster.indices + y_batch_cluster.num_embeddings,
+            vector_indices.get()
+        );
+
+        const auto aux_size =
+            constant_prune_data.num_vertical_dimensions * y_batch_cluster.num_embeddings;
         aux_vertical_dimensions_in_horizontal_layout =
-            y_batch_cluster.aux_vertical_dimensions_in_horizontal_layout;
+            std::make_unique<skmeans_value_t<Quantization::f32>[]>(aux_size);
+
+        std::copy(
+            y_batch_cluster.aux_vertical_dimensions_in_horizontal_layout,
+            y_batch_cluster.aux_vertical_dimensions_in_horizontal_layout + aux_size,
+            aux_vertical_dimensions_in_horizontal_layout.get()
+        );
+    }
+
+    ClusterPruneDataView as_view() const {
+        return ClusterPruneDataView{
+            data.get(),
+            n_vectors,
+            vector_indices.get(),
+            aux_vertical_dimensions_in_horizontal_layout.get()
+        };
     }
 };
 
@@ -184,7 +223,7 @@ static void GPUPrune(
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT query,
     // const size_t y_batch,
     const ConstantPruneDataView constant_prune_data,
-    const ClusterPruneData cluster_prune_data,
+    const ClusterPruneDataView cluster_prune_data,
     skmeans_distance_t<Quantization::f32>* pruning_distances, // all_distances_buf
     KNNCandidate<Quantization::f32>& best_candidate, // initially prev centroid, then updated
     uint32_t current_dimension_idx,                  //??
@@ -302,7 +341,7 @@ static void GPUSearchPDX(
     const uint32_t partial_d,
     const data_t* SKM_RESTRICT x,
     const ConstantPruneDataView constant_prune_data,
-    const ClusterPruneData cluster_prune_data,
+    const ClusterPruneDataView cluster_prune_data,
     uint32_t* SKM_RESTRICT out_knn,
     distance_t* SKM_RESTRICT out_distances,
     size_t* SKM_RESTRICT out_not_pruned_counts,
