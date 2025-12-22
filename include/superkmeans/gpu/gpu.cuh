@@ -176,7 +176,6 @@ class BatchedMatrixMultiplier {
         const int ldb(static_cast<int>(d)); // Leading dimension of x (row stride in row-major)
         const int ldc(static_cast<int>(batch_n_y)); // Leading dimension of distances
 
-        // TODO I think if you reverse A & B, you might not have to transpose at all
         cublasSgemm(
             _cublas_handle.handle,
             CUBLAS_OP_T,

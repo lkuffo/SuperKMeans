@@ -469,7 +469,7 @@ static void FindNearestNeighborWithPruning(
 							d,
 							partial_d,
 							x,
-							constant_prune_data,
+							constant_prune_data.as_view(),
 							cluster_data[current_y_batch],
 							out_knn,
 							out_distances,
