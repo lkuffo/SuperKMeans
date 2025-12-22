@@ -24,6 +24,7 @@ inline void check_CUDA_error(cudaError_t code, const char* file, int line, bool 
 
 const uint32_t WARP_WIDTH = 32;
 const uint32_t FULL_MASK = 0xffffffff;
+const uint32_t FIRST_LANE_MASK = 0x0;
 
 struct ThreadContext {
     uint32_t thread_id;
@@ -69,6 +70,11 @@ __device__ __forceinline__ T warp_reduce_sum(T value) {
     }
 
     return value; // valid in first lane only
+}
+
+template <typename T>
+__device__ __forceinline__ T warp_broadcast(T value) {
+	return __shfl_sync(FULL_MASK, value, FIRST_LANE_MASK); 
 }
 
 struct IndexMinWarpReductionResult {
@@ -351,32 +357,48 @@ void GPUCalculateDistanceToCurrentCentroids(
 template <uint32_t NUM_DIMENSIONS>
 __device__ skmeans_distance_t<Quantization::f32> calculate_distance_with_fixed_horizontal_dimensions(
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector1,
-    const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector2
+    const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector2,
+    const ThreadContext& thread_context
 ) {
+    // Assumes one warp collaborating
+    // All threads in warp participate
+    // All thread returns relevant distance, (but should probably be only one of them)
+
     // TODO One of the vectors is constant for every calculation, so we can store it in registers
     //
     skmeans_distance_t<Quantization::f32> distance = 0.0;
     // DISTANCE calculation Do this with 32 threads
-    for (size_t dimension_idx = 0; dimension_idx < NUM_DIMENSIONS; ++dimension_idx) {
+    for (size_t dimension_idx = thread_context.lane_id; dimension_idx < NUM_DIMENSIONS;
+         dimension_idx += WARP_WIDTH) {
         skmeans_distance_t<Quantization::f32> to_multiply =
             vector1[dimension_idx] - vector2[dimension_idx];
         distance += to_multiply * to_multiply;
     }
+    distance = warp_reduce_sum(distance);
+		distance = warp_broadcast(distance);
     return distance;
 };
 
 __device__ skmeans_distance_t<Quantization::f32> calculate_distance_with_horizontal_dimensions(
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector1,
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector2,
-    const uint32_t num_dimensions
+    const uint32_t num_dimensions,
+    const ThreadContext& thread_context
 ) {
+    // Assumes one warp collaborating
+    // All threads in warp participate
+    // All thread returns relevant distance, (but should probably be only one of them)
+
     skmeans_distance_t<Quantization::f32> distance = 0.0;
-    // DISTANCE calculation Do this with 32 threads
-    for (size_t dimension_idx = 0; dimension_idx < num_dimensions; ++dimension_idx) {
+
+    for (size_t dimension_idx = thread_context.lane_id; dimension_idx < num_dimensions;
+         dimension_idx += WARP_WIDTH) {
         skmeans_distance_t<Quantization::f32> to_multiply =
             vector1[dimension_idx] - vector2[dimension_idx];
         distance += to_multiply * to_multiply;
     }
+    distance = warp_reduce_sum(distance);
+		distance = warp_broadcast(distance);
     return distance;
 };
 
@@ -498,7 +520,7 @@ __device__ void prune(
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
                 pruning_distances[v_idx] += calculate_distance_with_fixed_horizontal_dimensions<H_DIM_SIZE>(
-                    query + offset_query, cluster_prune_data.data + data_pos
+                    query + offset_query, cluster_prune_data.data + data_pos, thread_context
                 );
             }
 
@@ -529,7 +551,7 @@ __device__ void prune(
                             (v_idx * constant_prune_data.num_vertical_dimensions) +
                             current_vertical_dimension;
             pruning_distances[v_idx] +=
-                calculate_distance_with_horizontal_dimensions(query + offset_query, data_pos, dimensions_left);
+                calculate_distance_with_horizontal_dimensions(query + offset_query, data_pos, dimensions_left, thread_context);
         }
         current_dimension_idx = constant_prune_data.num_dimensions;
         pruning_threshold =
@@ -566,7 +588,7 @@ __global__ void search_closest_centroid_with_pruning_kernel(
     auto thread_context = ThreadContext();
     auto r = thread_context.warp_id;
 
-    if (batch_n_x <= r || !thread_context.is_first_lane()) {
+    if (batch_n_x <= r) {
         return;
     }
 
@@ -589,9 +611,11 @@ __global__ void search_closest_centroid_with_pruning_kernel(
 				thread_context
     );
 
-    out_not_pruned_counts[r] += local_not_pruned;
-    out_knn[r] = assigned_centroid.index;
-    out_distances[r] = assigned_centroid.distance;
+		if (thread_context.is_first_lane()) {
+			out_not_pruned_counts[r] += local_not_pruned;
+			out_knn[r] = assigned_centroid.index;
+			out_distances[r] = assigned_centroid.distance;
+		}
 }
 
 void GPUSearchPDX(
