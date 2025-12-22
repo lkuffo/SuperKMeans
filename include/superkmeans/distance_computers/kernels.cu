@@ -465,7 +465,6 @@ __device__ void update_pruning_positions_array(
     const auto previous_n_vectors_not_pruned = n_vectors_not_pruned;
 
     n_vectors_not_pruned = 0;
-    //for (size_t vector_idx = 0; vector_idx < previous_n_vectors_not_pruned; ++vector_idx) {
     for (size_t vector_idx = thread_context.lane_id; vector_idx < previous_n_vectors_not_pruned; vector_idx += WARP_WIDTH) {
         auto position = pruning_positions[vector_idx];
         auto distance = pruning_distances[position];
@@ -478,8 +477,6 @@ __device__ void update_pruning_positions_array(
         );
         if (distance_is_under_threshold) {
             pruning_positions[old_n_vectors_not_pruned + offset] = position;
-            //pruning_positions[n_vectors_not_pruned] = position;
-            //n_vectors_not_pruned += 1;
         }
     }
     n_vectors_not_pruned = warp_broadcast(n_vectors_not_pruned);
@@ -490,18 +487,33 @@ __device__ void select_closest_vector(
     const size_t n_vectors_not_pruned,
     const uint32_t* SKM_RESTRICT vector_indices,
     const uint32_t* SKM_RESTRICT pruning_positions,
-    const skmeans_distance_t<Quantization::f32>* SKM_RESTRICT pruning_distances
+    const skmeans_distance_t<Quantization::f32>* SKM_RESTRICT pruning_distances,
+		const ThreadContext& thread_context
 ) {
     // TODO For all kernels, size_t is not necessary here
-    // TODO: do this collaboratively
-    for (size_t position_idx = 0; position_idx < n_vectors_not_pruned; ++position_idx) {
+
+    // for (size_t position_idx = 0; position_idx < n_vectors_not_pruned; ++position_idx) {
+    //     size_t index = pruning_positions[position_idx];
+    //     auto current_distance = pruning_distances[index];
+    //     if (current_distance < best_candidate.distance) {
+    //         best_candidate.distance = current_distance;
+    //         best_candidate.index = vector_indices[index];
+    //     }
+    // }
+
+		// Not sure there are enough n_vectors_not_pruned to actually make collaboratively doing this worth it
+    for (size_t position_idx = thread_context.lane_id; position_idx < n_vectors_not_pruned; position_idx += WARP_WIDTH) {
         size_t index = pruning_positions[position_idx];
-        auto current_distance = pruning_distances[index];
-        if (current_distance < best_candidate.distance) {
-            best_candidate.distance = current_distance;
+        auto distance = pruning_distances[index];
+        if (distance < best_candidate.distance) {
+            best_candidate.distance = distance;
             best_candidate.index = vector_indices[index];
         }
     }
+
+    auto result = index_min_warp_reduction(best_candidate.index, best_candidate.distance);
+		best_candidate.index = warp_broadcast(result.index);
+		best_candidate.distance = warp_broadcast(result.value);
 }
 
 template <uint32_t WARPS_PER_BLOCK>
@@ -621,7 +633,8 @@ __device__ void prune(
             n_vectors_not_pruned,
             cluster_prune_data.vector_indices,
             pruning_positions,
-            pruning_distances
+            pruning_distances,
+						thread_context
         );
     }
 }
