@@ -60,7 +60,6 @@ namespace skmeans {
 static inline constexpr float PROPORTION_HORIZONTAL_DIM = 0.75;
 static inline constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;
 static inline constexpr size_t H_DIM_SIZE = 64;
-
 static inline constexpr uint32_t MIN_PARTIAL_D = 16;
 
 static inline constexpr size_t X_BATCH_SIZE = 4096;
