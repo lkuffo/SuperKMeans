@@ -399,7 +399,7 @@ static void FindNearestNeighborWithPruning(
 		norms_x_dev.copy_to_device(norms_x);
 		norms_y_dev.copy_to_device(norms_y);
 
-		auto constant_prune_data = kernels::ConstantPruneData(pdx_centroids);
+		auto constant_prune_data = kernels::ConstantPruneData(pdx_centroids, stream.get());
 
 		const size_t n_y_clusters = (n_y + Y_BATCH_SIZE - 1) / Y_BATCH_SIZE;
 		auto cluster_data = std::vector<kernels::ClusterPruneData>();
@@ -407,7 +407,7 @@ static void FindNearestNeighborWithPruning(
 
 		for (size_t i = 0; i < n_y_clusters; ++i) {
 			auto y_batch_cluster = pdx_centroids.searcher->pdx_data.clusters[i];
-			cluster_data.emplace_back(y_batch_cluster, constant_prune_data.as_view(), n_y);
+			cluster_data.emplace_back(y_batch_cluster, constant_prune_data.as_view(), n_y, stream.get());
 		}
 
 		stream.synchronize();
@@ -425,6 +425,10 @@ static void FindNearestNeighborWithPruning(
 				auto out_knn_batch_dev = gpu::DeviceBuffer<uint32_t>(gpu::compute_buffer_size<uint32_t>(batch_n_x),stream.get());
 				out_knn_batch_dev.copy_to_device(out_knn + i);
 
+				auto out_not_pruned_counts_batch_dev = gpu::DeviceBuffer<size_t>(
+						gpu::compute_buffer_size<size_t>(batch_n_x),stream.get());
+				out_not_pruned_counts_batch_dev.copy_to_device(out_not_pruned_counts + i);
+
 				auto out_distances_batch_dev = gpu::DeviceBuffer<distance_t>(gpu::compute_buffer_size<distance_t>(batch_n_x),stream.get());
 
 				kernels::GPUCalculateDistanceToCurrentCentroids(
@@ -436,7 +440,6 @@ static void FindNearestNeighborWithPruning(
 					out_knn_batch_dev.get(),
 					out_distances_batch_dev.get(),
 					stream.get());
-				out_distances_batch_dev.copy_to_host(out_distances + i);
 
         MatrixR materialize_x_left_cols;
 				size_t current_y_batch = 0;
@@ -459,7 +462,6 @@ static void FindNearestNeighborWithPruning(
 							all_distances_buf_dev.get(),
 							stream.get()
 						);
-						all_distances_buf_dev.copy_to_host(all_distances_buf, gpu::compute_buffer_size<float>(batch_n_x, batch_n_y));
 						stream.synchronize();
 
 						kernels::GPUSearchPDX(
@@ -467,13 +469,18 @@ static void FindNearestNeighborWithPruning(
 							batch_n_y,
 							d,
 							partial_d,
-							batch_x_p,
+							batch_x_buffer_dev.get(),
 							constant_prune_data.as_view(),
 							cluster_data[current_y_batch].as_view(),
-							out_knn + i,
-							out_distances + i,
-							out_not_pruned_counts + i,
-							all_distances_buf);
+							out_knn_batch_dev.get(),
+							out_distances_batch_dev.get(),
+							out_not_pruned_counts_batch_dev.get(),
+							all_distances_buf_dev.get(), 
+							stream.get());
+						out_knn_batch_dev.copy_to_host(out_knn + i);
+						out_distances_batch_dev.copy_to_host(out_distances + i);
+						out_not_pruned_counts_batch_dev.copy_to_host(out_not_pruned_counts + i);
+						stream.synchronize();
 
 						current_y_batch += 1;
         }
