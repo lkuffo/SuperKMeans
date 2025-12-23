@@ -467,9 +467,9 @@ static void FindNearestNeighborWithPruning(
 					n_y,
 					d,
 					batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),
-					y_dev.get(),
-					out_knn_dev.get() + i,
-					out_distances_dev.get() + i,
+					y_dev.get(), // const
+					out_knn_dev.get() + i, // const
+					out_distances_dev.get() + i, // mutated
 					batch_stream_buffers[current_stream].stream);
 
         MatrixR materialize_x_left_cols;
@@ -483,22 +483,22 @@ static void FindNearestNeighborWithPruning(
             }
 
 						batch_stream_buffers[current_stream].multiplier.multiply(
-							batch_stream_buffers[current_stream].batch_x_buffer_dev.get(), 
-							batch_y_p, 
+							batch_stream_buffers[current_stream].batch_x_buffer_dev.get(), // const
+							batch_y_p, // const
 							batch_n_x, 
 							batch_n_y, 
 							d, 
 							partial_d, 
-							batch_stream_buffers[current_stream].all_distances_buf_dev.get()
+							batch_stream_buffers[current_stream].all_distances_buf_dev.get() // mutated
 						);
 						kernels::norms(
 							batch_n_x,
 							batch_n_y,
 							i,
 							j,
-							norms_x_dev.get(),
-							norms_y_dev.get(),
-							batch_stream_buffers[current_stream].all_distances_buf_dev.get(),
+							norms_x_dev.get(), // const
+							norms_y_dev.get(), // const
+							batch_stream_buffers[current_stream].all_distances_buf_dev.get(), // mutated
 							batch_stream_buffers[current_stream].stream
 						);
 
@@ -507,25 +507,25 @@ static void FindNearestNeighborWithPruning(
 							batch_n_y,
 							d,
 							partial_d,
-							batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),
-							constant_prune_data.as_view(),
-							cluster_data[current_y_batch].as_view(),
-							out_knn_dev.get() + i,
-							out_distances_dev.get() + i,
-							out_not_pruned_counts_dev.get() + i,
-							batch_stream_buffers[current_stream].all_distances_buf_dev.get(), 
-							batch_stream_buffers[current_stream].stream);
+							batch_stream_buffers[current_stream].batch_x_buffer_dev.get(), // const
+							constant_prune_data.as_view(), // const
+							cluster_data[current_y_batch].as_view(), // const
+							out_knn_dev.get() + i, // mutated
+							out_distances_dev.get() + i, // mutated
+							out_not_pruned_counts_dev.get() + i, // mutated
+							batch_stream_buffers[current_stream].all_distances_buf_dev.get(), // mutated
+							batch_stream_buffers[current_stream].stream); 
 
 						current_y_batch += 1;
         }
     }
+		for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
+			batch_streams[i].synchronize();
+		}
 		out_knn_dev.copy_to_host(out_knn);
 		out_distances_dev.copy_to_host(out_distances);
 		out_not_pruned_counts_dev.copy_to_host(out_not_pruned_counts);
 		stream.synchronize();
-		for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
-			batch_streams[i].synchronize();
-		}
 }
 };
 
