@@ -142,6 +142,10 @@ target_link_libraries(pareto_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp ../include/superkmeans/distance_computers/kernels.cu)
 target_link_libraries(ad_hoc_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
+target_compile_options(ad_hoc_superkmeans.out PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>
+)
+
 # Microbenchmark for InitPositionsArray SIMD optimization
 add_executable(microbenchmark_init_positions_array.out microbenchmark_init_positions_array.cpp)
 target_link_libraries(microbenchmark_init_positions_array.out PRIVATE ${BENCH_COMMON_LIBS})
