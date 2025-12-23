@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <system_error>
 #include <utility>
 
@@ -217,16 +218,70 @@ constexpr T divide_round_up(const T a, const T b) {
     return (a + b - 1) / b;
 }
 
-template <typename T>
-void health_check_buffer(const T* buffer, const std::size_t size) {
-    const auto N_THREADS = 1024;
-    const auto n_blocks = divide_round_up<int32_t>(size, N_THREADS);
+// template <typename T>
+// void health_check_buffer(const T* buffer, const std::size_t size) {
+//     const auto N_THREADS = 1024;
+//     const auto n_blocks = divide_round_up<int32_t>(size, N_THREADS);
+//
+//     // printf("Pre Health Check\n");
+//     health_check_buffer_kernel<<<n_blocks, N_THREADS>>>(buffer, size);
+//     CUDA_SAFE_CALL(cudaDeviceSynchronize());
+//
+//     // printf("Post Health Check\n");
+// }
 
-    // printf("Pre Health Check\n");
-    health_check_buffer_kernel<<<n_blocks, N_THREADS>>>(buffer, size);
-    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+template<typename T>
+__global__ void vector_addition_kernel(
+    T* vector,
+    const T constant,
+    const size_t n
+) {
+    auto thread_context = ThreadContext();
 
-    // printf("Post Health Check\n");
+    if (n <= thread_context.thread_id) {
+        return;
+    }
+
+    vector[thread_context.thread_id] += constant;
+}
+
+template<typename T>
+void vector_addition(
+    T* vector,
+    const T constant,
+    const size_t n,
+    const cudaStream_t stream
+) {
+    const auto N_THREADS_PER_BLOCK = 256;
+    const auto N_THREADS_PER_ITEM = 1;
+    const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
+    const auto n_blocks = divide_round_up<int32_t>(n, ITEMS_PER_BLOCK);
+    vector_addition_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(vector, constant, n);
+}
+
+void trigger_gpu_initialization() {
+	using T = uint32_t;
+
+	constexpr auto N = size_t{1024};
+	constexpr auto INITIAL_VALUE = T{1};
+	constexpr auto CONSTANT = T{2};
+	constexpr auto EXPECTED_RESULT = INITIAL_VALUE + CONSTANT;
+
+	auto buffer = std::make_unique<T[]>(N);
+	std::fill_n(buffer.get(), N, INITIAL_VALUE);
+
+	auto stream = gpu::ManagedCudaStream();
+	auto buffer_dev = gpu::DeviceBuffer<T>(gpu::compute_buffer_size<T>(N), stream.get());
+
+	buffer_dev.copy_to_device(buffer.get());
+	vector_addition(buffer_dev.get(), CONSTANT, N, stream.get());
+	buffer_dev.copy_to_host(buffer.get());
+
+	for (size_t i{0}; i < N; ++i) {
+		if (buffer.get()[i] != EXPECTED_RESULT) {
+			printf("Something went wrong during 'trigger_gpu_initialization' at buffer[%lu]!\n", i);
+		}
+	}
 }
 
 void first_blas(
@@ -307,7 +362,7 @@ void norms(
     norms_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
         batch_n_x, batch_n_y, norms_x + i, norms_y + j, all_distances_buffer, max
     );
-    //CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    // CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
 
 __device__ skmeans_distance_t<Quantization::f32> warp_calculate_distance_horizontal_dimensions(
@@ -466,7 +521,8 @@ __device__ void update_pruning_positions_array(
     const auto previous_n_vectors_not_pruned = n_vectors_not_pruned;
 
     n_vectors_not_pruned = 0;
-    for (size_t vector_idx = thread_context.lane_id; vector_idx < previous_n_vectors_not_pruned; vector_idx += WARP_WIDTH) {
+    for (size_t vector_idx = thread_context.lane_id; vector_idx < previous_n_vectors_not_pruned;
+         vector_idx += WARP_WIDTH) {
         auto position = pruning_positions[vector_idx];
         auto distance = pruning_distances[position];
 
@@ -489,7 +545,7 @@ __device__ void select_closest_vector(
     const uint32_t* SKM_RESTRICT vector_indices,
     const uint32_t* SKM_RESTRICT pruning_positions,
     const skmeans_distance_t<Quantization::f32>* SKM_RESTRICT pruning_distances,
-		const ThreadContext& thread_context
+    const ThreadContext& thread_context
 ) {
     // TODO For all kernels, size_t is not necessary here
 
@@ -502,8 +558,10 @@ __device__ void select_closest_vector(
     //     }
     // }
 
-		// Not sure there are enough n_vectors_not_pruned to actually make collaboratively doing this worth it
-    for (size_t position_idx = thread_context.lane_id; position_idx < n_vectors_not_pruned; position_idx += WARP_WIDTH) {
+    // Not sure there are enough n_vectors_not_pruned to actually make collaboratively doing this
+    // worth it
+    for (size_t position_idx = thread_context.lane_id; position_idx < n_vectors_not_pruned;
+         position_idx += WARP_WIDTH) {
         size_t index = pruning_positions[position_idx];
         auto distance = pruning_distances[index];
         if (distance < best_candidate.distance) {
@@ -513,8 +571,8 @@ __device__ void select_closest_vector(
     }
 
     auto result = index_min_warp_reduction(best_candidate.index, best_candidate.distance);
-		best_candidate.index = warp_broadcast(result.index);
-		best_candidate.distance = warp_broadcast(result.value);
+    best_candidate.index = warp_broadcast(result.index);
+    best_candidate.distance = warp_broadcast(result.value);
 }
 
 template <uint32_t WARPS_PER_BLOCK>
@@ -594,7 +652,11 @@ __device__ void prune(
             pruning_threshold =
                 prev_best_candidate_distance * constant_prune_data.ratios[current_dimension_idx];
             update_pruning_positions_array(
-                n_vectors_not_pruned, pruning_threshold, pruning_positions, pruning_distances, thread_context
+                n_vectors_not_pruned,
+                pruning_threshold,
+                pruning_positions,
+                pruning_distances,
+                thread_context
             );
             if (n_vectors_not_pruned == 0) {
                 break;
@@ -624,7 +686,11 @@ __device__ void prune(
         pruning_threshold =
             prev_best_candidate_distance * constant_prune_data.ratios[current_dimension_idx];
         update_pruning_positions_array(
-            n_vectors_not_pruned, pruning_threshold, pruning_positions, pruning_distances, thread_context
+            n_vectors_not_pruned,
+            pruning_threshold,
+            pruning_positions,
+            pruning_distances,
+            thread_context
         );
     }
 
@@ -635,7 +701,7 @@ __device__ void prune(
             cluster_prune_data.vector_indices,
             pruning_positions,
             pruning_distances,
-						thread_context
+            thread_context
         );
     }
 }
