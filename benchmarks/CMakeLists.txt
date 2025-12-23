@@ -149,6 +149,9 @@ target_link_libraries(pareto_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp ../include/superkmeans/distance_computers/kernels.cu)
 target_link_libraries(ad_hoc_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
+target_compile_options(ad_hoc_superkmeans.out PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+
 # Sweet pruning spot benchmark (grid search over pruning parameters)
 add_executable(sweet_pruning_spot_superkmeans.out sweet_pruning_spot_superkmeans.cpp)
 target_link_libraries(sweet_pruning_spot_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
