@@ -19,7 +19,18 @@
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/superkmeans.h"
 
+#include "superkmeans/distance_computers/kernels.cuh"
+
 int main(int argc, char* argv[]) {
+#ifdef USE_CUDA
+    // Trigger GPU Initialization
+    // We need to do this before benchmarking, as the GPU will only initialize
+    // when the first kernel is launched. Therefore we now launch a bogus kernel first.
+    printf("Trigger GPU initialization.\n");
+    skmeans::kernels::trigger_gpu_initialization();
+    printf("Triggered GPU initialization.\n");
+#endif
+
     // Experiment configuration
     const std::string algorithm = "superkmeans";
 

@@ -23,6 +23,8 @@ using norms_t = skmeans_value_t<Quantization::f32>;
 using knn_candidate_t = KNNCandidate<Quantization::f32>;
 using layout_t = PDXLayout<Quantization::f32, DistanceFunction::l2>;
 
+void trigger_gpu_initialization();
+
 void first_blas(
     const int batch_n_x,
     const int batch_n_y,
