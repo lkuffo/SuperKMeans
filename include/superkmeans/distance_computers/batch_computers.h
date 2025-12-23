@@ -376,9 +376,6 @@ struct StreamBuffers {
 		cudaStream_t stream;
 		gpu::DeviceBuffer<data_t> batch_x_buffer_dev; 
 		gpu::DeviceBuffer<norms_t> all_distances_buf_dev; 
-		gpu::DeviceBuffer<uint32_t> out_knn_batch_dev; 
-		gpu::DeviceBuffer<distance_t> out_distances_batch_dev; 
-		gpu::DeviceBuffer<size_t> out_not_pruned_counts_batch_dev; 
     gpu::BatchedMatrixMultiplier multiplier; 
 
 		StreamBuffers(
@@ -390,9 +387,6 @@ struct StreamBuffers {
 					stream(stream),
 					batch_x_buffer_dev(gpu::compute_buffer_size<data_t>(x_batch_size, d),stream),
 					all_distances_buf_dev(gpu::compute_buffer_size<float>(x_batch_size, y_batch_size),stream),
-					out_knn_batch_dev(gpu::compute_buffer_size<uint32_t>(x_batch_size),stream),
-					out_distances_batch_dev(gpu::compute_buffer_size<distance_t>(x_batch_size),stream),
-					out_not_pruned_counts_batch_dev(gpu::compute_buffer_size<size_t>(x_batch_size),stream),
 					multiplier(stream) {}
 };
 
@@ -420,6 +414,12 @@ static void FindNearestNeighborWithPruning(
 		auto norms_y_dev = gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_y),stream.get());
 		norms_x_dev.copy_to_device(norms_x);
 		norms_y_dev.copy_to_device(norms_y);
+
+		auto out_knn_dev = gpu::DeviceBuffer<uint32_t>(gpu::compute_buffer_size<uint32_t>(n_x),stream.get()); 
+		out_knn_dev.copy_to_device(out_knn);
+		auto out_distances_dev = gpu::DeviceBuffer<distance_t>(gpu::compute_buffer_size<distance_t>(n_x),stream.get()); 
+		auto out_not_pruned_counts_dev = gpu::DeviceBuffer<size_t>(gpu::compute_buffer_size<size_t>(n_x),stream.get()); 
+		out_not_pruned_counts_dev.copy_to_device(out_not_pruned_counts);
 
 		auto constant_prune_data = kernels::ConstantPruneData(pdx_centroids, stream.get());
 
@@ -461,8 +461,6 @@ static void FindNearestNeighborWithPruning(
 				iteration_count += 1;
 
 				batch_stream_buffers[current_stream].batch_x_buffer_dev.copy_to_device(batch_x_p, gpu::compute_buffer_size<data_t>(batch_n_x, d));
-				batch_stream_buffers[current_stream].out_knn_batch_dev.copy_to_device(out_knn + i, gpu::compute_buffer_size<uint32_t>(batch_n_x));
-				batch_stream_buffers[current_stream].out_not_pruned_counts_batch_dev.copy_to_device(out_not_pruned_counts + i, gpu::compute_buffer_size<size_t>(batch_n_x));
 
 				kernels::GPUCalculateDistanceToCurrentCentroids(
 					batch_n_x,
@@ -470,8 +468,8 @@ static void FindNearestNeighborWithPruning(
 					d,
 					batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),
 					y_dev.get(),
-					batch_stream_buffers[current_stream].out_knn_batch_dev.get(),
-					batch_stream_buffers[current_stream].out_distances_batch_dev.get(),
+					out_knn_dev.get() + i,
+					out_distances_dev.get() + i,
 					batch_stream_buffers[current_stream].stream);
 
         MatrixR materialize_x_left_cols;
@@ -512,19 +510,19 @@ static void FindNearestNeighborWithPruning(
 							batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),
 							constant_prune_data.as_view(),
 							cluster_data[current_y_batch].as_view(),
-							batch_stream_buffers[current_stream].out_knn_batch_dev.get(),
-							batch_stream_buffers[current_stream].out_distances_batch_dev.get(),
-							batch_stream_buffers[current_stream].out_not_pruned_counts_batch_dev.get(),
+							out_knn_dev.get() + i,
+							out_distances_dev.get() + i,
+							out_not_pruned_counts_dev.get() + i,
 							batch_stream_buffers[current_stream].all_distances_buf_dev.get(), 
 							batch_stream_buffers[current_stream].stream);
-						batch_stream_buffers[current_stream].out_knn_batch_dev.copy_to_host(out_knn + i, gpu::compute_buffer_size<data_t>(batch_n_x));
-						batch_stream_buffers[current_stream].out_distances_batch_dev.copy_to_host(out_distances + i, gpu::compute_buffer_size<uint32_t>(batch_n_x));
-						batch_stream_buffers[current_stream].out_not_pruned_counts_batch_dev.copy_to_host(out_not_pruned_counts + i, gpu::compute_buffer_size<size_t>(batch_n_x));
 
 						current_y_batch += 1;
         }
     }
-	stream.synchronize();
+		out_knn_dev.copy_to_host(out_knn);
+		out_distances_dev.copy_to_host(out_distances);
+		out_not_pruned_counts_dev.copy_to_host(out_not_pruned_counts);
+		stream.synchronize();
 		for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
 			batch_streams[i].synchronize();
 		}
