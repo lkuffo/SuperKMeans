@@ -282,7 +282,7 @@ class SuperKMeans {
 
         // Special path for low-dimensional data or when use_blas_only is enabled: use BLAS-only for
         // all iterations
-        if (_d < 128 || _config.use_blas_only) {
+        if (_d < 128 || _config.use_blas_only || _n_clusters <= 128) {
             for (; iter_idx < _config.iters; ++iter_idx) {
                 // After swap: _prev_centroids has old centroids, _horizontal_centroids will be
                 // zeroed for accumulation

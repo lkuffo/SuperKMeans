@@ -65,7 +65,7 @@ DATASET_PARAMS = {
     "gist": (1_000_000, 960),
     "openai": (999_000, 1536),
     "arxiv": (2_253_000, 768),
-    "cohere": (35_166_920, 768)
+    "cohere": (10_000_000, 1024)
 }
 
 # Datasets that should use angular/spherical k-means
@@ -95,15 +95,13 @@ SCIKIT_EARLY_TERM_MAX_ITERS = 300
 SCIKIT_EARLY_TERM_TOL = 1e-8
 
 # Sampling fraction values for sampling experiment
-SAMPLING_FRACTION_VALUES = [0.90, 0.80, 0.70, 0.60, 0.50, 0.40, 0.30, 0.20, 0.10]
+SAMPLING_FRACTION_VALUES = [1.00, 0.90, 0.80, 0.70, 0.60, 0.50, 0.40, 0.30, 0.20, 0.10, 0.05]
 
 # Iteration values for pareto experiment (grid search)
 PARETO_ITERS_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
 
 # n_clusters values for varying_k experiment
-# VARYING_K_VALUES = [10, 100, 1000, 10000, 100000]
-# For Cohere
-VARYING_K_VALUES = [1000, 10000, 100000, 350000]
+VARYING_K_VALUES = [10, 100, 1000, 10000, 100000]
 
 def load_ground_truth(filename):
     """Load ground truth from JSON file.

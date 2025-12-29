@@ -91,7 +91,7 @@ const std::unordered_map<std::string, std::pair<size_t, size_t>> DATASET_PARAMS 
     {"gist", {1000000, 960}},
     {"openai", {999000, 1536}},
     {"arxiv", {2253000, 768}},
-    {"cohere", {35166920, 768}},
+    {"cohere", {10000000, 1024}},
 };
 
 const std::vector<std::string> ANGULAR_DATASETS = {
@@ -120,18 +120,14 @@ const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
 // Sampling fraction values for sampling experiment
 const std::vector<float> SAMPLING_FRACTION_VALUES =
-    {0.9f, 0.8f, 0.7f, 0.6f, 0.5f, 0.4f, 0.3f, 0.2f, 0.1f};
+    {1.0f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f, 0.4f, 0.3f, 0.2f, 0.1f, 0.05f};
 
 // Iteration values for pareto experiment (grid search)
 const std::vector<int> PARETO_ITERS_VALUES = {1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13,
                                               14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25};
 
 // n_clusters values for varying_k experiment
-// const std::vector<int> VARYING_K_VALUES = {10, 100, 1000, 10000, 100000};
-
-// For Cohere
-const std::vector<int> VARYING_K_VALUES = {1000, 10000, 100000, 350000};
-
+const std::vector<int> VARYING_K_VALUES = {10, 100, 1000, 10000, 100000};
 
 /**
  * @brief Parse ground truth JSON file.

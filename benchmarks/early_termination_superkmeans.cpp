@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
             config.iters = n_iters;
             config.verbose = false;
             config.n_threads = THREADS;
-            config.objective_k = 10;
+            config.objective_k = 100;
             config.ann_explore_fraction = 0.01f;
             config.unrotate_centroids = true;
             config.perform_assignments = false;

@@ -80,7 +80,7 @@ int main(int argc, char* argv[]) {
             warmup_config.iters = 1;  // Single iteration for warmup
             warmup_config.verbose = false;
             warmup_config.n_threads = THREADS;
-            warmup_config.objective_k = 10;
+            warmup_config.objective_k = 100;
             warmup_config.ann_explore_fraction = 0.01f;
             warmup_config.unrotate_centroids = true;
             warmup_config.perform_assignments = false;
@@ -113,7 +113,7 @@ int main(int argc, char* argv[]) {
             config.iters = n_iters;
             config.verbose = true;
             config.n_threads = THREADS;
-            config.objective_k = 10;
+            config.objective_k = 100;
             config.ann_explore_fraction = 0.01f;
             config.unrotate_centroids = true;
             config.perform_assignments = false;
