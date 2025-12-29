@@ -81,6 +81,8 @@ Testing
 venv
 
 *.bin
+*.png
+*.eps
 
 _deps
 _deps/
