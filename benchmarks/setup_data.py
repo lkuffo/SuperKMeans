@@ -28,12 +28,12 @@ if __name__ == "__main__":
     #
     # data.tofile("./data/data_random.bin")
 
-    train, test = read_hdf5_data("glove-200-angular")
-    train = l2_normalize(train.astype(np.float32))
-    train.tofile("./data/data_glove200.bin")
-    test = l2_normalize(test.astype(np.float32))
-    test.tofile("./data/data_glove200_test.bin")
-    print('glove200', len(train), len(test), len(train[0]))
+    # train, test = read_hdf5_data("glove-200-angular")
+    # train = l2_normalize(train.astype(np.float32))
+    # train.tofile("./data/data_glove200.bin")
+    # test = l2_normalize(test.astype(np.float32))
+    # test.tofile("./data/data_glove200_test.bin")
+    # print('glove200', len(train), len(test), len(train[0]))
 
     # train, test = read_hdf5_data("glove-100-angular")
     # train = train.astype(np.float32)
