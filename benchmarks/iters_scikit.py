@@ -97,17 +97,33 @@ if __name__ == "__main__":
         print(f"# init = {init_method}")
         print("##########################################")
 
+        # For k-means++, we'll do incremental training to avoid re-running initialization
+        previous_centers = None
+        cumulative_time_ms = 0.0
+
         for n_iter in iteration_counts:
             print("\n========================================")
-            print(f"Running with init = {init_method}, max_iter = {n_iter}")
+            print(f"Running with init = {init_method}, target iterations = {n_iter}")
             print("========================================")
+
+            # Determine initialization strategy
+            if init_method == 'k-means++' and previous_centers is not None:
+                # Resume from previous iteration - run just 1 more iteration
+                actual_init = previous_centers
+                actual_max_iter = 1
+                print(f"Resuming from previous iteration (running 1 more iteration)")
+            else:
+                # First iteration or random initialization
+                actual_init = init_method
+                actual_max_iter = n_iter
+                cumulative_time_ms = 0.0  # Reset for 'random' or first k-means++ run
 
             # Configure KMeans
             km = KMeans(
                 n_clusters=num_centroids,
-                init=init_method,
+                init=actual_init,
                 n_init=1,
-                max_iter=n_iter,
+                max_iter=actual_max_iter,
                 tol=0.0,  # We dont want early stopping
                 verbose=0,
                 random_state=42,
@@ -123,8 +139,22 @@ if __name__ == "__main__":
             actual_iterations = km.n_iter_
             final_objective = km.inertia_
 
-            print(f"\nTraining completed in {construction_time_ms:.2f} ms")
-            print(f"Actual iterations: {actual_iterations} (requested: {n_iter})")
+            # For k-means++, accumulate time and track total iterations
+            if init_method == 'k-means++':
+                cumulative_time_ms += construction_time_ms
+                total_iterations = n_iter  # We know we've done n_iter total iterations
+                # Store centers for next iteration
+                previous_centers = km.cluster_centers_.copy()
+            else:
+                # For 'random', each run is independent
+                total_iterations = actual_iterations
+                cumulative_time_ms = construction_time_ms
+
+            print(f"\nThis step completed in {construction_time_ms:.2f} ms")
+            print(f"This step iterations: {actual_iterations}")
+            if init_method == 'k-means++':
+                print(f"Cumulative time: {cumulative_time_ms:.2f} ms")
+                print(f"Total iterations so far: {total_iterations}")
             print(f"Final objective (inertia): {final_objective}")
 
             # Compute recall if ground truth and queries are available
@@ -143,20 +173,21 @@ if __name__ == "__main__":
                 print_recall_results(results_knn_100, 100)
 
                 # Create config dictionary with scikit-learn parameters
+                # Use the original init_method, not the technical implementation detail
                 config_dict = {
-                    "init": str(km.init),
+                    "init": init_method,  # Use original init method, not km.init
                     "n_init": str(km.n_init),
-                    "max_iter": str(km.max_iter),
+                    "max_iter": str(n_iter),  # Use target iterations, not actual_max_iter
                     "random_state": str(km.random_state),
                     "copy_x": str(km.copy_x).lower(),
                     "tol": str(km.tol),
                     "algorithm": str(km.algorithm)
                 }
 
-                # Write results to CSV
+                # Write results to CSV (using cumulative values for proper accounting)
                 write_results_to_csv(
-                    experiment_name, algorithm, dataset, n_iter, actual_iterations,
-                    num_dimensions, num_vectors, num_centroids, construction_time_ms,
+                    experiment_name, algorithm, dataset, n_iter, total_iterations,
+                    num_dimensions, num_vectors, num_centroids, cumulative_time_ms,
                     threads, final_objective, config_dict,
                     results_knn_10, results_knn_100
                 )
