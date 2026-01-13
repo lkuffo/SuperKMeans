@@ -22,6 +22,7 @@ from bench_utils import (DATASET_PARAMS, load_ground_truth, compute_recall,
 if __name__ == "__main__":
     # Experiment configuration
     algorithm = "elkan"
+    n_iter = 10
 
     dataset = sys.argv[1] if len(sys.argv) > 1 else "fmnist"
 
@@ -88,96 +89,68 @@ if __name__ == "__main__":
     # Use only 'random' initialization with incremental strategy
     init_method = 'random'
 
-    # Iteration counts to test (1 to 10)
-    iteration_counts = list(range(1, 11))
+    # Configure KMeans
+    km = KMeans(
+        n_clusters=num_centroids,
+        init='random',
+        n_init=1,
+        max_iter=n_iter,
+        tol=0.0,  # We dont want early stopping
+        verbose=0,
+        random_state=42,
+        copy_x=True,
+        algorithm='elkan'
+    )
 
-    # Use incremental training strategy to avoid re-running from scratch
-    previous_centers = None
-    cumulative_time_ms = 0.0
+    # Time the training
+    with Timer() as timer:
+        km.fit(data)
+    construction_time_ms = timer.get_milliseconds()
 
-    for n_iter in iteration_counts:
-        print("\n========================================")
-        print(f"Running with init = {init_method}, target iterations = {n_iter}")
-        print("========================================")
+    # Get actual iterations and final objective
+    actual_iterations = km.n_iter_
+    final_objective = km.inertia_
 
-        # Determine initialization strategy
-        if previous_centers is not None:
-            # Resume from previous iteration - run just 1 more iteration
-            actual_init = previous_centers
-            actual_max_iter = 1
-            print(f"Resuming from previous iteration (running 1 more iteration)")
-        else:
-            # First iteration
-            actual_init = init_method
-            actual_max_iter = n_iter
-            cumulative_time_ms = 0.0  # Reset for first run
+    print(f"\nTraining completed in {construction_time_ms:.2f} ms")
+    print(f"Actual iterations: {actual_iterations} (requested: {n_iter})")
+    print(f"Final objective (inertia): {final_objective}")
 
-        # Configure KMeans with Elkan algorithm
-        km = KMeans(
-            n_clusters=num_centroids,
-            init=actual_init,
-            n_init=1,
-            max_iter=actual_max_iter,
-            tol=0.0,  # We dont want early stopping
-            verbose=0,
-            random_state=42,
-            copy_x=True,
-            algorithm='elkan'  # Use Elkan algorithm
+    # Compute recall if ground truth file exists
+    gt_filename = get_ground_truth_path(dataset)
+    queries_filename = get_query_path(dataset)
+
+    # Compute recall if ground truth and queries are available
+    if gt_dict is not None and queries is not None:
+        print(f"\n--- Computing Recall ---")
+
+        # Get sklearn assignments (cluster labels for each data point)
+        assignments = km.labels_  # shape: (num_vectors,)
+        centroids = km.cluster_centers_  # shape: (num_centroids, num_dimensions)
+
+        # Compute recall for both KNN values
+        results_knn_10 = compute_recall(gt_dict, assignments, queries, centroids, num_centroids, 10)
+        print_recall_results(results_knn_10, 10)
+
+        results_knn_100 = compute_recall(gt_dict, assignments, queries, centroids, num_centroids, 100)
+        print_recall_results(results_knn_100, 100)
+
+        # Create config dictionary with scikit-learn parameters
+        config_dict = {
+            "init": init_method,
+            "n_init": str(km.n_init),
+            "max_iter": str(n_iter),  # Use target iterations, not actual_max_iter
+            "random_state": str(km.random_state),
+            "copy_x": str(km.copy_x).lower(),
+            "tol": str(km.tol),
+            "algorithm": str(km.algorithm)
+        }
+
+        # Write results to CSV (using cumulative values for proper accounting)
+        write_results_to_csv(
+            experiment_name, algorithm, dataset, n_iter, km.n_iter_,
+            num_dimensions, num_vectors, num_centroids, construction_time_ms,
+            threads, final_objective, config_dict,
+            results_knn_10, results_knn_100
         )
-
-        # Time the training
-        with Timer() as timer:
-            km.fit(data)
-        construction_time_ms = timer.get_milliseconds()
-
-        # Get actual iterations and final objective
-        actual_iterations = km.n_iter_
-        final_objective = km.inertia_
-
-        # Accumulate time and track total iterations
-        cumulative_time_ms += construction_time_ms
-        total_iterations = n_iter  # We know we've done n_iter total iterations
-        # Store centers for next iteration
-        previous_centers = km.cluster_centers_.copy()
-
-        print(f"\nThis step completed in {construction_time_ms:.2f} ms")
-        print(f"This step iterations: {actual_iterations}")
-        print(f"Cumulative time: {cumulative_time_ms:.2f} ms")
-        print(f"Total iterations so far: {total_iterations}")
-        print(f"Final objective (inertia): {final_objective}")
-
-        # Compute recall if ground truth and queries are available
-        if gt_dict is not None and queries is not None:
-            print(f"\n--- Computing Recall ---")
-
-            # Get sklearn assignments (cluster labels for each data point)
-            assignments = km.labels_  # shape: (num_vectors,)
-            centroids = km.cluster_centers_  # shape: (num_centroids, num_dimensions)
-
-            # Compute recall for both KNN values
-            results_knn_10 = compute_recall(gt_dict, assignments, queries, centroids, num_centroids, 10)
-            print_recall_results(results_knn_10, 10)
-
-            results_knn_100 = compute_recall(gt_dict, assignments, queries, centroids, num_centroids, 100)
-            print_recall_results(results_knn_100, 100)
-
-            # Create config dictionary with scikit-learn parameters
-            config_dict = {
-                "init": init_method,
-                "n_init": str(km.n_init),
-                "max_iter": str(n_iter),  # Use target iterations, not actual_max_iter
-                "random_state": str(km.random_state),
-                "copy_x": str(km.copy_x).lower(),
-                "tol": str(km.tol),
-                "algorithm": str(km.algorithm)
-            }
-
-            # Write results to CSV (using cumulative values for proper accounting)
-            write_results_to_csv(
-                experiment_name, algorithm, dataset, n_iter, total_iterations,
-                num_dimensions, num_vectors, num_centroids, cumulative_time_ms,
-                threads, final_objective, config_dict,
-                results_knn_10, results_knn_100
-            )
-        else:
-            print("Skipping CSV output (recall computation requires ground truth)")
+    else:
+        print("Skipping CSV output (recall computation requires ground truth)")
