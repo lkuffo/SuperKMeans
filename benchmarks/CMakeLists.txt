@@ -65,7 +65,7 @@ if (MKL_FOUND)
     set(FAISS_ENABLE_MKL ON CACHE BOOL "enable mkl" FORCE)
 endif()
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "disable python" FORCE)
-set(FAISS_ENABLE_GPU OFF CACHE BOOL "disable gpu" FORCE)
+set(FAISS_ENABLE_GPU ON CACHE BOOL "disable gpu" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "disable faiss tests" FORCE)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "shared libs" FORCE)
 set(FAISS_OPT_LEVEL "${FAISS_OPT_LEVEL}" CACHE STRING "CPU optimization level" FORCE)
@@ -122,6 +122,10 @@ target_link_libraries(end_to_end_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 # FAISS benchmark on real datasets with recall computation
 add_executable(end_to_end_faiss.out end_to_end_faiss.cpp)
 target_link_libraries(end_to_end_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
+
+# GPU FAISS benchmark 
+add_executable(gpu_faiss.out gpu_faiss.cpp)
+target_link_libraries(gpu_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
 
 # Varying K benchmarks (vary n_clusters instead of dataset)
 add_executable(varying_k_superkmeans.out varying_k_superkmeans.cpp)
