@@ -8,6 +8,7 @@
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/distance_computers/batch_computers.h"
+#include "superkmeans/distance_computers/gpu_batch_computers.h"
 #include "superkmeans/pdx/pdxearch.h"
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/profiler.h"
@@ -75,7 +76,8 @@ class SuperKMeans {
     using distance_t = skmeans_distance_t<q>;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
     using VectorR = Eigen::VectorXf;
-    using batch_computer = BatchComputer<alpha, q>;
+    using batch_computer = gpu::BatchComputer<alpha, q>;
+    using cpu_batch_computer = BatchComputer<alpha, q>; // This batch computer is always CPU based, as GPU does not implement FindKNearestNeighbors
 
     static constexpr size_t RECALL_CONVERGENCE_PATIENCE = 2;
 
@@ -740,7 +742,7 @@ class SuperKMeans {
         _tmp_distances_buffer.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         std::vector<distance_t> query_norms(n_queries);
         GetL2NormsRowMajor(queries, n_queries, query_norms.data());
-        batch_computer::FindKNearestNeighbors(
+				cpu_batch_computer::FindKNearestNeighbors(
             queries,
             data,
             n_queries,
@@ -771,7 +773,7 @@ class SuperKMeans {
         _tmp_distances_buffer.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         _promising_centroids.resize(n_queries * _centroids_to_explore);
         _recall_distances.resize(n_queries * _centroids_to_explore);
-        batch_computer::FindKNearestNeighbors(
+        cpu_batch_computer::FindKNearestNeighbors(
             queries,
             _horizontal_centroids.data(),
             n_queries,
