@@ -7,13 +7,15 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/extern/f
 project(SuperKMeans)
 
 add_compile_options(-fPIC)
-add_compile_options(-fopenmp)
+#add_compile_options(-fopenmp)
 include(FetchContent)
 include(CheckCXXCompilerFlag)
 include(CMakePrintHelpers)
 include(CTest)
 
 find_package(OpenMP REQUIRED)
+add_library(openmp INTERFACE)
+target_link_libraries(openmp INTERFACE OpenMP::OpenMP_CXX)
 set(MKL_INTERFACE_FULL "intel_lp64")  # Eigen needs lp64
 find_package(MKL CONFIG QUIET)
 find_package(BLAS QUIET)

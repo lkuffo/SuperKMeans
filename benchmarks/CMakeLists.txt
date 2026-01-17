@@ -65,7 +65,8 @@ if (MKL_FOUND)
     set(FAISS_ENABLE_MKL ON CACHE BOOL "enable mkl" FORCE)
 endif()
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "disable python" FORCE)
-set(FAISS_ENABLE_GPU ON CACHE BOOL "disable gpu" FORCE)
+set(FAISS_ENABLE_GPU ON CACHE BOOL "enable gpu" FORCE)
+set(FAISS_ENABLE_CUVS ON CACHE BOOL "enable CUVS" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "disable faiss tests" FORCE)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "shared libs" FORCE)
 set(FAISS_OPT_LEVEL "${FAISS_OPT_LEVEL}" CACHE STRING "CPU optimization level" FORCE)
@@ -73,7 +74,7 @@ set(FAISS_OPT_LEVEL "${FAISS_OPT_LEVEL}" CACHE STRING "CPU optimization level" F
 FetchContent_Declare(
     faiss
     GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
-    GIT_TAG        v1.11.0
+    GIT_TAG        v1.13.2
 )
 FetchContent_MakeAvailable(faiss)
 
@@ -82,9 +83,9 @@ FetchContent_MakeAvailable(faiss)
 if (USE_CUDA)
 	set(CUDA_LIBS PRIVATE CUDA::cudart CUDA::cublas)
 	# If MKL is found, BLAS_LINK_LIBRARIES is empty; and vice-versa
-	set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES} ${CUDA_LIBS})
+	set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES} ${CUDA_LIBS} openmp)
 else()
-	set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES} )
+	set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES} openmp)
 endif()
 set(FAISS_COMMON_LIBS faiss)
 
@@ -125,7 +126,9 @@ target_link_libraries(end_to_end_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_
 
 # GPU FAISS benchmark 
 add_executable(gpu_faiss.out gpu_faiss.cpp)
+target_compile_definitions(gpu_faiss.out PRIVATE LIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE)
 target_link_libraries(gpu_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
+target_link_libraries(gpu_faiss.out PRIVATE rmm)
 
 # Varying K benchmarks (vary n_clusters instead of dataset)
 add_executable(varying_k_superkmeans.out varying_k_superkmeans.cpp)
