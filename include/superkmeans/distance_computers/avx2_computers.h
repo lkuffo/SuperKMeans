@@ -161,7 +161,7 @@ class SIMDComputer<skmeans::DistanceFunction::dp, skmeans::Quantization::f32> {
             d2_vec = _mm256_fmadd_ps(a_vec, b_vec, d2_vec);
         }
 
-        // _simsimd_reduce_skmeans::Quantization::f32x8_haswell
+        // _simsimd_reduce_f32x8_haswell
         // Convert the lower and higher 128-bit lanes of the input vector to double precision
         __m128 low_f32 = _mm256_castps256_ps128(d2_vec);
         __m128 high_f32 = _mm256_extractf128_ps(d2_vec, 1);

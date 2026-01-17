@@ -186,7 +186,7 @@ def generate_ground_truth(dataset, knns=None, normalize=None):
 def main():
     """Generate ground truth for a dataset."""
     # Default dataset
-    DEFAULT_DATASET = "cohere"
+    DEFAULT_DATASET = "contriever"
 
     # Parse command-line arguments
     if len(sys.argv) > 1:
