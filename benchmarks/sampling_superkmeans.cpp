@@ -83,6 +83,12 @@ int main(int argc, char* argv[]) {
         std::cout << "Running with sampling_fraction = " << sampling_fraction << std::endl;
         std::cout << "========================================" << std::endl;
 
+        if (sampling_fraction * n < n_clusters) {
+            std::cout << "Sampling fraction is too small, skipping" << std::endl;
+            std::cout << "Trying to sample: " << sampling_fraction * n << std::endl;
+            std::cout << "Need at least: " << n_clusters << std::endl;
+            continue;
+        }
 
         skmeans::SuperKMeansConfig config;
         config.iters = n_iters;

@@ -120,7 +120,10 @@ const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
 // Sampling fraction values for sampling experiment
 const std::vector<float> SAMPLING_FRACTION_VALUES =
-    {1.0f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f, 0.4f, 0.3f, 0.2f, 0.1f, 0.05f};
+    {
+    // 1.0f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f, 0.4f, 0.3f, 0.2f, 0.1f, 0.05f
+    0.04f, 0.03f, 0.02, 0.01f, 0.0075f, 0.005f, 0.0025f, 0.001f, 0.0005f, 0.0001f
+    };
 
 // Iteration values for pareto experiment (grid search)
 const std::vector<int> PARETO_ITERS_VALUES = {1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13,
