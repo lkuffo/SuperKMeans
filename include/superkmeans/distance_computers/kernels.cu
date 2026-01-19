@@ -767,7 +767,7 @@ void GPUSearchPDX(
     float* SKM_RESTRICT all_distances_buf,
     const cudaStream_t stream
 ) {
-    const auto N_THREADS_PER_BLOCK = 256;
+    const auto N_THREADS_PER_BLOCK = WARP_WIDTH;
     const auto WARPS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, WARP_WIDTH);
     const auto N_THREADS_PER_ITEM = WARP_WIDTH;
     const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
