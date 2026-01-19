@@ -19,7 +19,7 @@ int main(int argc, char* argv[]) {
     // Experiment configuration
     const std::string algorithm = "faiss";
 
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("openai");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
 
     // Experiment name can be passed as second argument (default: "end_to_end")
     std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
