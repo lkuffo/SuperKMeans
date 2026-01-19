@@ -21,10 +21,23 @@ int main(int argc, char* argv[]) {
     // Experiment configuration
     const std::string algorithm = "faiss";
 
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("openai");
+    // First argument is required and indicates whether to use cuvs (0 => no, 1 => yes)
+		if (argc < 2) exit(1);
+    bool use_cuvs = argv[1][0] == '1';
 
-    // Experiment name can be passed as second argument (default: "end_to_end")
-    std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
+		if (use_cuvs) {
+			std::cout << "cuVS Enabled" << std::endl;
+		}
+		else {
+			std::cout << "cuVS Disabled" << std::endl;
+		}
+
+    // dataset name can be passed as second argument (default: "end_to_end")
+    std::string dataset = (argc > 2) ? std::string(argv[2]) : std::string("arxiv");
+
+
+    // Experiment name can be passed as fourth argument (default: "end_to_end")
+    std::string experiment_name = (argc > 3) ? std::string(argv[3]) : std::string("end_to_end");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -64,6 +77,7 @@ int main(int argc, char* argv[]) {
 
     faiss::gpu::StandardGpuResources res;
     faiss::gpu::GpuIndexFlatConfig config;
+		config.use_cuvs = use_cuvs;
     config.device = 0;
     config.useFloat16 = false;
 
