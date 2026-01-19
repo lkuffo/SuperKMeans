@@ -234,7 +234,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
         size_t* out_not_pruned_counts = nullptr
     ) {
         SKM_PROFILE_SCOPE("search");
-        auto stream = gpu::ManagedCudaStream();
+        auto& stream = gpu_device_context.main_stream;
         auto y_dev =
             gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), stream.get());
         y_dev.copy_to_device(y);
@@ -268,14 +268,13 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
             );
         }
 
-        constexpr int32_t N_BATCH_STREAMS = 4;
-        auto batch_streams = std::vector<gpu::ManagedCudaStream>(N_BATCH_STREAMS);
+        const int32_t N_BATCH_STREAMS = gpu_device_context.stream_pool.size();
         auto batch_stream_buffers = std::vector<StreamBuffers>();
         batch_stream_buffers.reserve(N_BATCH_STREAMS);
 
         for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
             batch_stream_buffers.emplace_back(
-                X_BATCH_SIZE, Y_BATCH_SIZE, d, batch_streams[i].get()
+                X_BATCH_SIZE, Y_BATCH_SIZE, d, gpu_device_context.stream_pool[i].get()
             );
         }
 
@@ -357,7 +356,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
             }
         }
         for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
-            batch_streams[i].synchronize();
+            gpu_device_context.stream_pool[i].synchronize();
         }
         out_knn_dev.copy_to_host(out_knn);
         out_distances_dev.copy_to_host(out_distances);
