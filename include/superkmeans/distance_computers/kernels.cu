@@ -447,6 +447,88 @@ calculate_distance_with_fixed_horizontal_dimensions(
     return distance;
 };
 
+template <typename T, uint32_t N_VALUES, uint32_t STEP = WARP_WIDTH>
+__device__ void load_into_registers(T* __restrict__ registers, const T* __restrict__ ptr) {
+#pragma unroll
+    for (auto i = uint32_t{0}; i < N_VALUES; ++i) {
+        const auto index = ThreadContext::get_lane_id() + i * STEP;
+        registers[i] = ptr[index];
+    }
+}
+
+template <uint32_t NUM_DIMENSIONS, uint32_t BULK_SIZE>
+class BulkFixedHorizontalDistanceCalculator {
+  private:
+		static constexpr uint32_t N_ITERATIONS = NUM_DIMENSIONS / WARP_WIDTH;
+		skmeans_distance_t<Quantization::f32> buffer_fixed_vector[N_ITERATIONS];
+
+  public:
+    __device__ void load_fixed_vector(const skmeans_value_t<Quantization::f32>* fixed_vector) {
+        load_into_registers<skmeans_value_t<Quantization::f32>, NUM_DIMENSIONS, WARP_WIDTH>(
+            buffer_fixed_vector, fixed_vector
+        );
+    }
+
+    __device__ skmeans_value_t<Quantization::f32> calculate_distance_to_vectors(
+        const skmeans_value_t<Quantization::f32>* other_vectors,
+				const uint32_t* pruning_positions,
+				skmeans_distance_t<Quantization::f32>* pruning_distances
+    ) {
+				uint32_t v_indices[BULK_SIZE];
+
+				for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
+					v_indices[i] = pruning_positions[i];
+				}
+
+        skmeans_distance_t<Quantization::f32> buffer_other_vector[N_ITERATIONS * BULK_SIZE];
+#pragma unroll 
+				for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
+					load_into_registers<skmeans_value_t<Quantization::f32>, NUM_DIMENSIONS, WARP_WIDTH>(
+							buffer_other_vector + i * N_ITERATIONS, 
+							other_vectors + v_indices[i] * NUM_DIMENSIONS 
+					);
+				}
+
+#pragma unroll 
+				for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
+					skmeans_distance_t<Quantization::f32> distance = 0.0;
+#pragma unroll
+					for (auto j = uint32_t{0}; j < N_ITERATIONS; ++j) {
+							skmeans_distance_t<Quantization::f32> to_multiply =
+									buffer_fixed_vector[j] - buffer_other_vector[i * N_ITERATIONS + j];
+							distance += to_multiply * to_multiply;
+					}
+
+					distance = warp_reduce_sum(distance);
+					if (ThreadContext::is_first_lane()) {
+					 pruning_distances[v_indices[i]] += distance;
+					}
+				}
+
+    }
+
+    __device__ skmeans_value_t<Quantization::f32> calculate_distance_to_vector(
+        const skmeans_value_t<Quantization::f32>* other_vector
+    ) {
+        skmeans_distance_t<Quantization::f32> buffer_other_vector[N_ITERATIONS];
+        load_into_registers<skmeans_value_t<Quantization::f32>, NUM_DIMENSIONS, WARP_WIDTH>(
+            buffer_other_vector, other_vector
+        );
+
+        skmeans_distance_t<Quantization::f32> distance = 0.0;
+#pragma unroll
+        for (auto i = uint32_t{0}; i < N_ITERATIONS; ++i) {
+            skmeans_distance_t<Quantization::f32> to_multiply =
+                buffer_fixed_vector[i] - buffer_other_vector[i];
+            distance += to_multiply * to_multiply;
+        }
+
+        distance = warp_reduce_sum(distance);
+        distance = warp_broadcast(distance);
+        return distance;
+    }
+};
+
 __device__ skmeans_distance_t<Quantization::f32> calculate_distance_with_horizontal_dimensions(
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector1,
     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector2,
@@ -596,23 +678,50 @@ __device__ void prune(
         for (auto current_horizontal_dimension = uint32_t{0};
              current_horizontal_dimension < constant_prune_data.num_horizontal_dimensions;
              current_horizontal_dimension += H_DIM_SIZE) {
+            auto offset_query =
+                constant_prune_data.num_vertical_dimensions + current_horizontal_dimension;
+						constexpr uint32_t BULK_SIZE = 4;
+							auto calculator = BulkFixedHorizontalDistanceCalculator<H_DIM_SIZE, BULK_SIZE>();
+							calculator.load_fixed_vector(query + offset_query);
+
             auto offset_data =
                 (constant_prune_data.num_vertical_dimensions * cluster_prune_data.n_vectors) +
                 (current_horizontal_dimension * cluster_prune_data.n_vectors);
-            auto offset_query =
-                constant_prune_data.num_vertical_dimensions + current_horizontal_dimension;
-            // Can do a collaborative load for pruning_positions, and then supply
-            // first thread in warp with values by downshifting them with shuffle_sync
-            // Can do a collaborative write for pruning_distances, by upshifting values
-            // and then doing a single write
-            for (auto vector_idx = uint32_t{0}; vector_idx < n_vectors_not_pruned; vector_idx++) {
-                auto v_idx = pruning_positions[vector_idx];
-                auto data_pos = offset_data + (v_idx * H_DIM_SIZE);
-                pruning_distances[v_idx] +=
-                    calculate_distance_with_fixed_horizontal_dimensions<H_DIM_SIZE>(
-                        query + offset_query, cluster_prune_data.data + data_pos
-                    );
+            auto is_first_lane = ThreadContext::is_first_lane();
+						auto vector_idx = uint32_t{0};
+            for (; vector_idx + BULK_SIZE < n_vectors_not_pruned; vector_idx += BULK_SIZE) {
+                calculator.calculate_distance_to_vectors(
+                    cluster_prune_data.data + offset_data, pruning_positions + vector_idx, pruning_distances
+                );
             }
+
+            for (; vector_idx < n_vectors_not_pruned; vector_idx++) {
+                auto v_idx = pruning_positions[vector_idx];
+                auto distance = calculator.calculate_distance_to_vector(
+                    cluster_prune_data.data + offset_data + (v_idx * H_DIM_SIZE)
+                );
+                if (is_first_lane) {
+                    pruning_distances[v_idx] += distance;
+                }
+            }
+
+            // auto offset_query =
+            //     constant_prune_data.num_vertical_dimensions + current_horizontal_dimension;
+
+            // auto calculator = BulkFixedHorizontalDistanceCalculator<H_DIM_SIZE>();
+            // calculator.load_fixed_vector(query + offset_query);
+
+            // auto offset_data =
+            //     (constant_prune_data.num_vertical_dimensions * cluster_prune_data.n_vectors) +
+            //     (current_horizontal_dimension * cluster_prune_data.n_vectors);
+
+            // for (auto vector_idx = uint32_t{0}; vector_idx < n_vectors_not_pruned; vector_idx++)
+            // {
+            //     auto v_idx = pruning_positions[vector_idx];
+            //     auto data_pos = offset_data + (v_idx * H_DIM_SIZE);
+            //     pruning_distances[v_idx] +=
+            //         calculator.calculate_distance_to_vector(cluster_prune_data.data + data_pos);
+            // }
 
             current_dimension_idx += H_DIM_SIZE;
             pruning_threshold =
