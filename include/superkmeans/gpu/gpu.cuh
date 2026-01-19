@@ -57,6 +57,26 @@ class ManagedCudaStream {
     cudaStream_t _stream;
 };
 
+class StreamPool {
+  private:
+    std::vector<gpu::ManagedCudaStream> streams;
+
+  public:
+    StreamPool(const size_t n_streams) : streams(n_streams) {};
+
+    size_t size() const { return streams.size(); }
+
+    gpu::ManagedCudaStream& operator[](const size_t index) {
+        assert(index < size());
+        return streams[index];
+    }
+
+    const gpu::ManagedCudaStream& operator[](const size_t index) const {
+        assert(index < size());
+        return streams[index];
+    }
+};
+
 class ManagedCublasHandle {
   public:
     ManagedCublasHandle(cudaStream_t stream) {
@@ -137,6 +157,24 @@ class DeviceBuffer {
     T* _dev_ptr{nullptr};
     std::size_t _size;
     cudaStream_t _stream;
+};
+
+template <typename data_t, typename norms_t>
+class GPUDeviceContext {
+  private:
+  public:
+    ManagedCudaStream main_stream;
+    StreamPool stream_pool;
+    DeviceBuffer<data_t> x;
+    DeviceBuffer<data_t> y;
+    // DeviceBuffer norms_x;
+    // DeviceBuffer norms_y;
+
+    GPUDeviceContext(const size_t n_x, const size_t n_y, const size_t d, const size_t n_streams)
+        : stream_pool(n_streams), x(compute_buffer_size<data_t>(n_x, d), main_stream.get()),
+          y(compute_buffer_size<data_t>(n_y, d), main_stream.get()) {}
+          // norms_x(compute_buffer_size<norms_t>(n_x), main_stream.get()),
+          // norms_y(compute_buffer_size<norms_t>(n_y), main_stream.get()) {}
 };
 
 class BatchedMatrixMultiplier {

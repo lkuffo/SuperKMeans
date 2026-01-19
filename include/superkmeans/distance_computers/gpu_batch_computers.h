@@ -218,6 +218,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
     };
 
     static void FindNearestNeighborWithPruning(
+				gpu::GPUDeviceContext<data_t, norms_t>& gpu_device_context,
         const data_t* SKM_RESTRICT x,
         const data_t* SKM_RESTRICT y,
         const size_t n_x,
@@ -283,7 +284,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
         size_t iteration_count = 0;
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             auto batch_n_x = X_BATCH_SIZE;
-            auto batch_x_p = x + (i * d);
+            auto batch_x_p = gpu_device_context.x.get() + (i * d);
 
             if (i + X_BATCH_SIZE > n_x) {
                 batch_n_x = n_x - i;
@@ -292,15 +293,15 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
             auto current_stream = iteration_count % N_BATCH_STREAMS;
             iteration_count += 1;
 
-            batch_stream_buffers[current_stream].batch_x_buffer_dev.copy_to_device(
-                batch_x_p, gpu::compute_buffer_size<data_t>(batch_n_x, d)
-            );
+            // batch_stream_buffers[current_stream].batch_x_buffer_dev.copy_to_device(
+            //     batch_x_p, gpu::compute_buffer_size<data_t>(batch_n_x, d)
+            // );
 
             kernels::GPUCalculateDistanceToCurrentCentroids(
                 batch_n_x,
                 n_y,
                 d,
-                batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),
+                batch_x_p, //batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),
                 y_dev.get(),                 // const
                 out_knn_dev.get() + i,       // const
                 out_distances_dev.get() + i, // mutated
@@ -318,7 +319,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 }
 
                 batch_stream_buffers[current_stream].multiplier.multiply(
-                    batch_stream_buffers[current_stream].batch_x_buffer_dev.get(), // const
+                    batch_x_p, // batch_stream_buffers[current_stream].batch_x_buffer_dev.get(), // const
                     batch_y_p,                                                     // const
                     batch_n_x,
                     batch_n_y,
@@ -342,7 +343,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                     batch_n_y,
                     d,
                     partial_d,
-                    batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),    // const
+                    batch_x_p, // batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),    // const
                     constant_prune_data.as_view(),                                    // const
                     cluster_data[current_y_batch].as_view(),                          // const
                     out_knn_dev.get() + i,                                            // mutated

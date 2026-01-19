@@ -5,6 +5,7 @@
 #include <omp.h>
 #include <random>
 
+#include "distance_computers/gpu_batch_computers.h"
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/distance_computers/batch_computers.h"
@@ -12,6 +13,7 @@
 #include "superkmeans/pdx/pdxearch.h"
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/profiler.h"
+#include "superkmeans/gpu/gpu.cuh"
 
 namespace skmeans {
 
@@ -344,6 +346,9 @@ class SuperKMeans {
         // Buffer to store per-vector not-pruned counts for tuning _initial_partial_d
         std::vector<size_t> not_pruned_counts(_n_samples);
         GetPartialL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
+
+				gpu::GPUDeviceContext<skmeans_value_t<q>, skmeans_value_t<q>> gpu_device_context(_n_samples, _n_clusters, _d, GPU_STREAM_POOL_SIZE);
+				gpu_device_context.x.copy_to_device(data_to_cluster);
         for (; iter_idx < _config.iters; ++iter_idx) {
             // After swap: _prev_centroids has old centroids, _horizontal_centroids will be zeroed
             // for accumulation
@@ -357,6 +362,7 @@ class SuperKMeans {
             // Reset the not-pruned counts buffer
             std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
             AssignAndUpdateCentroidsPartialBatched(
+								gpu_device_context,
                 data_to_cluster,
                 _prev_centroids.data(), // Search using _prev_centroids
                 centroids_partial_norms.data(),
@@ -537,6 +543,7 @@ class SuperKMeans {
      * @param out_not_pruned_counts Optional output for per-vector pruning statistics
      */
     void AssignAndUpdateCentroidsPartialBatched(
+				gpu::GPUDeviceContext<skmeans_value_t<q>, skmeans_value_t<q>>& gpu_device_context,
         const vector_value_t* SKM_RESTRICT data,
         const vector_value_t* SKM_RESTRICT centroids_for_search,
         const vector_value_t* SKM_RESTRICT partial_centroid_norms,
@@ -546,6 +553,7 @@ class SuperKMeans {
     ) {
         _cost = 0.0;
         batch_computer::FindNearestNeighborWithPruning(
+						gpu_device_context,
             data,
             centroids_for_search,
             _n_samples,
