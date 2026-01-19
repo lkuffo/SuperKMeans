@@ -27,26 +27,6 @@ const uint32_t WARP_WIDTH = 32;
 const uint32_t FULL_MASK = 0xffffffff;
 const uint32_t FIRST_LANE_MASK = 0x0;
 
-struct OldThreadContext {
-    uint32_t thread_id;
-    uint32_t warp_id;
-    uint32_t lane_id;
-
-    uint32_t block_thread_id;
-    uint32_t block_warp_id;
-    __device__ OldThreadContext() {
-        thread_id = blockIdx.x * blockDim.x + threadIdx.x;
-        warp_id = thread_id / WARP_WIDTH;
-        lane_id = thread_id % WARP_WIDTH;
-
-        block_thread_id = threadIdx.x;
-        block_warp_id = block_thread_id / WARP_WIDTH;
-    }
-
-    __device__ bool is_first_thread() const { return thread_id == 0; }
-    __device__ bool is_first_lane() const { return lane_id == 0; }
-};
-
 struct ThreadContext {
 		using ThreadIndexT = uint32_t;
 
