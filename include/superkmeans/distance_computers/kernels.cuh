@@ -49,9 +49,9 @@ void norms(
     const cudaStream_t stream
 );
 struct ConstantPruneDataView {
-    size_t num_dimensions;
-    size_t num_horizontal_dimensions;
-    size_t num_vertical_dimensions;
+    uint32_t num_dimensions;
+    uint32_t num_horizontal_dimensions;
+    uint32_t num_vertical_dimensions;
     float* ratios;
 };
 
@@ -76,9 +76,9 @@ class CPUConstantPruneData {
 
     ConstantPruneDataView as_view() const {
         return ConstantPruneDataView{
-            num_dimensions,
-            num_horizontal_dimensions,
-            num_vertical_dimensions,
+            static_cast<uint32_t>(num_dimensions),
+            static_cast<uint32_t>(num_horizontal_dimensions),
+            static_cast<uint32_t>(num_vertical_dimensions),
             ratios.get(),
         };
     }
@@ -86,9 +86,9 @@ class CPUConstantPruneData {
 
 class ConstantPruneData {
   public:
-    size_t num_dimensions;
-    size_t num_horizontal_dimensions;
-    size_t num_vertical_dimensions;
+    uint32_t num_dimensions;
+    uint32_t num_horizontal_dimensions;
+    uint32_t num_vertical_dimensions;
     gpu::DeviceBuffer<float> ratios;
 
     ConstantPruneData(const layout_t& pdx_centroids, const cudaStream_t stream)
