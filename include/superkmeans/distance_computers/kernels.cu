@@ -388,7 +388,7 @@ __global__ void calculate_distance_to_current_centroids_kernel(
     uint32_t* SKM_RESTRICT out_knn,
     distance_t* SKM_RESTRICT out_distances
 ) {
-    size_t vector_index = ThreadContext::get_warp_id();
+    auto vector_index = ThreadContext::get_warp_id();
 
     if (n_x <= vector_index) {
         return;
@@ -443,7 +443,7 @@ calculate_distance_with_fixed_horizontal_dimensions(
     // All thread returns relevant distance, (but should probably be only one of them)
     skmeans_distance_t<Quantization::f32> distance = 0.0;
 #pragma unroll
-    for (size_t dimension_idx = ThreadContext::get_lane_id(); dimension_idx < NUM_DIMENSIONS;
+    for (auto dimension_idx = ThreadContext::get_lane_id(); dimension_idx < NUM_DIMENSIONS;
          dimension_idx += WARP_WIDTH) {
         skmeans_distance_t<Quantization::f32> to_multiply =
             vector1[dimension_idx] - vector2[dimension_idx];
@@ -465,7 +465,7 @@ __device__ skmeans_distance_t<Quantization::f32> calculate_distance_with_horizon
 
     skmeans_distance_t<Quantization::f32> distance = 0.0;
 
-    for (size_t dimension_idx = ThreadContext::get_lane_id(); dimension_idx < num_dimensions;
+    for (auto dimension_idx = ThreadContext::get_lane_id(); dimension_idx < num_dimensions;
          dimension_idx += WARP_WIDTH) {
         skmeans_distance_t<Quantization::f32> to_multiply =
             vector1[dimension_idx] - vector2[dimension_idx];
@@ -484,7 +484,7 @@ __device__ void initialize_pruning_positions_array(
     const size_t n_vectors
 ) {
     n_vectors_not_pruned = 0;
-    for (size_t vector_idx = ThreadContext::get_lane_id(); vector_idx < n_vectors;
+    for (auto vector_idx = ThreadContext::get_lane_id(); vector_idx < n_vectors;
          vector_idx += WARP_WIDTH) {
         auto distance = pruning_distances[vector_idx];
         bool distance_is_under_threshold = distance < pruning_threshold;
@@ -509,7 +509,7 @@ __device__ void update_pruning_positions_array(
     const auto previous_n_vectors_not_pruned = n_vectors_not_pruned;
 
     n_vectors_not_pruned = 0;
-    for (size_t vector_idx = ThreadContext::get_lane_id(); vector_idx < previous_n_vectors_not_pruned;
+    for (auto vector_idx = ThreadContext::get_lane_id(); vector_idx < previous_n_vectors_not_pruned;
          vector_idx += WARP_WIDTH) {
         auto position = pruning_positions[vector_idx];
         auto distance = pruning_distances[position];
@@ -547,9 +547,9 @@ __device__ void select_closest_vector(
 
     // Not sure there are enough n_vectors_not_pruned to actually make collaboratively doing this
     // worth it
-    for (size_t position_idx = ThreadContext::get_lane_id(); position_idx < n_vectors_not_pruned;
+    for (auto position_idx = ThreadContext::get_lane_id(); position_idx < n_vectors_not_pruned;
          position_idx += WARP_WIDTH) {
-        size_t index = pruning_positions[position_idx];
+        auto index = pruning_positions[position_idx];
         auto distance = pruning_distances[index];
         if (distance < best_candidate.distance) {
             best_candidate.distance = distance;
@@ -612,19 +612,19 @@ __device__ void prune(
     // TODO Make sure this is otherwise compiled away
     const bool has_horizontal_dimensions = constant_prune_data.num_horizontal_dimensions > 0;
     if (has_horizontal_dimensions) {
-        for (size_t current_horizontal_dimension = 0;
+        for (auto current_horizontal_dimension = uint32_t{0};
              current_horizontal_dimension < constant_prune_data.num_horizontal_dimensions;
              current_horizontal_dimension += H_DIM_SIZE) {
-            size_t offset_data =
+            auto offset_data =
                 (constant_prune_data.num_vertical_dimensions * cluster_prune_data.n_vectors) +
                 (current_horizontal_dimension * cluster_prune_data.n_vectors);
-            size_t offset_query =
+            auto offset_query =
                 constant_prune_data.num_vertical_dimensions + current_horizontal_dimension;
             // Can do a collaborative load for pruning_positions, and then supply
             // first thread in warp with values by downshifting them with shuffle_sync
             // Can do a collaborative write for pruning_distances, by upshifting values
             // and then doing a single write
-            for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+            for (auto vector_idx = uint32_t{0}; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
                 pruning_distances[v_idx] +=
@@ -657,7 +657,7 @@ __device__ void prune(
         // first thread in warp with values by downshifting them with shuffle_sync
         // Can do a collaborative write for pruning_distances, by upshifting values
         // and then doing a single write
-        for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
+        for (auto vector_idx = uint32_t{0}; vector_idx < n_vectors_not_pruned; vector_idx++) {
             size_t v_idx = pruning_positions[vector_idx];
             auto data_pos = cluster_prune_data.aux_vertical_dimensions_in_horizontal_layout +
                             (v_idx * constant_prune_data.num_vertical_dimensions) +
