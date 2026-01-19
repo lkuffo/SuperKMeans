@@ -496,7 +496,7 @@ class BulkFixedHorizontalDistanceCalculator {
 					for (auto j = uint32_t{0}; j < N_ITERATIONS; ++j) {
 							skmeans_distance_t<Quantization::f32> to_multiply =
 									buffer_fixed_vector[j] - buffer_other_vector[i * N_ITERATIONS + j];
-							distance += to_multiply * to_multiply;
+							distance = fmaf(to_multiply, to_multiply, distance);
 					}
 
 					distance = warp_reduce_sum(distance);
