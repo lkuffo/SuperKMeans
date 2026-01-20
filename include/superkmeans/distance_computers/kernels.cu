@@ -69,12 +69,51 @@ __device__ constexpr T max_of_either(const T a, const T b) {
 
 template <typename T>
 __device__ __forceinline__ T warp_reduce_sum(T value) {
+#pragma unroll
     for (int offset = WARP_WIDTH / 2; offset > 0; offset >>= 1) {
         value += __shfl_down_sync(FULL_MASK, value, offset);
     }
 
     return value; // valid in first lane only
 }
+
+template <typename T>
+__device__ __forceinline__ void bulk4_warp_reduce_sum(T *values) {
+		// Hand interleaved as otherwise I could not get the compiler to interleave these instructions
+
+    // aggregates results in the values itself, valid in first lane only
+    // (Do broadcast after if you want in all values)
+		T buffer_values[4];
+
+#pragma unroll
+    for (int offset = WARP_WIDTH / 2; offset > 0; offset >>= 1) {
+            buffer_values[0] = __shfl_down_sync(FULL_MASK, values[0], offset);
+            buffer_values[1] = __shfl_down_sync(FULL_MASK, values[1], offset);
+            buffer_values[2] = __shfl_down_sync(FULL_MASK, values[2], offset);
+            buffer_values[3] = __shfl_down_sync(FULL_MASK, values[3], offset);
+
+						// Insert a scheduling barrier to make sure that these shuffles and adds are kept separate
+						asm volatile ("" ::: "memory");
+
+            values[0] += buffer_values[0]; 
+            values[1] += buffer_values[1]; 
+            values[2] += buffer_values[2]; 
+            values[3] += buffer_values[3]; 
+    }
+}
+
+//template <typename T, uint32_t BULK_SIZE>
+//__device__ __forceinline__ void bulk_warp_reduce_sum(T *values) {
+//    // aggregates results in the values itself, valid in first lane only
+//    // (Do broadcast after if you want in all values)
+//#pragma unroll
+//    for (int offset = WARP_WIDTH / 2; offset > 0; offset >>= 1) {
+//#pragma unroll
+//        for (int i = 0; i < BULK_SIZE; ++i) {
+//            values[i] += __shfl_down_sync(FULL_MASK, values[i], offset);
+//        }
+//    }
+//}
 
 template <typename T>
 __device__ __forceinline__ T warp_broadcast(T value) {
@@ -459,8 +498,8 @@ __device__ void load_into_registers(T* __restrict__ registers, const T* __restri
 template <uint32_t NUM_DIMENSIONS, uint32_t BULK_SIZE>
 class BulkFixedHorizontalDistanceCalculator {
   private:
-		static constexpr uint32_t N_ITERATIONS = NUM_DIMENSIONS / WARP_WIDTH;
-		skmeans_distance_t<Quantization::f32> buffer_fixed_vector[N_ITERATIONS];
+    static constexpr uint32_t N_ITERATIONS = NUM_DIMENSIONS / WARP_WIDTH;
+    skmeans_distance_t<Quantization::f32> buffer_fixed_vector[N_ITERATIONS];
 
   public:
     __device__ void load_fixed_vector(const skmeans_value_t<Quantization::f32>* fixed_vector) {
@@ -470,41 +509,52 @@ class BulkFixedHorizontalDistanceCalculator {
     }
 
     __device__ skmeans_value_t<Quantization::f32> calculate_distance_to_vectors(
-        const skmeans_value_t<Quantization::f32>* other_vectors,
-				const uint32_t* pruning_positions,
-				skmeans_distance_t<Quantization::f32>* pruning_distances
+        const skmeans_value_t<Quantization::f32> __restrict__* other_vectors,
+        const uint32_t __restrict__* pruning_positions,
+        skmeans_distance_t<Quantization::f32> __restrict__* pruning_distances
     ) {
-				uint32_t v_indices[BULK_SIZE];
+        uint32_t buffer_vector_indices[BULK_SIZE];
 
-				for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
-					v_indices[i] = pruning_positions[i];
-				}
+        for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
+            buffer_vector_indices[i] = pruning_positions[i];
+        }
 
         skmeans_distance_t<Quantization::f32> buffer_other_vector[N_ITERATIONS * BULK_SIZE];
-#pragma unroll 
-				for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
-					load_into_registers<skmeans_value_t<Quantization::f32>, NUM_DIMENSIONS, WARP_WIDTH>(
-							buffer_other_vector + i * N_ITERATIONS, 
-							other_vectors + v_indices[i] * NUM_DIMENSIONS 
-					);
-				}
-
-#pragma unroll 
-				for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
-					skmeans_distance_t<Quantization::f32> distance = 0.0;
 #pragma unroll
-					for (auto j = uint32_t{0}; j < N_ITERATIONS; ++j) {
-							skmeans_distance_t<Quantization::f32> to_multiply =
-									buffer_fixed_vector[j] - buffer_other_vector[i * N_ITERATIONS + j];
-							distance = fmaf(to_multiply, to_multiply, distance);
-					}
+        for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
+            load_into_registers<skmeans_value_t<Quantization::f32>, NUM_DIMENSIONS, WARP_WIDTH>(
+                buffer_other_vector + i * N_ITERATIONS,
+                other_vectors + buffer_vector_indices[i] * NUM_DIMENSIONS
+            );
+        }
 
-					distance = warp_reduce_sum(distance);
-					if (ThreadContext::is_first_lane()) {
-					 pruning_distances[v_indices[i]] += distance;
-					}
-				}
+        skmeans_distance_t<Quantization::f32> buffer_computed_distances[BULK_SIZE];
+        skmeans_distance_t<Quantization::f32> buffer_pruning_distances[BULK_SIZE];
+        for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
+            buffer_computed_distances[i] = 0;
+            buffer_pruning_distances[i] = pruning_distances[buffer_vector_indices[i]];
+        }
 
+#pragma unroll
+        for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
+#pragma unroll
+            for (auto j = uint32_t{0}; j < N_ITERATIONS; ++j) {
+                skmeans_distance_t<Quantization::f32> to_multiply =
+                    buffer_fixed_vector[j] - buffer_other_vector[i * N_ITERATIONS + j];
+                buffer_computed_distances[i] =
+                    fmaf(to_multiply, to_multiply, buffer_computed_distances[i]);
+            }
+        }
+
+				bulk4_warp_reduce_sum(buffer_computed_distances);
+
+        if (ThreadContext::is_first_lane()) {
+#pragma unroll
+            for (auto i = uint32_t{0}; i < BULK_SIZE; ++i) {
+                pruning_distances[buffer_vector_indices[i]] =
+                    buffer_computed_distances[i] + buffer_pruning_distances[i];
+            }
+        }
     }
 
     __device__ skmeans_value_t<Quantization::f32> calculate_distance_to_vector(
@@ -680,18 +730,20 @@ __device__ void prune(
              current_horizontal_dimension += H_DIM_SIZE) {
             auto offset_query =
                 constant_prune_data.num_vertical_dimensions + current_horizontal_dimension;
-						constexpr uint32_t BULK_SIZE = 4;
-							auto calculator = BulkFixedHorizontalDistanceCalculator<H_DIM_SIZE, BULK_SIZE>();
-							calculator.load_fixed_vector(query + offset_query);
+            constexpr uint32_t BULK_SIZE = 4;
+            auto calculator = BulkFixedHorizontalDistanceCalculator<H_DIM_SIZE, BULK_SIZE>();
+            calculator.load_fixed_vector(query + offset_query);
 
             auto offset_data =
                 (constant_prune_data.num_vertical_dimensions * cluster_prune_data.n_vectors) +
                 (current_horizontal_dimension * cluster_prune_data.n_vectors);
             auto is_first_lane = ThreadContext::is_first_lane();
-						auto vector_idx = uint32_t{0};
+            auto vector_idx = uint32_t{0};
             for (; vector_idx + BULK_SIZE < n_vectors_not_pruned; vector_idx += BULK_SIZE) {
                 calculator.calculate_distance_to_vectors(
-                    cluster_prune_data.data + offset_data, pruning_positions + vector_idx, pruning_distances
+                    cluster_prune_data.data + offset_data,
+                    pruning_positions + vector_idx,
+                    pruning_distances
                 );
             }
 
