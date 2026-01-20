@@ -78,42 +78,42 @@ __device__ __forceinline__ T warp_reduce_sum(T value) {
 }
 
 template <typename T>
-__device__ __forceinline__ void bulk4_warp_reduce_sum(T *values) {
-		// Hand interleaved as otherwise I could not get the compiler to interleave these instructions
+__device__ __forceinline__ void bulk4_warp_reduce_sum(T* values) {
+    // Hand interleaved as otherwise I could not get the compiler to interleave these instructions
 
     // aggregates results in the values itself, valid in first lane only
     // (Do broadcast after if you want in all values)
-		T buffer_values[4];
+    T buffer_values[4];
 
 #pragma unroll
     for (int offset = WARP_WIDTH / 2; offset > 0; offset >>= 1) {
-            buffer_values[0] = __shfl_down_sync(FULL_MASK, values[0], offset);
-            buffer_values[1] = __shfl_down_sync(FULL_MASK, values[1], offset);
-            buffer_values[2] = __shfl_down_sync(FULL_MASK, values[2], offset);
-            buffer_values[3] = __shfl_down_sync(FULL_MASK, values[3], offset);
+        buffer_values[0] = __shfl_down_sync(FULL_MASK, values[0], offset);
+        buffer_values[1] = __shfl_down_sync(FULL_MASK, values[1], offset);
+        buffer_values[2] = __shfl_down_sync(FULL_MASK, values[2], offset);
+        buffer_values[3] = __shfl_down_sync(FULL_MASK, values[3], offset);
 
-						// Insert a scheduling barrier to make sure that these shuffles and adds are kept separate
-						asm volatile ("" ::: "memory");
+        // Insert a scheduling barrier to make sure that these shuffles and adds are kept separate
+        asm volatile("" ::: "memory");
 
-            values[0] += buffer_values[0]; 
-            values[1] += buffer_values[1]; 
-            values[2] += buffer_values[2]; 
-            values[3] += buffer_values[3]; 
+        values[0] += buffer_values[0];
+        values[1] += buffer_values[1];
+        values[2] += buffer_values[2];
+        values[3] += buffer_values[3];
     }
 }
 
-//template <typename T, uint32_t BULK_SIZE>
+// template <typename T, uint32_t BULK_SIZE>
 //__device__ __forceinline__ void bulk_warp_reduce_sum(T *values) {
-//    // aggregates results in the values itself, valid in first lane only
-//    // (Do broadcast after if you want in all values)
-//#pragma unroll
-//    for (int offset = WARP_WIDTH / 2; offset > 0; offset >>= 1) {
-//#pragma unroll
-//        for (int i = 0; i < BULK_SIZE; ++i) {
-//            values[i] += __shfl_down_sync(FULL_MASK, values[i], offset);
-//        }
-//    }
-//}
+//     // aggregates results in the values itself, valid in first lane only
+//     // (Do broadcast after if you want in all values)
+// #pragma unroll
+//     for (int offset = WARP_WIDTH / 2; offset > 0; offset >>= 1) {
+// #pragma unroll
+//         for (int i = 0; i < BULK_SIZE; ++i) {
+//             values[i] += __shfl_down_sync(FULL_MASK, values[i], offset);
+//         }
+//     }
+// }
 
 template <typename T>
 __device__ __forceinline__ T warp_broadcast(T value) {
@@ -546,7 +546,7 @@ class BulkFixedHorizontalDistanceCalculator {
             }
         }
 
-				bulk4_warp_reduce_sum(buffer_computed_distances);
+        bulk4_warp_reduce_sum(buffer_computed_distances);
 
         if (ThreadContext::is_first_lane()) {
 #pragma unroll
@@ -608,9 +608,37 @@ __device__ void initialize_pruning_positions_array(
     skmeans_distance_t<Quantization::f32>* pruning_distances,
     const uint32_t n_vectors
 ) {
+
     n_vectors_not_pruned = 0;
-    for (auto vector_idx = ThreadContext::get_lane_id(); vector_idx < n_vectors;
-         vector_idx += WARP_WIDTH) {
+    auto vector_idx = ThreadContext::get_lane_id();
+
+    constexpr uint32_t BULK_SIZE = 8;
+
+    for (; vector_idx + WARP_WIDTH * BULK_SIZE < n_vectors; vector_idx += WARP_WIDTH * BULK_SIZE) {
+        skmeans_distance_t<Quantization::f32> buffer_distances[BULK_SIZE];
+#pragma unroll
+        for (uint32_t i = 0; i < BULK_SIZE; ++i) {
+            auto inner_vector_idx = vector_idx + i * WARP_WIDTH;
+            buffer_distances[i] = pruning_distances[inner_vector_idx];
+        }
+
+        for (uint32_t i = 0; i < BULK_SIZE; ++i) {
+            auto inner_vector_idx = vector_idx + i * WARP_WIDTH;
+            auto distance = buffer_distances[i];
+            bool distance_is_under_threshold = distance < pruning_threshold;
+
+            auto old_n_vectors_not_pruned = n_vectors_not_pruned;
+            auto offset = warp_exclusive_prefix_sum_binary_and_total(
+                n_vectors_not_pruned, distance_is_under_threshold, __activemask()
+            );
+            if (distance_is_under_threshold) {
+                pruning_positions[old_n_vectors_not_pruned + offset] = inner_vector_idx;
+            }
+        }
+    }
+
+    // Cleanup loop
+    for (; vector_idx < n_vectors; vector_idx += WARP_WIDTH) {
         auto distance = pruning_distances[vector_idx];
         bool distance_is_under_threshold = distance < pruning_threshold;
 
