@@ -497,27 +497,27 @@ void GPUCalculateDistanceToCurrentCentroids(
     );
     // CUDA_SAFE_CALL(cudaDeviceSynchronize());
 }
-template <uint32_t NUM_DIMENSIONS>
-__device__ skmeans_distance_t<Quantization::f32>
-calculate_distance_with_fixed_horizontal_dimensions(
-    const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector1,
-    const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector2
-) {
-    // Assumes one warp collaborating
-    // All threads in warp participate
-    // All thread returns relevant distance, (but should probably be only one of them)
-    skmeans_distance_t<Quantization::f32> distance = 0.0;
-#pragma unroll
-    for (auto dimension_idx = ThreadContext::get_lane_id(); dimension_idx < NUM_DIMENSIONS;
-         dimension_idx += WARP_WIDTH) {
-        skmeans_distance_t<Quantization::f32> to_multiply =
-            vector1[dimension_idx] - vector2[dimension_idx];
-        distance += to_multiply * to_multiply;
-    }
-    distance = warp_reduce_sum(distance);
-    distance = warp_broadcast(distance);
-    return distance;
-};
+// template <uint32_t NUM_DIMENSIONS>
+// __device__ skmeans_distance_t<Quantization::f32>
+// calculate_distance_with_fixed_horizontal_dimensions(
+//     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector1,
+//     const skmeans_value_t<Quantization::f32>* SKM_RESTRICT vector2
+// ) {
+//     // Assumes one warp collaborating
+//     // All threads in warp participate
+//     // All thread returns relevant distance, (but should probably be only one of them)
+//     skmeans_distance_t<Quantization::f32> distance = 0.0;
+// #pragma unroll
+//     for (auto dimension_idx = ThreadContext::get_lane_id(); dimension_idx < NUM_DIMENSIONS;
+//          dimension_idx += WARP_WIDTH) {
+//         skmeans_distance_t<Quantization::f32> to_multiply =
+//             vector1[dimension_idx] - vector2[dimension_idx];
+//         distance += to_multiply * to_multiply;
+//     }
+//     distance = warp_reduce_sum(distance);
+//     distance = warp_broadcast(distance);
+//     return distance;
+// };
 
 template <typename T, uint32_t N_VALUES, uint32_t STEP = WARP_WIDTH>
 __forceinline__ __device__ void load_into_registers(
@@ -582,7 +582,7 @@ class BulkFixedHorizontalDistanceCalculator {
             }
         }
 
-        //bulk4_warp_reduce_sum(buffer_computed_distances);
+        // bulk4_warp_reduce_sum(buffer_computed_distances);
         bulk8_warp_reduce_sum(buffer_computed_distances);
 
         if (ThreadContext::is_first_lane()) {
@@ -645,38 +645,40 @@ __device__ void initialize_pruning_positions_array(
     skmeans_distance_t<Quantization::f32>* pruning_distances,
     const uint32_t n_vectors
 ) {
-
     n_vectors_not_pruned = 0;
     auto vector_idx = ThreadContext::get_lane_id();
 
     constexpr uint32_t BULK_SIZE = 8;
     constexpr uint32_t INCREMENT = WARP_WIDTH * BULK_SIZE;
 
-//     for (; vector_idx < n_vectors;) {
-//         skmeans_distance_t<Quantization::f32> buffer_distances[BULK_SIZE];
-// #pragma unroll
-//         for (uint32_t i = 0; i < BULK_SIZE; ++i) {
-//             buffer_distances[i] = pruning_distances[vector_idx + i * WARP_WIDTH];
-//         }
-// 
-//         for (uint32_t i = 0; i < BULK_SIZE; ++i) {
-//             auto inner_vector_idx = vector_idx + i * WARP_WIDTH;
-//             auto distance = buffer_distances[i];
-//             bool distance_is_under_threshold = distance < pruning_threshold;
-// 
-//             auto old_n_vectors_not_pruned = n_vectors_not_pruned;
-//             auto offset = warp_exclusive_prefix_sum_binary_and_total(
-//                 n_vectors_not_pruned, distance_is_under_threshold, __activemask()
-//             );
-//             if (distance_is_under_threshold) {
-//                 pruning_positions[old_n_vectors_not_pruned + offset] = inner_vector_idx;
-//             }
-//         }
-// 
-//         vector_idx += INCREMENT;
-//     }
+    // Calculate the safe limit for bulk processing
+    // We need vector_idx + (BULK_SIZE - 1) * WARP_WIDTH < n_vectors
+    const uint32_t bulk_limit =
+        n_vectors >= (BULK_SIZE - 1) * WARP_WIDTH ? n_vectors - (BULK_SIZE - 1) * WARP_WIDTH : 0;
 
-    // Cleanup loop
+    for (; vector_idx < bulk_limit; vector_idx += INCREMENT) {
+        skmeans_distance_t<Quantization::f32> buffer_distances[BULK_SIZE];
+
+#pragma unroll
+        for (uint32_t i = 0; i < BULK_SIZE; ++i) {
+            buffer_distances[i] = pruning_distances[vector_idx + i * WARP_WIDTH];
+        }
+
+        for (uint32_t i = 0; i < BULK_SIZE; ++i) {
+            auto inner_vector_idx = vector_idx + i * WARP_WIDTH;
+            auto distance = buffer_distances[i];
+            bool distance_is_under_threshold = distance < pruning_threshold;
+
+            auto old_n_vectors_not_pruned = n_vectors_not_pruned;
+            auto offset = warp_exclusive_prefix_sum_binary_and_total(
+                n_vectors_not_pruned, distance_is_under_threshold, __activemask()
+            );
+            if (distance_is_under_threshold) {
+                pruning_positions[old_n_vectors_not_pruned + offset] = inner_vector_idx;
+            }
+        }
+    }
+
     for (; vector_idx < n_vectors; vector_idx += WARP_WIDTH) {
         auto distance = pruning_distances[vector_idx];
         bool distance_is_under_threshold = distance < pruning_threshold;
@@ -689,6 +691,7 @@ __device__ void initialize_pruning_positions_array(
             pruning_positions[old_n_vectors_not_pruned + offset] = vector_idx;
         }
     }
+
     n_vectors_not_pruned = warp_broadcast(n_vectors_not_pruned);
 }
 
@@ -967,7 +970,7 @@ void GPUSearchPDX(
             out_not_pruned_counts,
             all_distances_buf
         );
-    // CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
     // printf("[SUCCESS]\n");
 }
 
