@@ -102,6 +102,39 @@ __device__ __forceinline__ void bulk4_warp_reduce_sum(T* values) {
     }
 }
 
+template <typename T>
+__device__ __forceinline__ void bulk8_warp_reduce_sum(T* values) {
+    // Hand interleaved as otherwise I could not get the compiler to interleave these instructions
+
+    // aggregates results in the values itself, valid in first lane only
+    // (Do broadcast after if you want in all values)
+    T buffer_values[8];
+
+#pragma unroll
+    for (int offset = WARP_WIDTH / 2; offset > 0; offset >>= 1) {
+        buffer_values[0] = __shfl_down_sync(FULL_MASK, values[0], offset);
+        buffer_values[1] = __shfl_down_sync(FULL_MASK, values[1], offset);
+        buffer_values[2] = __shfl_down_sync(FULL_MASK, values[2], offset);
+        buffer_values[3] = __shfl_down_sync(FULL_MASK, values[3], offset);
+        buffer_values[4] = __shfl_down_sync(FULL_MASK, values[4], offset);
+        buffer_values[5] = __shfl_down_sync(FULL_MASK, values[5], offset);
+        buffer_values[6] = __shfl_down_sync(FULL_MASK, values[6], offset);
+        buffer_values[7] = __shfl_down_sync(FULL_MASK, values[7], offset);
+
+        // Insert a scheduling barrier to make sure that these shuffles and adds are kept separate
+        asm volatile("" ::: "memory");
+
+        values[0] += buffer_values[0];
+        values[1] += buffer_values[1];
+        values[2] += buffer_values[2];
+        values[3] += buffer_values[3];
+        values[4] += buffer_values[4];
+        values[5] += buffer_values[5];
+        values[6] += buffer_values[6];
+        values[7] += buffer_values[7];
+    }
+}
+
 // template <typename T, uint32_t BULK_SIZE>
 //__device__ __forceinline__ void bulk_warp_reduce_sum(T *values) {
 //     // aggregates results in the values itself, valid in first lane only
@@ -549,7 +582,8 @@ class BulkFixedHorizontalDistanceCalculator {
             }
         }
 
-        bulk4_warp_reduce_sum(buffer_computed_distances);
+        //bulk4_warp_reduce_sum(buffer_computed_distances);
+        bulk8_warp_reduce_sum(buffer_computed_distances);
 
         if (ThreadContext::is_first_lane()) {
 #pragma unroll
@@ -763,7 +797,7 @@ __device__ void prune(
              current_horizontal_dimension += H_DIM_SIZE) {
             auto offset_query =
                 constant_prune_data.num_vertical_dimensions + current_horizontal_dimension;
-            constexpr uint32_t BULK_SIZE = 4;
+            constexpr uint32_t BULK_SIZE = 8;
             auto calculator = BulkFixedHorizontalDistanceCalculator<H_DIM_SIZE, BULK_SIZE>();
             calculator.load_fixed_vector(query + offset_query);
 
@@ -898,7 +932,7 @@ void GPUSearchPDX(
     float* SKM_RESTRICT all_distances_buf,
     const cudaStream_t stream
 ) {
-    const auto N_THREADS_PER_BLOCK = WARP_WIDTH * 2;
+    const auto N_THREADS_PER_BLOCK = WARP_WIDTH;
     const auto WARPS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, WARP_WIDTH);
     const auto N_THREADS_PER_ITEM = WARP_WIDTH;
     const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
