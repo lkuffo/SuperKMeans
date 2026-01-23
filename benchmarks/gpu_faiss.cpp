@@ -17,7 +17,18 @@
 #include "bench_utils.h"
 #include "superkmeans/nanobench.h"
 
+#include "superkmeans/distance_computers/kernels.cuh"
+
 int main(int argc, char* argv[]) {
+#ifdef USE_CUDA
+    // Trigger GPU Initialization
+    // We need to do this before benchmarking, as the GPU will only initialize
+    // when the first kernel is launched. Therefore we now launch a bogus kernel first.
+    printf("Trigger GPU initialization.\n");
+    skmeans::kernels::trigger_gpu_initialization();
+    printf("Triggered GPU initialization.\n");
+#endif
+
     // Experiment configuration
     const std::string algorithm = "faiss";
 
@@ -48,8 +59,8 @@ int main(int argc, char* argv[]) {
 
     const size_t n = it->second.first;
     const size_t d = it->second.second;
-    const size_t n_clusters =
-        std::max<int>(1u, static_cast<int>(std::sqrt(static_cast<double>(n)) * 4.0));
+    const size_t n_clusters = 
+         std::max<int>(1u, static_cast<int>(std::sqrt(static_cast<double>(n)) * 4.0));
     int n_iters = bench_utils::MAX_ITERS;
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);

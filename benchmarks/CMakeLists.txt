@@ -125,10 +125,16 @@ add_executable(end_to_end_faiss.out end_to_end_faiss.cpp)
 target_link_libraries(end_to_end_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
 
 # GPU FAISS benchmark 
-add_executable(gpu_faiss.out gpu_faiss.cpp)
+add_executable(gpu_faiss.out gpu_faiss.cpp ../include/superkmeans/distance_computers/kernels.cu)
 target_compile_definitions(gpu_faiss.out PRIVATE LIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE)
 target_link_libraries(gpu_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
 target_link_libraries(gpu_faiss.out PRIVATE rmm)
+
+# cuVS benchmark 
+add_executable(end_to_end_cuvs_kmeans_clustering.out end_to_end_cuvs_kmeans_clustering.cpp ../include/superkmeans/distance_computers/kernels.cu)
+target_compile_definitions(end_to_end_cuvs_kmeans_clustering.out PRIVATE LIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE)
+target_link_libraries(end_to_end_cuvs_kmeans_clustering.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
+target_link_libraries(end_to_end_cuvs_kmeans_clustering.out PRIVATE rmm cuvs)
 
 # Varying K benchmarks (vary n_clusters instead of dataset)
 add_executable(varying_k_superkmeans.out varying_k_superkmeans.cpp)
