@@ -15,8 +15,9 @@
 #include "superkmeans/profiler.h"
 #include "superkmeans/gpu/gpu.cuh"
 
-namespace skmeans {
+#include "superkmeans/stopwatch.h"
 
+namespace skmeans {
 /**
  * @brief Configuration parameters for SuperKMeans clustering.
  *
@@ -347,20 +348,28 @@ class SuperKMeans {
         std::vector<size_t> not_pruned_counts(_n_samples);
         GetPartialL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
 
-				gpu::GPUDeviceContext<skmeans_value_t<q>, skmeans_value_t<q>> gpu_device_context(_n_samples, _n_clusters, _d, GPU_STREAM_POOL_SIZE);
+				gpu::GPUDeviceContext<skmeans_value_t<q>, skmeans_value_t<q>, distance_t> gpu_device_context(_n_samples, _n_clusters, _d, GPU_STREAM_POOL_SIZE);
 				gpu_device_context.x.copy_to_device(data_to_cluster);
+				auto sw = Stopwatch("SuperKMeans Stopwatch");
         for (; iter_idx < _config.iters; ++iter_idx) {
             // After swap: _prev_centroids has old centroids, _horizontal_centroids will be zeroed
             // for accumulation
+						sw.start("A");
             std::swap(_horizontal_centroids, _prev_centroids);
+						sw.stop("A");
+						sw.start("B");
             GetL2NormsRowMajor(
                 _prev_centroids.data(),
                 _n_clusters,
                 centroids_partial_norms.data(),
                 _initial_partial_d
             );
+						sw.stop("B");
             // Reset the not-pruned counts buffer
+						sw.start("C1");
             std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
+						sw.stop("C1");
+						sw.start("C2");
             AssignAndUpdateCentroidsPartialBatched(
 								gpu_device_context,
                 data_to_cluster,
@@ -370,20 +379,34 @@ class SuperKMeans {
                 centroids_pdx_wrapper,
                 not_pruned_counts.data()
             );
+						sw.stop("C2");
 
+						sw.start("D");
             // Tune _initial_partial_d based on the average not-pruned percentage
             bool partial_d_changed = false;
             float avg_not_pruned_pct = TuneInitialPartialD(
                 not_pruned_counts.data(), _n_samples, _n_clusters, partial_d_changed
             );
+						sw.stop("D");
+						sw.start("E");
             // If _initial_partial_d changed, recompute the data norms with the new partial_d
             if (partial_d_changed) {
                 GetPartialL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
             }
-
+						sw.stop("E");
+						sw.start("F");
             ConsolidateCentroids();
+						sw.stop("F");
+
+						sw.start("G");
             ComputeCost();
+						sw.stop("G");
+
+						sw.start("H");
             ComputeShift();
+						sw.stop("H");
+
+						sw.start("I");
             if (n_queries) {
                 // Update centroid norms with FULL norms for recall computation
                 // (PDX uses partial norms for distance computation, but recall needs full norms)
@@ -392,6 +415,8 @@ class SuperKMeans {
                 );
                 _recall = ComputeRecall(rotated_queries.data(), n_queries);
             }
+						sw.stop("I");
+						sw.start("J");
             {
                 SuperKMeansIterationStats stats;
                 stats.iteration = iter_idx + 1;
@@ -404,6 +429,8 @@ class SuperKMeans {
                 stats.is_blas_only = false;
                 iteration_stats.push_back(stats);
             }
+						sw.stop("J");
+						sw.start("K");
             if (_config.verbose)
                 std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
                           << " | Objective: " << _cost << " | Shift: " << _shift
@@ -411,12 +438,18 @@ class SuperKMeans {
                           << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
                           << " | Partial D: " << _initial_partial_d << std::endl
                           << std::endl;
+						sw.stop("K");
+						sw.start("L");
             // Early stopping if converged
             if (_config.early_termination &&
                 ShouldStopEarly(n_queries > 0, best_recall, iters_without_improvement, iter_idx)) {
                 break;
             }
+						sw.stop("L");
         }
+
+				sw.print();
+				gpu_device_context.sw.print();
         // Note: When sampling_fraction < 1, only the first n_samples vectors have assignments.
         // Users can call Assign() on remaining vectors if needed.
 
@@ -543,7 +576,7 @@ class SuperKMeans {
      * @param out_not_pruned_counts Optional output for per-vector pruning statistics
      */
     void AssignAndUpdateCentroidsPartialBatched(
-				gpu::GPUDeviceContext<skmeans_value_t<q>, skmeans_value_t<q>>& gpu_device_context,
+				gpu::GPUDeviceContext<skmeans_value_t<q>, skmeans_value_t<q>, distance_t>& gpu_device_context,
         const vector_value_t* SKM_RESTRICT data,
         const vector_value_t* SKM_RESTRICT centroids_for_search,
         const vector_value_t* SKM_RESTRICT partial_centroid_norms,

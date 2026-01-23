@@ -196,29 +196,9 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
      * tuning)
      */
 
-    struct StreamBuffers {
-        cudaStream_t stream;
-        gpu::DeviceBuffer<data_t> batch_x_buffer_dev;
-        gpu::DeviceBuffer<norms_t> all_distances_buf_dev;
-        gpu::BatchedMatrixMultiplier multiplier;
-
-        StreamBuffers(
-            const size_t x_batch_size,
-            const size_t y_batch_size,
-            const size_t d,
-            const cudaStream_t stream
-        )
-            : stream(stream),
-              batch_x_buffer_dev(gpu::compute_buffer_size<data_t>(x_batch_size, d), stream),
-              all_distances_buf_dev(
-                  gpu::compute_buffer_size<float>(x_batch_size, y_batch_size),
-                  stream
-              ),
-              multiplier(stream) {}
-    };
 
     static void FindNearestNeighborWithPruning(
-				gpu::GPUDeviceContext<data_t, norms_t>& gpu_device_context,
+				gpu::GPUDeviceContext<data_t, norms_t, distance_t>& gpu_device_context,
         const data_t* SKM_RESTRICT x,
         const data_t* SKM_RESTRICT y,
         const size_t n_x,
@@ -234,26 +214,18 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
         size_t* out_not_pruned_counts = nullptr
     ) {
         SKM_PROFILE_SCOPE("search");
+
+				gpu_device_context.sw.start("Introduction");
+
         auto& stream = gpu_device_context.main_stream;
-        auto y_dev =
-            gpu::DeviceBuffer<data_t>(gpu::compute_buffer_size<data_t>(n_y, d), stream.get());
-        y_dev.copy_to_device(y);
 
-        auto norms_x_dev =
-            gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_x), stream.get());
-        auto norms_y_dev =
-            gpu::DeviceBuffer<norms_t>(gpu::compute_buffer_size<norms_t>(n_y), stream.get());
-        norms_x_dev.copy_to_device(norms_x);
-        norms_y_dev.copy_to_device(norms_y);
+        gpu_device_context.y.copy_to_device(y);
+        gpu_device_context.norms_x.copy_to_device(norms_x);
+        gpu_device_context.norms_y.copy_to_device(norms_y);
 
-        auto out_knn_dev =
-            gpu::DeviceBuffer<uint32_t>(gpu::compute_buffer_size<uint32_t>(n_x), stream.get());
-        out_knn_dev.copy_to_device(out_knn);
-        auto out_distances_dev =
-            gpu::DeviceBuffer<distance_t>(gpu::compute_buffer_size<distance_t>(n_x), stream.get());
-        auto out_not_pruned_counts_dev =
-            gpu::DeviceBuffer<size_t>(gpu::compute_buffer_size<size_t>(n_x), stream.get());
-        out_not_pruned_counts_dev.copy_to_device(out_not_pruned_counts);
+
+        gpu_device_context.out_knn.copy_to_device(out_knn);
+        gpu_device_context.out_not_pruned_counts.copy_to_device(out_not_pruned_counts);
 
         auto constant_prune_data = kernels::ConstantPruneData(pdx_centroids, stream.get());
 
@@ -268,17 +240,10 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
             );
         }
 
-        const int32_t N_BATCH_STREAMS = gpu_device_context.stream_pool.size();
-        auto batch_stream_buffers = std::vector<StreamBuffers>();
-        batch_stream_buffers.reserve(N_BATCH_STREAMS);
-
-        for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
-            batch_stream_buffers.emplace_back(
-                X_BATCH_SIZE, Y_BATCH_SIZE, d, gpu_device_context.stream_pool[i].get()
-            );
-        }
 
         stream.synchronize();
+				gpu_device_context.sw.stop("Introduction");
+				gpu_device_context.sw.start("Main course");
 
         size_t iteration_count = 0;
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
@@ -289,7 +254,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 batch_n_x = n_x - i;
             }
 
-            auto current_stream = iteration_count % N_BATCH_STREAMS;
+            auto current_stream = iteration_count % gpu_device_context.stream_pool.size();
             iteration_count += 1;
 
             // batch_stream_buffers[current_stream].batch_x_buffer_dev.copy_to_device(
@@ -301,10 +266,10 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 n_y,
                 d,
                 batch_x_p, //batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),
-                y_dev.get(),                 // const
-                out_knn_dev.get() + i,       // const
-                out_distances_dev.get() + i, // mutated
-                batch_stream_buffers[current_stream].stream
+                gpu_device_context.y.get(),                 // const
+                gpu_device_context.out_knn.get() + i,       // const
+                gpu_device_context.out_distances.get() + i, // mutated
+                gpu_device_context.stream_buffers[current_stream].stream
             );
 
             MatrixR materialize_x_left_cols;
@@ -312,29 +277,29 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 auto batch_n_y = Y_BATCH_SIZE;
                 // auto batch_y_p = y + (j * d);
-                auto batch_y_p = y_dev.get() + (j * d);
+                auto batch_y_p = gpu_device_context.y.get() + (j * d);
                 if (j + Y_BATCH_SIZE > n_y) {
                     batch_n_y = n_y - j;
                 }
 
-                batch_stream_buffers[current_stream].multiplier.multiply(
+                gpu_device_context.stream_buffers[current_stream].multiplier.multiply(
                     batch_x_p, // batch_stream_buffers[current_stream].batch_x_buffer_dev.get(), // const
                     batch_y_p,                                                     // const
                     batch_n_x,
                     batch_n_y,
                     d,
                     partial_d,
-                    batch_stream_buffers[current_stream].all_distances_buf_dev.get() // mutated
+                    gpu_device_context.stream_buffers[current_stream].all_distances_buf_dev.get() // mutated
                 );
                 kernels::norms(
                     batch_n_x,
                     batch_n_y,
                     i,
                     j,
-                    norms_x_dev.get(),                                                // const
-                    norms_y_dev.get(),                                                // const
-                    batch_stream_buffers[current_stream].all_distances_buf_dev.get(), // mutated
-                    batch_stream_buffers[current_stream].stream
+                    gpu_device_context.norms_x.get(),                                                // const
+                    gpu_device_context.norms_y.get(),                                                // const
+                    gpu_device_context.stream_buffers[current_stream].all_distances_buf_dev.get(), // mutated
+                    gpu_device_context.stream_buffers[current_stream].stream
                 );
 
                 kernels::GPUSearchPDX(
@@ -345,23 +310,24 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                     batch_x_p, // batch_stream_buffers[current_stream].batch_x_buffer_dev.get(),    // const
                     constant_prune_data.as_view(),                                    // const
                     cluster_data[current_y_batch].as_view(),                          // const
-                    out_knn_dev.get() + i,                                            // mutated
-                    out_distances_dev.get() + i,                                      // mutated
-                    out_not_pruned_counts_dev.get() + i,                              // mutated
-                    batch_stream_buffers[current_stream].all_distances_buf_dev.get(), // mutated
-                    batch_stream_buffers[current_stream].stream
+                    gpu_device_context.out_knn.get() + i,                                            // mutated
+                    gpu_device_context.out_distances.get() + i,                                      // mutated
+                    gpu_device_context.out_not_pruned_counts.get() + i,                              // mutated
+                    gpu_device_context.stream_buffers[current_stream].all_distances_buf_dev.get(), // mutated
+                    gpu_device_context.stream_buffers[current_stream].stream
                 );
 
                 current_y_batch += 1;
             }
         }
-        for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
-            gpu_device_context.stream_pool[i].synchronize();
-        }
-        out_knn_dev.copy_to_host(out_knn);
-        out_distances_dev.copy_to_host(out_distances);
-        out_not_pruned_counts_dev.copy_to_host(out_not_pruned_counts);
+				gpu_device_context.stream_pool.synchronize();
+				gpu_device_context.sw.stop("Main course");
+				gpu_device_context.sw.start("Conclusion");
+        gpu_device_context.out_knn.copy_to_host(out_knn);
+        gpu_device_context.out_distances.copy_to_host(out_distances);
+        gpu_device_context.out_not_pruned_counts.copy_to_host(out_not_pruned_counts);
         stream.synchronize();
+				gpu_device_context.sw.stop("Conclusion");
     }
 };
 

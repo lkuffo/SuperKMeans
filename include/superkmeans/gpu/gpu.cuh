@@ -9,6 +9,8 @@
 
 #include "superkmeans/common.h"
 
+#include "superkmeans/stopwatch.h"
+
 namespace skmeans {
 
 namespace gpu {
@@ -65,6 +67,12 @@ class StreamPool {
     StreamPool(const size_t n_streams) : streams(n_streams) {};
 
     size_t size() const { return streams.size(); }
+
+    void synchronize() {
+        for (size_t i{0}; i < size(); ++i) {
+            streams[i].synchronize();
+        }
+		}
 
     gpu::ManagedCudaStream& operator[](const size_t index) {
         assert(index < size());
@@ -159,24 +167,6 @@ class DeviceBuffer {
     cudaStream_t _stream;
 };
 
-template <typename data_t, typename norms_t>
-class GPUDeviceContext {
-  private:
-  public:
-    ManagedCudaStream main_stream;
-    StreamPool stream_pool;
-    DeviceBuffer<data_t> x;
-    DeviceBuffer<data_t> y;
-    // DeviceBuffer norms_x;
-    // DeviceBuffer norms_y;
-
-    GPUDeviceContext(const size_t n_x, const size_t n_y, const size_t d, const size_t n_streams)
-        : stream_pool(n_streams), x(compute_buffer_size<data_t>(n_x, d), main_stream.get()),
-          y(compute_buffer_size<data_t>(n_y, d), main_stream.get()) {}
-          // norms_x(compute_buffer_size<norms_t>(n_x), main_stream.get()),
-          // norms_y(compute_buffer_size<norms_t>(n_y), main_stream.get()) {}
-};
-
 class BatchedMatrixMultiplier {
     using data_t = skmeans_value_t<Quantization::f32>;
 
@@ -232,6 +222,67 @@ class BatchedMatrixMultiplier {
 
   private:
     ManagedCublasHandle _cublas_handle;
+};
+
+template<typename norms_t>
+struct StreamBuffers {
+    cudaStream_t stream;
+    gpu::DeviceBuffer<norms_t> all_distances_buf_dev;
+    gpu::BatchedMatrixMultiplier multiplier;
+
+    StreamBuffers(
+        const size_t x_batch_size,
+        const size_t y_batch_size,
+        const size_t d,
+        const cudaStream_t stream
+    )
+        : stream(stream), all_distances_buf_dev(
+                              gpu::compute_buffer_size<float>(x_batch_size, y_batch_size),
+                              stream
+                          ),
+          multiplier(stream) {}
+};
+
+template<typename norms_t>
+static std::vector<StreamBuffers<norms_t>> make_stream_buffers(StreamPool& pool, size_t d) {
+    const int32_t n = pool.size();
+
+    std::vector<StreamBuffers<norms_t>> v;
+    v.reserve(n);
+
+    for (int32_t i = 0; i < n; ++i) {
+        v.emplace_back(X_BATCH_SIZE, Y_BATCH_SIZE, d, pool[i].get());
+    }
+
+    return v;
+}
+
+template <typename data_t, typename norms_t, typename distance_t>
+class GPUDeviceContext {
+  private:
+  public:
+    ManagedCudaStream main_stream;
+    StreamPool stream_pool;
+    DeviceBuffer<data_t> x;
+    DeviceBuffer<data_t> y;
+    DeviceBuffer<norms_t> norms_x;
+    DeviceBuffer<norms_t> norms_y;
+    DeviceBuffer<uint32_t> out_knn;
+    DeviceBuffer<distance_t> out_distances;
+    DeviceBuffer<size_t> out_not_pruned_counts;
+    std::vector<StreamBuffers<norms_t>> stream_buffers;
+
+    Stopwatch sw = Stopwatch("GPUDeviceContext");
+
+    GPUDeviceContext(const size_t n_x, const size_t n_y, const size_t d, const size_t n_streams)
+        : stream_pool(n_streams), x(compute_buffer_size<data_t>(n_x, d), main_stream.get()),
+          y(compute_buffer_size<data_t>(n_y, d), main_stream.get()),
+          norms_x(compute_buffer_size<norms_t>(n_x), main_stream.get()),
+          norms_y(compute_buffer_size<norms_t>(n_y), main_stream.get()),
+          out_knn(compute_buffer_size<uint32_t>(n_x), main_stream.get()),
+          out_distances(compute_buffer_size<distance_t>(n_x), main_stream.get()),
+          out_not_pruned_counts(compute_buffer_size<size_t>(n_x), main_stream.get()),
+          stream_buffers(make_stream_buffers<norms_t>(stream_pool, d)) {}
 };
 } // namespace gpu
 } // namespace skmeans
