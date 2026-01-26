@@ -9,6 +9,8 @@
 #include <random>
 #include <vector>
 
+#include <faiss/gpu/StandardGpuResources.h>
+#include <faiss/gpu/GpuIndexFlat.h>
 #include <faiss/Clustering.h>
 #include <faiss/IndexFlat.h>
 
@@ -19,7 +21,7 @@ int main(int argc, char* argv[]) {
     // Experiment configuration
     const std::string algorithm = "faiss";
 
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("openai");
 
     // Experiment name can be passed as second argument (default: "end_to_end")
     std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
@@ -60,7 +62,12 @@ int main(int argc, char* argv[]) {
     file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
     file.close();
 
-    faiss::IndexFlatL2 index(d);
+    faiss::gpu::StandardGpuResources res;
+    faiss::gpu::GpuIndexFlatConfig config;
+    config.device = 0;
+    config.useFloat16 = false;
+
+    faiss::gpu::GpuIndexFlatL2 index(&res, d, config);
 
     // Set up clustering parameters
     faiss::ClusteringParameters cp;

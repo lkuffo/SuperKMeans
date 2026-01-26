@@ -11,7 +11,33 @@
 #include <Eigen/Eigen/Dense>
 
 // Eigen already declares sgemm_, so we don't need to redeclare it
-// Use Eigen's BLAS declarations from Eigen/src/Core/util/BlasUtil.h
+// However, I would like to have more control over this
+extern "C" {
+    /* declare BLAS functions, see http://www.netlib.org/clapack/cblas/ */
+    
+    // int sgemm_(
+    //         const char* transa,
+    //         const char* transb,
+    //         FINTEGER* m,
+    //         FINTEGER* n,
+    //         FINTEGER* k,
+    //         const float* alpha,
+    //         const float* a,
+    //         FINTEGER* lda,
+    //         const float* b,
+    //         FINTEGER* ldb,
+    //         float* beta,
+    //         float* c,
+    //         FINTEGER* ldc);
+    
+    // int sgemm_lapack(
+    //     const char* transa, const char* transb,
+    //     const int* m, const int* n, const int* k,
+    //     const float* alpha, const float* a, const int* lda,
+    //     const float* b, const int* ldb, const float* beta,
+    //     float* c, const int* ldc) __asm__("_sgemm$NEWLAPACK");
+}
+
 
 namespace skmeans {
 
@@ -152,9 +178,26 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 if (j + Y_BATCH_SIZE > n_y) {
                     batch_n_y = n_y - j;
                 }
+#if defined(__APPLE__)
+                    // AMX (used with Apple Accelerate) benefits from a different strategy for parallelization
+#pragma omp parallel for num_threads(g_n_threads) schedule(static)
+                    for (size_t r = 0; r < batch_n_x; r += MINI_BATCH_SIZE) {
+                        auto mini_batch_n_x = std::min(MINI_BATCH_SIZE, batch_n_x - r);
+                        BlasMatrixMultiplication(
+                            batch_x_p + r * d,
+                            batch_y_p,
+                            mini_batch_n_x,
+                            batch_n_y,
+                            d,
+                            0,
+                            all_distances_buf + r * batch_n_y
+                        );
+                    }
+#else
                 BlasMatrixMultiplication(
                     batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, 0, all_distances_buf
                 );
+#endif
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
@@ -345,9 +388,26 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 }
                 {
                     SKM_PROFILE_SCOPE("search/blas");
+#if defined(__APPLE__)
+                    // AMX (used with Apple Accelerate) benefits from a different strategy for parallelization
+#pragma omp parallel for num_threads(g_n_threads) schedule(static)
+                    for (size_t r = 0; r < batch_n_x; r += MINI_BATCH_SIZE) {
+                        auto mini_batch_n_x = std::min(MINI_BATCH_SIZE, batch_n_x - r);
+                        BlasMatrixMultiplication(
+                            batch_x_p + r * d,
+                            batch_y_p,
+                            mini_batch_n_x,
+                            batch_n_y,
+                            d,
+                            partial_d,
+                            all_distances_buf + r * batch_n_y
+                        );
+                    }
+#else
                     BlasMatrixMultiplication(
                         batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, partial_d, all_distances_buf
                     );
+#endif
                 }
                 Eigen::Map<MatrixR> distances_matrix(all_distances_buf, batch_n_x, batch_n_y);
                 {

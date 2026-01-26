@@ -63,8 +63,15 @@ static inline constexpr size_t H_DIM_SIZE = 64;
 
 static inline constexpr uint32_t MIN_PARTIAL_D = 16;
 
+#if defined(__APPLE__)
+// AMX (used with Apple Accelerate) benefits from larger batch sizes
+static inline constexpr size_t X_BATCH_SIZE = 40960;
+static inline constexpr size_t Y_BATCH_SIZE = 2048;
+static inline constexpr size_t MINI_BATCH_SIZE = 256;
+#else
 static inline constexpr size_t X_BATCH_SIZE = 4096;
 static inline constexpr size_t Y_BATCH_SIZE = 1024;
+#endif
 // Note: VECTOR_CHUNK_SIZE and PDX_VECTOR_SIZE are aliases for Y_BATCH_SIZE
 static inline constexpr size_t VECTOR_CHUNK_SIZE = Y_BATCH_SIZE;
 static inline constexpr uint16_t PDX_VECTOR_SIZE = Y_BATCH_SIZE;
