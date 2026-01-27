@@ -22,7 +22,9 @@ namespace skmeans {
 struct SuperKMeansConfig {
     // Training parameters
     uint32_t iters = 10;            // Number of k-means iterations
+    // We provide 2 ways to define the number of points to sample:
     float sampling_fraction = 0.3f; // Fraction of data to sample (0.0 to 1.0)
+    uint32_t max_points_per_cluster = 256; // Maximum number of points per cluster to sample (FAISS style)
     uint32_t n_threads = 0;         // Number of CPU threads (0 = max)
     uint32_t seed = 42;             // Random seed for reproducibility
     bool use_blas_only = false;     // Use BLAS-only computation for all iterations
@@ -30,7 +32,7 @@ struct SuperKMeansConfig {
     // Convergence parameters
     float tol = 1e-4f;              // Tolerance for shift-based early termination
     float recall_tol = 0.0025f;     // Tolerance for recall-based early termination
-    bool early_termination = false; // Whether to stop early on convergence
+    bool early_termination = true; // Whether to stop early on convergence
     bool sample_queries = false;        // Whether to sample queries from data
     size_t objective_k = 100;           // Number of nearest neighbors for recall computation
     float ann_explore_fraction = 0.01f; // Fraction of centroids to explore (0.0 to 1.0)
@@ -139,7 +141,10 @@ class SuperKMeans {
             );
         }
         const vector_value_t* SKM_RESTRICT data_p = data;
-        _n_samples = GetNVectorsToSample(n);
+        _n_samples = GetNVectorsToSample(n, _n_clusters);
+        if (_n_samples < n) {
+            throw std::runtime_error("Not enough samples to train. Try increasing the sampling_fraction or max_points_per_cluster");
+        }
         {
             SKM_PROFILE_SCOPE("allocator");
             _centroids.resize(_n_clusters * _d);
@@ -335,6 +340,8 @@ class SuperKMeans {
 
             auto old_partial_d = _partial_d;
             bool partial_d_changed = false;
+            // TODO(@lkuffo, medium): I believe if this number starts at > 20%, 
+            // we should abort PRUNING and do FULL GEMM in the next iterations.
             float avg_not_pruned_pct = TunePartialD(
                 not_pruned_counts.data(), _n_samples, _n_clusters, partial_d_changed
             );
@@ -909,14 +916,20 @@ class SuperKMeans {
 
     /**
      * @brief Computes the number of vectors to sample based on sampling_fraction.
+     * To be conservative, we implement two heuristics:
+     * - We sample at most max_points_per_cluster points per cluster (FAISS style)
+     * - We sample at most sampling_fraction * n points (our style)
+     * We return the minimum of the two.
      * @param n Total number of vectors
      * @return Number of vectors to sample
      */
-    size_t GetNVectorsToSample(const size_t n) const {
+    size_t GetNVectorsToSample(const size_t n, size_t n_clusters) const {
         if (_config.sampling_fraction == 1.0) {
             return n;
         }
-        return std::floor(n * _config.sampling_fraction);
+        auto samples_by_n_clusters = n_clusters * _config.max_points_per_cluster;
+        auto samples_by_n = static_cast<size_t>(std::floor(n * _config.sampling_fraction));
+        return std::min(samples_by_n, samples_by_n_clusters);
     }
 
     /**
