@@ -282,7 +282,7 @@ class GPUDeviceContext {
     DeviceBuffer<size_t> out_not_pruned_counts;
     std::vector<StreamBuffers<norms_t>> stream_buffers;
 
-    Stopwatch sw = Stopwatch("GPUDeviceContext");
+    // Stopwatch sw = Stopwatch("GPUDeviceContext");
 
     GPUDeviceContext(const size_t n_x, const size_t n_y, const size_t d, const size_t n_streams)
         : stream_pool(n_streams), x(compute_buffer_size<data_t>(n_x, d), main_stream.get()),

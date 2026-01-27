@@ -351,7 +351,7 @@ class SuperKMeans {
         GetPartialL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
 
 				//gpu_device_context.x.copy_to_device(data_to_cluster);
-				auto sw = Stopwatch("SuperKMeans Stopwatch");
+				// auto sw = Stopwatch("SuperKMeans Stopwatch");
         for (; iter_idx < _config.iters; ++iter_idx) {
             // After swap: _prev_centroids has old centroids, _horizontal_centroids will be zeroed
             // for accumulation
@@ -449,8 +449,8 @@ class SuperKMeans {
 						//sw.stop("L");
         }
 
-				sw.print();
-				gpu_device_context.sw.print();
+				//sw.print();
+				// gpu_device_context.sw.print();
         // Note: When sampling_fraction < 1, only the first n_samples vectors have assignments.
         // Users can call Assign() on remaining vectors if needed.
 
