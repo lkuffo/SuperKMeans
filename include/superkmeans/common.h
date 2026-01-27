@@ -76,16 +76,15 @@ static inline constexpr size_t Y_BATCH_SIZE = 1024;
 static inline constexpr size_t VECTOR_CHUNK_SIZE = Y_BATCH_SIZE;
 static inline constexpr uint16_t PDX_VECTOR_SIZE = Y_BATCH_SIZE;
 
+static inline constexpr size_t RECALL_CONVERGENCE_PATIENCE = 2;
 static inline constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 static inline constexpr float PRUNER_INITIAL_THRESHOLD = 1.5f;
-// Evaluating the pruning threshold is so fast that we can allow smaller fetching sizes
-// to avoid more data access. Super useful in architectures with low bandwidth at L3/DRAM like
-// Intel SPR
+
 static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[19] =
     {16, 16, 32, 32, 32, 32, 64, 64, 64, 64, 128, 128, 128, 128, 256, 256, 512, 1024, 2048};
 
 // Global thread count for OpenMP parallel regions
-// NOTE: This is set by SuperKMeans constructor. Not ideal but needed for
+// This is set by SuperKMeans constructor. Not ideal but needed for
 // external functions (adsampling, batch_computers) that can't access class members.
 inline uint32_t g_n_threads = 1;
 
@@ -94,7 +93,7 @@ static constexpr uint32_t AlignValue(T n) {
     return ((n + (val - 1)) / val) * val;
 }
 
-enum class DistanceFunction { l2, dp, neg_l2 };
+enum class DistanceFunction { l2, dp };
 
 enum class Quantization { f32, u8, f16, bf16 };
 
@@ -151,7 +150,7 @@ struct Cluster {
     skmeans_value_t<Quantization::u8>* data = nullptr;
     skmeans_value_t<Quantization::u8>* aux_vertical_dimensions_in_horizontal_layout =
         nullptr; // Contains the vertical dimensions minus partial_d in a horizontal layout, aka the
-                 // ones not visited by BLAS
+                 // ones not visited by GEMM
 };
 
 template <>
@@ -161,7 +160,7 @@ struct Cluster<Quantization::f32> {
     skmeans_value_t<Quantization::f32>* data = nullptr;
     skmeans_value_t<Quantization::f32>* aux_vertical_dimensions_in_horizontal_layout =
         nullptr; // Contains the vertical dimensions minus partial_d in a horizontal layout, aka the
-                 // ones not visited by BLAS
+                 // ones not visited by GEMM
 };
 
 } // namespace skmeans

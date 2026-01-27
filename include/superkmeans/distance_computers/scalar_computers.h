@@ -127,9 +127,7 @@ class ScalarComputer<DistanceFunction::dp, Quantization::f32> {
     };
 };
 
-/**
- * Utility SIMD operations that don't depend on distance function (alpha)
- */
+
 template <Quantization q>
 class ScalarUtilsComputer {};
 

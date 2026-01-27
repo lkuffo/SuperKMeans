@@ -192,9 +192,7 @@ class SIMDComputer<skmeans::DistanceFunction::dp, skmeans::Quantization::f32> {
     };
 };
 
-/**
- * Utility SIMD operations that don't depend on distance function (alpha)
- */
+
 template <Quantization q>
 class SIMDUtilsComputer {};
 

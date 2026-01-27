@@ -178,7 +178,6 @@ class SIMDComputer<DistanceFunction::l2, Quantization::f32> {
         }
     }
 
-    SKM_NO_INLINE
     static distance_t Horizontal(
         const data_t* SKM_RESTRICT vector1,
         const data_t* SKM_RESTRICT vector2,
@@ -211,9 +210,7 @@ class SIMDComputer<DistanceFunction::l2, Quantization::f32> {
     };
 };
 
-/**
- * Utility SIMD operations that don't depend on distance function (alpha)
- */
+
 template <Quantization q>
 class SIMDUtilsComputer {};
 
