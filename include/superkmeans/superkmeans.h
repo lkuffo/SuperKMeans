@@ -613,6 +613,7 @@ class SuperKMeans {
 
 				cluster_sizes_dev.copy_to_host(_cluster_sizes.data());
 				horizontal_centroids_dev.copy_to_host(_horizontal_centroids.data());
+				gpu_device_context.main_stream.synchronize();
     }
 
     /**

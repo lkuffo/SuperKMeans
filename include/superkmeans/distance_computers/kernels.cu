@@ -283,7 +283,7 @@ __global__ void health_check_buffer_kernel(const T* buffer, const std::size_t si
 }
 
 template <typename T>
-constexpr T divide_round_up(const T a, const T b) {
+__device__ __host__ constexpr T divide_round_up(const T a, const T b) {
     return (a + b - 1) / b;
 }
 
@@ -985,7 +985,7 @@ __device__ void sum_vector_into_vector(
     }
 }
 
-__global__ void update_centroids_kernel(
+__global__ void update_centroids_kernel_by_cluster(
     const data_t* SKM_RESTRICT data,
     const size_t n_clusters,
     const size_t n_samples,
@@ -1007,7 +1007,7 @@ __global__ void update_centroids_kernel(
     }
 }
 
-void GPUUpdateCentroids(
+void GPUUpdateCentroidsByCluster(
     const data_t* SKM_RESTRICT data,
     const size_t n_clusters,
     const size_t n_samples,
@@ -1023,15 +1023,90 @@ void GPUUpdateCentroids(
     const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
     const auto n_blocks = divide_round_up<int32_t>(n_clusters, ITEMS_PER_BLOCK);
 
+    constexpr auto BATCH_SIZE = 8 * N_THREADS_PER_BLOCK;
+
     cudaMemsetAsync(cluster_sizes, 0, gpu::compute_buffer_size<uint32_t>(n_clusters), stream);
-    cudaMemsetAsync(horizontal_centroids, 0, gpu::compute_buffer_size<data_t>(n_clusters), stream);
+    cudaMemsetAsync(
+        horizontal_centroids, 0, gpu::compute_buffer_size<data_t>(n_clusters * d), stream
+    );
 
     // health_check_buffer(data, n_samples * d, "data");
     // health_check_buffer(assignments, n_samples, "assignments");
     // health_check_buffer(cluster_sizes, n_clusters, "cluster_sizes");
     // health_check_buffer(horizontal_centroids, n_clusters * d, "horizontal_centroids");
-    update_centroids_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
-				data, n_clusters, n_samples, assignments, cluster_sizes, horizontal_centroids, d
+    update_centroids_kernel_by_cluster<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
+        data, n_clusters, n_samples, assignments, cluster_sizes, horizontal_centroids, d
+    );
+}
+
+template <size_t BATCH_SIZE>
+__global__ void update_centroids_kernel_by_sample(
+    const data_t* SKM_RESTRICT data,
+    const size_t n_clusters,
+    const size_t n_samples,
+    const uint32_t* SKM_RESTRICT assignments,
+    uint32_t* SKM_RESTRICT cluster_sizes,
+    data_t* SKM_RESTRICT horizontal_centroids,
+    const size_t d
+) {
+    const uint32_t warp_id = ThreadContext::get_warp_id();
+    const uint32_t lane_id = ThreadContext::get_lane_id();
+
+    const size_t sample_start = warp_id * BATCH_SIZE;
+
+    for (size_t b = 0; b < BATCH_SIZE; ++b) {
+        size_t sample_idx = sample_start + b;
+        if (sample_idx >= n_samples)
+            break;
+
+        uint32_t target_cluster = assignments[sample_idx];
+        const data_t* vector_p = data + (sample_idx * d);
+
+        if (lane_id == 0) {
+            atomicAdd(&cluster_sizes[target_cluster], 1);
+        }
+
+        for (size_t i = lane_id; i < d; i += WARP_WIDTH) {
+            atomicAdd(&horizontal_centroids[target_cluster * d + i], vector_p[i]);
+        }
+    }
+}
+void GPUUpdateCentroidsBySample(
+    const data_t* SKM_RESTRICT data,
+    const size_t n_clusters,
+    const size_t n_samples,
+    const uint32_t* SKM_RESTRICT assignments,
+    uint32_t* SKM_RESTRICT cluster_sizes,
+    data_t* SKM_RESTRICT horizontal_centroids,
+    const size_t d,
+    const cudaStream_t stream
+) {
+    constexpr auto N_THREADS_PER_BLOCK = WARP_WIDTH * 2;
+    constexpr int WARPS_PER_BLOCK = N_THREADS_PER_BLOCK / WARP_WIDTH;
+    constexpr int BATCH_SIZE = 8;
+    constexpr int SAMPLES_PER_BLOCK = WARPS_PER_BLOCK * BATCH_SIZE;
+    const auto n_blocks = divide_round_up<int32_t>(n_samples, SAMPLES_PER_BLOCK);
+
+    cudaMemsetAsync(cluster_sizes, 0, n_clusters * sizeof(uint32_t), stream);
+    cudaMemsetAsync(horizontal_centroids, 0, n_clusters * d * sizeof(data_t), stream);
+
+    update_centroids_kernel_by_sample<BATCH_SIZE><<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
+        data, n_clusters, n_samples, assignments, cluster_sizes, horizontal_centroids, d
+    );
+}
+
+void GPUUpdateCentroids(
+    const data_t* SKM_RESTRICT data,
+    const size_t n_clusters,
+    const size_t n_samples,
+    const uint32_t* SKM_RESTRICT assignments,
+    uint32_t* SKM_RESTRICT cluster_sizes,
+    data_t* SKM_RESTRICT horizontal_centroids,
+    const size_t d,
+    const cudaStream_t stream
+) {
+    GPUUpdateCentroidsBySample(
+        data, n_clusters, n_samples, assignments, cluster_sizes, horizontal_centroids, d, stream
     );
 }
 
