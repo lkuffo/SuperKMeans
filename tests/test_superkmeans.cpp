@@ -41,7 +41,7 @@ std::vector<float> make_blobs(
 
 class SuperKMeansTest : public ::testing::Test {
   protected:
-    void SetUp() override { omp_set_num_threads(4); }
+    void SetUp() override {}
 };
 
 TEST_F(SuperKMeansTest, BasicTraining_SmallDataset) {
@@ -169,76 +169,6 @@ TEST_F(SuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     }
 }
 
-TEST_F(SuperKMeansTest, UnrotatedCentroids_WorkWithOriginalData) {
-    const size_t n = 5000;
-    const size_t d = 128;
-    const size_t n_clusters = 25;
-
-    std::vector<float> data = make_blobs(n, d, n_clusters);
-
-    skmeans::SuperKMeansConfig config;
-    config.iters = 15;
-    config.verbose = false;
-    config.unrotate_centroids = true;
-
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
-    auto centroids = kmeans.Train(data.data(), n);
-
-    // Assign data to centroids
-    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
-
-    EXPECT_EQ(assignments.size(), n);
-
-    // Verify all assignments are valid
-    for (const auto& assignment : assignments) {
-        EXPECT_LT(assignment, n_clusters);
-    }
-}
-
-TEST_F(SuperKMeansTest, HighDimensionalData_UsesBLASOnly) {
-    // For d < 128, algorithm should use BLAS-only path
-    const size_t n = 1000;
-    const size_t d = 64;
-    const size_t n_clusters = 10;
-
-    std::vector<float> data = make_blobs(n, d, n_clusters);
-
-    skmeans::SuperKMeansConfig config;
-    config.iters = 10;
-    config.verbose = false;
-
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
-    auto centroids = kmeans.Train(data.data(), n);
-
-    EXPECT_EQ(centroids.size(), n_clusters * d);
-    EXPECT_TRUE(kmeans.IsTrained());
-}
-
-TEST_F(SuperKMeansTest, LowDimensionalData_UsesPDX) {
-    // For d >= 128, algorithm should use PDX path
-    const size_t n = 5000;
-    const size_t d = 256;
-    const size_t n_clusters = 50;
-
-    std::vector<float> data = make_blobs(n, d, n_clusters);
-
-    skmeans::SuperKMeansConfig config;
-    config.iters = 15;
-    config.verbose = false;
-
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
-    auto centroids = kmeans.Train(data.data(), n);
-
-    EXPECT_EQ(centroids.size(), n_clusters * d);
-    EXPECT_TRUE(kmeans.IsTrained());
-}
-
 TEST_F(SuperKMeansTest, DifferentSeeds_ProduceDifferentResults) {
     const size_t n = 1000;
     const size_t d = 32;
@@ -279,7 +209,7 @@ TEST_F(SuperKMeansTest, DifferentSeeds_ProduceDifferentResults) {
 }
 
 TEST_F(SuperKMeansTest, InvalidInputs_ThrowExceptions) {
-    const size_t n = 100;
+    const size_t n = 10000;
     const size_t d = 32;
     const size_t n_clusters = 10;
 

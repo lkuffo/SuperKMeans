@@ -1,4 +1,8 @@
 import os
+import sys
+
+# Add parent directory to path for bench_utils import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 threads = os.cpu_count()
 os.environ["OMP_NUM_THREADS"] = str(threads)
@@ -10,10 +14,8 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = str(threads)
 
 from sklearn.cluster import KMeans
 import numpy as np
-import os
 import time
 import math
-import sys
 from bench_utils import (DATASET_PARAMS, load_ground_truth, compute_recall,
                          print_recall_results, KNN_VALUES, Timer, write_results_to_csv,
                          MAX_ITERS, N_QUERIES, VARYING_K_VALUES, ANGULAR_DATASETS,

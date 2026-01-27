@@ -45,34 +45,37 @@ if (FFTW_FOUND)
     list(APPEND BENCH_COMMON_LIBS ${FFTW_FLOAT_LIB} ${FFTW_FLOAT_OPENMP_LIB})
 endif()
 
+# Add benchmarks directory to include path for bench_utils.h
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+
 # SuperKMeans benchmark on real datasets with recall computation
-add_executable(end_to_end_superkmeans.out end_to_end_superkmeans.cpp)
+add_executable(end_to_end_superkmeans.out end_to_end/end_to_end_superkmeans.cpp)
 target_link_libraries(end_to_end_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # FAISS benchmark on real datasets with recall computation
-add_executable(end_to_end_faiss.out end_to_end_faiss.cpp)
+add_executable(end_to_end_faiss.out end_to_end/end_to_end_faiss.cpp)
 target_link_libraries(end_to_end_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
 
 # Varying K benchmarks (vary n_clusters instead of dataset)
-add_executable(varying_k_superkmeans.out varying_k_superkmeans.cpp)
+add_executable(varying_k_superkmeans.out varying_k/varying_k_superkmeans.cpp)
 target_link_libraries(varying_k_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
-add_executable(varying_k_faiss.out varying_k_faiss.cpp)
+add_executable(varying_k_faiss.out varying_k/varying_k_faiss.cpp)
 target_link_libraries(varying_k_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
 
 # Early termination benchmarks
-add_executable(early_termination_superkmeans.out early_termination_superkmeans.cpp)
+add_executable(early_termination_superkmeans.out early_termination/early_termination_superkmeans.cpp)
 target_link_libraries(early_termination_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
-add_executable(early_termination_faiss.out early_termination_faiss.cpp)
+add_executable(early_termination_faiss.out early_termination/early_termination_faiss.cpp)
 target_link_libraries(early_termination_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
 
 # Sampling benchmark
-add_executable(sampling_superkmeans.out sampling_superkmeans.cpp)
+add_executable(sampling_superkmeans.out sampling/sampling_superkmeans.cpp)
 target_link_libraries(sampling_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # Pareto benchmark (grid search)
-add_executable(pareto_superkmeans.out pareto_superkmeans.cpp)
+add_executable(pareto_superkmeans.out pareto/pareto_superkmeans.cpp)
 target_link_libraries(pareto_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # Ad-hoc benchmark (verbose mode, no CSV output)
@@ -84,17 +87,13 @@ add_executable(sweet_pruning_spot_superkmeans.out sweet_pruning_spot_superkmeans
 target_link_libraries(sweet_pruning_spot_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # Microbenchmark for InitPositionsArray SIMD optimization
-add_executable(microbenchmark_init_positions_array.out microbenchmark_init_positions_array.cpp)
+add_executable(microbenchmark_init_positions_array.out microbenchmarks/microbenchmark_init_positions_array.cpp)
 target_link_libraries(microbenchmark_init_positions_array.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # Microbenchmark for FlipSign SIMD optimization
-add_executable(microbenchmark_flip_sign.out microbenchmark_flip_sign.cpp)
+add_executable(microbenchmark_flip_sign.out microbenchmarks/microbenchmark_flip_sign.cpp)
 target_link_libraries(microbenchmark_flip_sign.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # Microbenchmark for Horizontal L2 distance kernels
-add_executable(microbenchmark_horizontal_kernels.out microbenchmark_horizontal_kernels.cpp)
+add_executable(microbenchmark_horizontal_kernels.out microbenchmarks/microbenchmark_horizontal_kernels.cpp)
 target_link_libraries(microbenchmark_horizontal_kernels.out PRIVATE ${BENCH_COMMON_LIBS})
-
-# Correctness test for DCT rotation
-add_executable(test_dct_rotation_correctness.out test_dct_rotation_correctness.cpp)
-target_link_libraries(test_dct_rotation_correctness.out PRIVATE ${BENCH_COMMON_LIBS})

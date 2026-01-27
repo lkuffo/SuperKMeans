@@ -111,7 +111,7 @@ for DATASET in "${DATASETS[@]}"; do
     echo "----------------------------------------"
     echo "3/3: scikit-learn KMeans"
     echo "----------------------------------------"
-    "$PYTHON_CMD" end_to_end_scikit.py "$DATASET"
+    "$PYTHON_CMD" end_to_end/end_to_end_scikit.py "$DATASET"
     echo ""
 
 done

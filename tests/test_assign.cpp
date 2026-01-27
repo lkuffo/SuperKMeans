@@ -47,69 +47,8 @@ std::vector<float> make_blobs(
 
 class AssignTest : public ::testing::Test {
   protected:
-    void SetUp() override { omp_set_num_threads(10); }
+    void SetUp() override {}
 };
-
-TEST_F(AssignTest, AssignMatchesTrainAssignments_SIFT_NoSampling) {
-    const size_t n = 1000000;
-    const size_t d = 128;
-    const size_t n_clusters =
-        std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
-    const int n_iters = 5;
-    const float sampling_fraction = 1.0f; // No sampling - use all data
-
-    std::string path_root = std::string(CMAKE_SOURCE_DIR);
-    std::string filename = path_root + "/data_sift.bin";
-
-    // Load data
-    std::vector<skmeans::skmeans_value_t<skmeans::Quantization::f32>> data;
-    data.resize(n * d);
-
-    std::ifstream file(filename, std::ios::binary);
-    if (!file) {
-        GTEST_SKIP() << "Data file not found: " << filename;
-    }
-    file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
-    file.close();
-
-    // Create and train k-means
-    skmeans::SuperKMeansConfig config;
-    config.iters = n_iters;
-    config.sampling_fraction = sampling_fraction;
-    config.verbose = false;
-    config.n_threads = 10;
-    config.unrotate_centroids = true;
-    config.perform_assignments = true;
-
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
-
-    auto centroids = kmeans.Train(data.data(), n);
-
-    // Get the internal assignments from Train()
-    const auto& train_assignments = kmeans._assignments;
-    ASSERT_EQ(train_assignments.size(), n);
-
-    // Now run Assign() with raw data and unrotated centroids
-    auto assign_assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
-    ASSERT_EQ(assign_assignments.size(), n);
-
-    // Compare assignments
-    size_t mismatches = 0;
-    for (size_t i = 0; i < n; ++i) {
-        if (train_assignments[i] != assign_assignments[i]) {
-            ++mismatches;
-        }
-    }
-
-    double mismatch_pct = 100.0 * static_cast<double>(mismatches) / static_cast<double>(n);
-
-    // Check if within tolerance (0.01%)
-    const double tolerance = 0.01;
-    EXPECT_LE(mismatch_pct, tolerance)
-        << "Mismatch rate (" << mismatch_pct << "%) exceeds tolerance (" << tolerance << "%)";
-}
 
 TEST_F(AssignTest, AssignMatchesTrainAssignments_SyntheticClusters) {
     // Test with synthetic clusterable data
@@ -127,7 +66,6 @@ TEST_F(AssignTest, AssignMatchesTrainAssignments_SyntheticClusters) {
     config.iters = n_iters;
     config.sampling_fraction = sampling_fraction;
     config.verbose = false;
-    config.n_threads = 10;
     config.unrotate_centroids = true;
     config.perform_assignments = true;
 

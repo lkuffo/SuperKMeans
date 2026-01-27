@@ -104,7 +104,7 @@ for DATASET in "${DATASETS[@]}"; do
     echo "----------------------------------------"
     echo "3/3: scikit-learn KMeans"
     echo "----------------------------------------"
-    python3 end_to_end_scikit.py "$DATASET" "scalability"
+    python3 end_to_end/end_to_end_scikit.py "$DATASET" "scalability"
     echo ""
 
 done

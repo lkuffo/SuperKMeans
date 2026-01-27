@@ -74,7 +74,7 @@ for DATASET in "${DATASETS[@]}"; do
     echo "----------------------------------------"
     echo "scikit-learn KMeans (iterations: 1-10, init: random and k-means++)"
     echo "----------------------------------------"
-    "$PYTHON_CMD" iters_scikit.py "$DATASET"
+    "$PYTHON_CMD" iters/iters_scikit.py "$DATASET"
     echo ""
 
 done
