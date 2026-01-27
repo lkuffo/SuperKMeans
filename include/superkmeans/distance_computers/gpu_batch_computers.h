@@ -172,6 +172,107 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
         stream.synchronize();
     }
 
+
+    static void FindNearestNeighborWithDeviceContext(
+				gpu::GPUDeviceContext<data_t, norms_t, distance_t>& gpu_device_context,
+        const data_t* SKM_RESTRICT x,
+        const data_t* SKM_RESTRICT y,
+        const size_t n_x,
+        const size_t n_y,
+        const size_t d,
+        const norms_t* SKM_RESTRICT norms_x,
+        const norms_t* SKM_RESTRICT norms_y,
+        uint32_t* SKM_RESTRICT out_knn,
+        distance_t* SKM_RESTRICT out_distances,
+        float* SKM_RESTRICT all_distances_buf
+    ) {
+        SKM_PROFILE_SCOPE("1st_blas");
+
+        std::fill_n(out_distances, n_x, std::numeric_limits<distance_t>::max());
+
+        auto stream = gpu::ManagedCudaStream();
+
+        gpu_device_context.y.copy_to_device(y);
+        auto multiplier = gpu::BatchedMatrixMultiplier(stream.get());
+
+        constexpr int32_t N_BATCH_STREAMS = 4;
+        auto batch_streams = std::vector<gpu::ManagedCudaStream>(N_BATCH_STREAMS);
+        auto batch_multipliers = std::vector<gpu::BatchedMatrixMultiplier>();
+        auto batch_x_buffers_dev = std::vector<gpu::DeviceBuffer<data_t>>();
+        auto batch_all_distances_buffers_dev = std::vector<gpu::DeviceBuffer<float>>();
+
+        batch_multipliers.reserve(N_BATCH_STREAMS);
+        batch_all_distances_buffers_dev.reserve(N_BATCH_STREAMS);
+
+        for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
+            batch_multipliers.emplace_back(batch_streams[i].get());
+            batch_x_buffers_dev.emplace_back(
+                gpu::compute_buffer_size<float>(X_BATCH_SIZE, d), batch_streams[i].get()
+            );
+            batch_all_distances_buffers_dev.emplace_back(
+                gpu::compute_buffer_size<float>(X_BATCH_SIZE, Y_BATCH_SIZE), batch_streams[i].get()
+            );
+        }
+
+        gpu_device_context.norms_x.copy_to_device(norms_x);
+        gpu_device_context.norms_y.copy_to_device(norms_y);
+        gpu_device_context.out_distances.copy_to_device(out_distances);
+        gpu_device_context.out_knn.copy_to_device(out_knn);
+        stream.synchronize();
+
+        size_t iteration_count = 0;
+        for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
+            auto batch_n_x = X_BATCH_SIZE;
+            auto batch_x_p = x + (i * d);
+            if (i + X_BATCH_SIZE > n_x) {
+                batch_n_x = n_x - i;
+            }
+
+            auto batch_stream_index = iteration_count % N_BATCH_STREAMS;
+            ++iteration_count;
+
+            gpu_device_context.x.copy_to_device_at_offset(
+                batch_x_p, gpu::compute_buffer_size<data_t>(batch_n_x, d), i * d * sizeof(data_t)
+            );
+            for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
+                auto batch_n_y = Y_BATCH_SIZE;
+                auto batch_y_p = gpu_device_context.y.get() + (j * d);
+                if (j + Y_BATCH_SIZE > n_y) {
+                    batch_n_y = n_y - j;
+                }
+                batch_multipliers[batch_stream_index].multiply(
+                    gpu_device_context.x.get() + i * d,
+                    batch_y_p,
+                    batch_n_x,
+                    batch_n_y,
+                    d,
+                    0,
+                    batch_all_distances_buffers_dev[batch_stream_index].get()
+                );
+
+                kernels::first_blas(
+                    batch_n_x,
+                    batch_n_y,
+                    i,
+                    j,
+                    gpu_device_context.norms_x.get(),
+                    gpu_device_context.norms_y.get(),
+                    batch_all_distances_buffers_dev[batch_stream_index].get(),
+                    gpu_device_context.out_distances.get(),
+                    gpu_device_context.out_knn.get(),
+                    batch_streams[batch_stream_index].get()
+                );
+            }
+        }
+        stream.synchronize();
+        for (int32_t i{0}; i < N_BATCH_STREAMS; ++i) {
+            batch_streams[i].synchronize();
+        }
+        gpu_device_context.out_distances.copy_to_host(out_distances);
+        gpu_device_context.out_knn.copy_to_host(out_knn);
+        stream.synchronize();
+    }
+
     /**
      * @brief Finds nearest neighbors using partial BLAS computation with PDX pruning.
      *

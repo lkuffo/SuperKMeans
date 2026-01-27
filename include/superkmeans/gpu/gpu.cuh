@@ -139,6 +139,16 @@ class DeviceBuffer {
         ));
     }
 
+    void copy_to_device_at_offset(const T* host_ptr, const std::size_t size, const std::size_t offset) {
+        CUDA_SAFE_CALL(cudaMemcpyAsync(
+            reinterpret_cast<void*>(_dev_ptr) + offset,
+            reinterpret_cast<const void*>(host_ptr),
+            size,
+            cudaMemcpyHostToDevice,
+            _stream
+        ));
+    }
+
     void copy_to_host(T* host_ptr) {
         CUDA_SAFE_CALL(cudaMemcpyAsync(
             reinterpret_cast<void*>(host_ptr),

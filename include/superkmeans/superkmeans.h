@@ -245,7 +245,8 @@ class SuperKMeans {
         }
 
         // First iteration: Only Blas
-        InitAssignAndUpdateCentroids(data_to_cluster, _prev_centroids.data(), all_distances.data());
+				gpu::GPUDeviceContext<skmeans_value_t<q>, skmeans_value_t<q>, distance_t> gpu_device_context(_n_samples, _n_clusters, _d, GPU_STREAM_POOL_SIZE);
+        InitAssignAndUpdateCentroids(gpu_device_context, data_to_cluster, _prev_centroids.data(), all_distances.data());
         ConsolidateCentroids();
         ComputeCost();
         ComputeShift();
@@ -293,6 +294,7 @@ class SuperKMeans {
                 // Recompute centroid norms for the (now in _prev_centroids) old centroids
                 GetL2NormsRowMajor(_prev_centroids.data(), _n_clusters, _centroid_norms.data());
                 InitAssignAndUpdateCentroids(
+										gpu_device_context,
                     data_to_cluster,
                     _prev_centroids.data(), // Search using old centroids
                     all_distances.data()
@@ -348,8 +350,7 @@ class SuperKMeans {
         std::vector<size_t> not_pruned_counts(_n_samples);
         GetPartialL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
 
-				gpu::GPUDeviceContext<skmeans_value_t<q>, skmeans_value_t<q>, distance_t> gpu_device_context(_n_samples, _n_clusters, _d, GPU_STREAM_POOL_SIZE);
-				gpu_device_context.x.copy_to_device(data_to_cluster);
+				//gpu_device_context.x.copy_to_device(data_to_cluster);
 				auto sw = Stopwatch("SuperKMeans Stopwatch");
         for (; iter_idx < _config.iters; ++iter_idx) {
             // After swap: _prev_centroids has old centroids, _horizontal_centroids will be zeroed
@@ -540,11 +541,13 @@ class SuperKMeans {
      * @param all_distances Workspace buffer for distance computations
      */
     void InitAssignAndUpdateCentroids(
+				gpu::GPUDeviceContext<skmeans_value_t<q>, skmeans_value_t<q>, distance_t>& gpu_device_context,
         const vector_value_t* SKM_RESTRICT data,
         const vector_value_t* SKM_RESTRICT rotated_initial_centroids,
         distance_t* SKM_RESTRICT all_distances
     ) {
-        batch_computer::FindNearestNeighbor(
+        batch_computer::FindNearestNeighborWithDeviceContext(
+						gpu_device_context,
             data,
             rotated_initial_centroids,
             _n_samples,
