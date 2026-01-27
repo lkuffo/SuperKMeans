@@ -246,5 +246,16 @@ void GPUSearchPDX(
     const cudaStream_t stream
 );
 
+void GPUUpdateCentroids(
+    const data_t* SKM_RESTRICT data,
+    const size_t n_clusters,
+    const size_t n_samples,
+    const uint32_t* SKM_RESTRICT assignments,
+    uint32_t* SKM_RESTRICT cluster_sizes,
+    data_t* SKM_RESTRICT horizontal_centroids,
+    const size_t d,
+    const cudaStream_t stream
+);
+
 } // namespace kernels
 } // namespace skmeans

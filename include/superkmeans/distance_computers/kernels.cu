@@ -974,5 +974,66 @@ void GPUSearchPDX(
     // printf("[SUCCESS]\n");
 }
 
+__device__ void sum_vector_into_vector(
+    const data_t* SKM_RESTRICT vector,
+    const uint32_t cluster_idx,
+    data_t* SKM_RESTRICT horizontal_centroids,
+    const size_t d
+) {
+    for (size_t i = ThreadContext::get_lane_id(); i < d; i += WARP_WIDTH) {
+        horizontal_centroids[cluster_idx * d + i] += vector[i];
+    }
+}
+
+__global__ void update_centroids_kernel(
+    const data_t* SKM_RESTRICT data,
+    const size_t n_clusters,
+    const size_t n_samples,
+    const uint32_t* SKM_RESTRICT assignments,
+    uint32_t* SKM_RESTRICT cluster_sizes,
+    data_t* SKM_RESTRICT horizontal_centroids,
+    const size_t d
+) {
+    uint32_t target_centroid = ThreadContext::get_warp_id();
+
+    for (size_t i = 0; i < n_samples; i++) {
+        uint32_t centroid_of_current_vector = assignments[i];
+
+        if (centroid_of_current_vector == target_centroid) {
+            auto vector_p = data + i * d;
+            cluster_sizes[target_centroid] += 1; // TODO Put this in register
+            sum_vector_into_vector(vector_p, target_centroid, horizontal_centroids, d);
+        }
+    }
+}
+
+void GPUUpdateCentroids(
+    const data_t* SKM_RESTRICT data,
+    const size_t n_clusters,
+    const size_t n_samples,
+    const uint32_t* SKM_RESTRICT assignments,
+    uint32_t* SKM_RESTRICT cluster_sizes,
+    data_t* SKM_RESTRICT horizontal_centroids,
+    const size_t d,
+    const cudaStream_t stream
+) {
+    const auto N_THREADS_PER_BLOCK = WARP_WIDTH * 2;
+    const auto WARPS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, WARP_WIDTH);
+    const auto N_THREADS_PER_ITEM = WARP_WIDTH;
+    const auto ITEMS_PER_BLOCK = divide_round_up<int32_t>(N_THREADS_PER_BLOCK, N_THREADS_PER_ITEM);
+    const auto n_blocks = divide_round_up<int32_t>(n_clusters, ITEMS_PER_BLOCK);
+
+    cudaMemsetAsync(cluster_sizes, 0, gpu::compute_buffer_size<uint32_t>(n_clusters), stream);
+    cudaMemsetAsync(horizontal_centroids, 0, gpu::compute_buffer_size<data_t>(n_clusters), stream);
+
+    // health_check_buffer(data, n_samples * d, "data");
+    // health_check_buffer(assignments, n_samples, "assignments");
+    // health_check_buffer(cluster_sizes, n_clusters, "cluster_sizes");
+    // health_check_buffer(horizontal_centroids, n_clusters * d, "horizontal_centroids");
+    update_centroids_kernel<<<n_blocks, N_THREADS_PER_BLOCK, 0, stream>>>(
+				data, n_clusters, n_samples, assignments, cluster_sizes, horizontal_centroids, d
+    );
+}
+
 } // namespace kernels
 } // namespace skmeans
