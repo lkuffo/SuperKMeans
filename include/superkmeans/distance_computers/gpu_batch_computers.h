@@ -215,7 +215,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
     ) {
         SKM_PROFILE_SCOPE("search");
 
-				gpu_device_context.sw.start("Introduction");
+				//gpu_device_context.sw.start("Introduction");
 
         auto& stream = gpu_device_context.main_stream;
 
@@ -242,8 +242,8 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
 
 
         stream.synchronize();
-				gpu_device_context.sw.stop("Introduction");
-				gpu_device_context.sw.start("Main course");
+				//gpu_device_context.sw.stop("Introduction");
+				//gpu_device_context.sw.start("Main course");
 
         size_t iteration_count = 0;
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
@@ -321,13 +321,13 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
             }
         }
 				gpu_device_context.stream_pool.synchronize();
-				gpu_device_context.sw.stop("Main course");
-				gpu_device_context.sw.start("Conclusion");
+				//gpu_device_context.sw.stop("Main course");
+				//gpu_device_context.sw.start("Conclusion");
         gpu_device_context.out_knn.copy_to_host(out_knn);
         gpu_device_context.out_distances.copy_to_host(out_distances);
         gpu_device_context.out_not_pruned_counts.copy_to_host(out_not_pruned_counts);
         stream.synchronize();
-				gpu_device_context.sw.stop("Conclusion");
+				//gpu_device_context.sw.stop("Conclusion");
     }
 };
 

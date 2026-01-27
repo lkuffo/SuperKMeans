@@ -354,22 +354,22 @@ class SuperKMeans {
         for (; iter_idx < _config.iters; ++iter_idx) {
             // After swap: _prev_centroids has old centroids, _horizontal_centroids will be zeroed
             // for accumulation
-						sw.start("A");
+						//sw.start("A");
             std::swap(_horizontal_centroids, _prev_centroids);
-						sw.stop("A");
-						sw.start("B");
+						//sw.stop("A");
+						//sw.start("B");
             GetL2NormsRowMajor(
                 _prev_centroids.data(),
                 _n_clusters,
                 centroids_partial_norms.data(),
                 _initial_partial_d
             );
-						sw.stop("B");
+						//sw.stop("B");
             // Reset the not-pruned counts buffer
-						sw.start("C1");
+						//sw.start("C1");
             std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
-						sw.stop("C1");
-						sw.start("C2");
+						//sw.stop("C1");
+						//sw.start("C2");
             AssignAndUpdateCentroidsPartialBatched(
 								gpu_device_context,
                 data_to_cluster,
@@ -379,34 +379,34 @@ class SuperKMeans {
                 centroids_pdx_wrapper,
                 not_pruned_counts.data()
             );
-						sw.stop("C2");
+						//sw.stop("C2");
 
-						sw.start("D");
+						//sw.start("D");
             // Tune _initial_partial_d based on the average not-pruned percentage
             bool partial_d_changed = false;
             float avg_not_pruned_pct = TuneInitialPartialD(
                 not_pruned_counts.data(), _n_samples, _n_clusters, partial_d_changed
             );
-						sw.stop("D");
-						sw.start("E");
+						//sw.stop("D");
+						//sw.start("E");
             // If _initial_partial_d changed, recompute the data norms with the new partial_d
             if (partial_d_changed) {
                 GetPartialL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
             }
-						sw.stop("E");
-						sw.start("F");
+						//sw.stop("E");
+						//sw.start("F");
             ConsolidateCentroids();
-						sw.stop("F");
+						//sw.stop("F");
 
-						sw.start("G");
+						//sw.start("G");
             ComputeCost();
-						sw.stop("G");
+						//sw.stop("G");
 
-						sw.start("H");
+						//sw.start("H");
             ComputeShift();
-						sw.stop("H");
+						//sw.stop("H");
 
-						sw.start("I");
+						//sw.start("I");
             if (n_queries) {
                 // Update centroid norms with FULL norms for recall computation
                 // (PDX uses partial norms for distance computation, but recall needs full norms)
@@ -415,8 +415,8 @@ class SuperKMeans {
                 );
                 _recall = ComputeRecall(rotated_queries.data(), n_queries);
             }
-						sw.stop("I");
-						sw.start("J");
+						//sw.stop("I");
+						//sw.start("J");
             {
                 SuperKMeansIterationStats stats;
                 stats.iteration = iter_idx + 1;
@@ -429,8 +429,8 @@ class SuperKMeans {
                 stats.is_blas_only = false;
                 iteration_stats.push_back(stats);
             }
-						sw.stop("J");
-						sw.start("K");
+						//sw.stop("J");
+						//sw.start("K");
             if (_config.verbose)
                 std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
                           << " | Objective: " << _cost << " | Shift: " << _shift
@@ -438,14 +438,14 @@ class SuperKMeans {
                           << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
                           << " | Partial D: " << _initial_partial_d << std::endl
                           << std::endl;
-						sw.stop("K");
-						sw.start("L");
+						//sw.stop("K");
+						//sw.start("L");
             // Early stopping if converged
             if (_config.early_termination &&
                 ShouldStopEarly(n_queries > 0, best_recall, iters_without_improvement, iter_idx)) {
                 break;
             }
-						sw.stop("L");
+						//sw.stop("L");
         }
 
 				sw.print();
@@ -603,7 +603,8 @@ class SuperKMeans {
         );
         std::fill(_horizontal_centroids.begin(), _horizontal_centroids.end(), 0.0);
         std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
-        UpdateCentroids(data);
+        UpdateCentroidsFunctional(data, _n_clusters, _n_samples, _assignments.data(), 
+						_cluster_sizes.data(), _horizontal_centroids.data(), _d);
     }
 
     /**
@@ -645,6 +646,42 @@ class SuperKMeans {
 #pragma clang loop vectorize(enable)
         for (size_t i = 0; i < _d; ++i) {
             _horizontal_centroids[cluster_idx * _d + i] += vector[i];
+        }
+    }
+
+		void UpdateCentroidsFunctional(const vector_value_t* SKM_RESTRICT data, const size_t n_clusters, 
+				const size_t n_samples,
+				const uint32_t* SKM_RESTRICT assignments, uint32_t* SKM_RESTRICT cluster_sizes, 
+				centroid_value_t* SKM_RESTRICT horizontal_centroids, size_t d) {
+			printf("UpdateCentroidsFunctional\n");
+#pragma omp parallel num_threads(_n_threads)
+        {
+            uint32_t nt = _n_threads;
+            uint32_t rank = omp_get_thread_num();
+            // This thread is taking care of centroids c0:c1
+            size_t c0 = (n_clusters * rank) / nt;
+            size_t c1 = (n_clusters * (rank + 1)) / nt;
+            for (size_t i = 0; i < n_samples; i++) {
+                uint32_t ci = assignments[i];
+                assert(ci >= 0 && ci < n_clusters);
+                if (ci >= c0 && ci < c1) {
+                    auto vector_p = data + i * _d;
+                    _cluster_sizes[ci] += 1;
+                    UpdateCentroidFunctional(vector_p, ci, horizontal_centroids, d);
+                }
+            }
+        }
+		}
+
+    SKM_ALWAYS_INLINE void UpdateCentroidFunctional(
+        const vector_value_t* SKM_RESTRICT vector,
+        const uint32_t cluster_idx,
+				centroid_value_t* SKM_RESTRICT horizontal_centroids,
+				const size_t d
+    ) {
+#pragma clang loop vectorize(enable)
+        for (size_t i = 0; i < d; ++i) {
+            horizontal_centroids[cluster_idx * d + i] += vector[i];
         }
     }
 
