@@ -1,72 +1,17 @@
 # Benchmark suite for SuperKMeans
 
-# Detect CPU features for FAISS optimization
-# Check both compiler support AND actual flags being used
-set(HAS_AVX512 OFF)
-set(HAS_AVX512_SPR OFF)
-set(HAS_AVX2 OFF)
-set(HAS_SVE OFF)
-
-#if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-#    include(CheckCXXCompilerFlag)
-#
-#    # Get all CXX flags (including build-type specific flags)
-#    set(ALL_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}}")
-#    string(TOUPPER "${CMAKE_BUILD_TYPE}" BUILD_TYPE_UPPER)
-#    set(ALL_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${BUILD_TYPE_UPPER}}")
-#
-#    # Check for AVX-512 support (highest priority)
-#    check_cxx_compiler_flag("-mavx512f" COMPILER_HAS_AVX512)
-#    string(FIND "${ALL_CXX_FLAGS}" "-mavx512" AVX512_IN_FLAGS)
-#
-#    if(COMPILER_HAS_AVX512 OR AVX512_IN_FLAGS GREATER -1)
-#        set(HAS_AVX512 ON)
-#
-#        # Check for Sapphire Rapids specific features
-#        check_cxx_compiler_flag("-mavx512fp16" COMPILER_HAS_AVX512FP16)
-#        string(FIND "${ALL_CXX_FLAGS}" "-mavx512fp16" AVX512FP16_IN_FLAGS)
-#
-#        if(COMPILER_HAS_AVX512FP16 OR AVX512FP16_IN_FLAGS GREATER -1)
-#            set(HAS_AVX512_SPR ON)
-#            message(STATUS "Sapphire Rapids CPU detected (AVX512_FP16)")
-#        else()
-#            message(STATUS "AVX-512 CPU detected")
-#        endif()
-#    else()
-#        # Check for AVX2 support (fallback)
-#        check_cxx_compiler_flag("-mavx2" COMPILER_HAS_AVX2)
-#        string(FIND "${ALL_CXX_FLAGS}" "-mavx2" AVX2_IN_FLAGS)
-#
-#        if(COMPILER_HAS_AVX2 OR AVX2_IN_FLAGS GREATER -1)
-#            set(HAS_AVX2 ON)
-#            message(STATUS "AVX2 CPU detected")
-#        else()
-#            message(STATUS "No AVX2/AVX-512 support detected")
-#        endif()
-#    endif()
-#    message(STATUS "Detected CXX flags: ${ALL_CXX_FLAGS}")
-#endif()
-
-# Set FAISS optimization level based on detected CPU features
-set(FAISS_OPT_LEVEL "generic")
-if(HAS_AVX512_SPR)
-    set(FAISS_OPT_LEVEL "avx512_spr")
-elseif(HAS_AVX512)
-    set(FAISS_OPT_LEVEL "avx512")
-elseif(HAS_AVX2)
-    set(FAISS_OPT_LEVEL "avx2")
-elseif(HAS_SVE)
-    set(FAISS_OPT_LEVEL "sve")
-endif()
-
-message(STATUS "FAISS will be built with optimization level: ${FAISS_OPT_LEVEL}")
+# FAISS optimization level - user can set via -DFAISS_OPT_LEVEL=<level>
+# Valid values: generic, avx2, avx512, avx512_spr, sve
+set(FAISS_OPT_LEVEL "generic" CACHE STRING "FAISS CPU optimization level")
+set_property(CACHE FAISS_OPT_LEVEL PROPERTY STRINGS generic avx2 avx512 avx512_spr sve)
+message(STATUS "FAISS optimization level: ${FAISS_OPT_LEVEL}")
 
 # Fetch and build FAISS
-include(FetchContent)
 if (MKL_FOUND)
     message(STATUS "FAISS will be built with MKL")
     set(FAISS_ENABLE_MKL ON CACHE BOOL "enable mkl" FORCE)
 endif()
+
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "disable python" FORCE)
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "disable gpu" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "disable faiss tests" FORCE)
@@ -81,25 +26,18 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(faiss)
 
 # Common benchmark dependencies
-# If MKL is found, BLAS_LINK_LIBRARIES is empty; and vice-versa
 set(BENCH_COMMON_LIBS ${MKL_COMMON_LIBS} ${BLAS_LINK_LIBRARIES})
 set(FAISS_COMMON_LIBS faiss)
 
-# Link architecture-specific FAISS libraries (mutually exclusive - only the best available)
-if(HAS_AVX512_SPR)
+# Link architecture-specific FAISS library based on FAISS_OPT_LEVEL
+if(FAISS_OPT_LEVEL STREQUAL "avx512_spr")
     list(APPEND FAISS_COMMON_LIBS faiss_avx512_spr)
-    message(STATUS "Linking FAISS with Sapphire Rapids optimizations")
-elseif(HAS_AVX512)
-    message(STATUS "Linking FAISS with AVX-512 optimizations")
+elseif(FAISS_OPT_LEVEL STREQUAL "avx512")
     list(APPEND FAISS_COMMON_LIBS faiss_avx512)
-elseif(HAS_AVX2)
-    message(STATUS "Linking FAISS with AVX2 optimizations")
+elseif(FAISS_OPT_LEVEL STREQUAL "avx2")
     list(APPEND FAISS_COMMON_LIBS faiss_avx2)
-elseif(HAS_SVE)
-    message(STATUS "Linking FAISS with SVE optimizations")
+elseif(FAISS_OPT_LEVEL STREQUAL "sve")
     list(APPEND FAISS_COMMON_LIBS faiss_sve)
-else()
-    message(STATUS "Linking FAISS with generic optimizations only")
 endif()
 
 if (FFTW_FOUND)
