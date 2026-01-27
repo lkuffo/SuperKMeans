@@ -240,3 +240,121 @@ TEST_F(SuperKMeansTest, InvalidInputs_ThrowExceptions) {
         std::runtime_error
     );
 }
+
+/**
+ * @brief Test 17: Early termination stops when centroid shift falls below tolerance
+ *
+ * When early_termination is enabled and centroids stabilize (shift < tol),
+ * training should stop before reaching max iterations.
+ */
+TEST_F(SuperKMeansTest, EarlyTermination_ShiftBelowTol_Stops) {
+    // Use well-separated clusters that converge quickly
+    const size_t n = 10000;
+    const size_t d = 64;
+    const size_t n_clusters = 5;  // Few clusters for faster convergence
+    const size_t max_iters = 100; // High max to ensure early stop is due to convergence
+
+    // Generate well-separated blobs with low variance for faster convergence
+    std::mt19937 gen(42);
+    std::vector<float> data(n * d);
+
+    // Create well-separated cluster centers
+    std::vector<std::vector<float>> centers(n_clusters, std::vector<float>(d));
+    for (size_t c = 0; c < n_clusters; ++c) {
+        for (size_t j = 0; j < d; ++j) {
+            // Spread centers far apart
+            centers[c][j] = static_cast<float>(c) * 20.0f + (j % 2 == 0 ? 5.0f : -5.0f);
+        }
+    }
+
+    // Assign points to clusters with small noise
+    std::normal_distribution<float> noise(0.0f, 0.5f);  // Small variance for tight clusters
+    for (size_t i = 0; i < n; ++i) {
+        size_t cluster = i % n_clusters;
+        for (size_t j = 0; j < d; ++j) {
+            data[i * d + j] = centers[cluster][j] + noise(gen);
+        }
+    }
+
+    // Test WITH early termination
+    skmeans::SuperKMeansConfig config_early;
+    config_early.iters = max_iters;
+    config_early.early_termination = true;
+    config_early.tol = 1e-4f;
+    config_early.verbose = false;
+    config_early.seed = 42;
+    config_early.sampling_fraction = 1.0f;  // Use all data to ensure enough samples
+
+    auto kmeans_early =
+        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            n_clusters, d, config_early
+        );
+    kmeans_early.Train(data.data(), n);
+
+    const auto& stats_early = kmeans_early.iteration_stats;
+    size_t iters_with_early = stats_early.size();
+
+    // Test WITHOUT early termination
+    skmeans::SuperKMeansConfig config_no_early;
+    config_no_early.iters = max_iters;
+    config_no_early.early_termination = false;
+    config_no_early.verbose = false;
+    config_no_early.seed = 42;
+    config_no_early.sampling_fraction = 1.0f;
+
+    auto kmeans_no_early =
+        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            n_clusters, d, config_no_early
+        );
+    kmeans_no_early.Train(data.data(), n);
+
+    const auto& stats_no_early = kmeans_no_early.iteration_stats;
+    size_t iters_without_early = stats_no_early.size();
+
+    // With early termination, should stop before max_iters
+    EXPECT_LT(iters_with_early, max_iters)
+        << "Early termination should stop before max_iters=" << max_iters;
+
+    // Without early termination, should run all iterations
+    EXPECT_EQ(iters_without_early, max_iters)
+        << "Without early termination, should run all " << max_iters << " iterations";
+
+    // Early termination should use fewer iterations
+    EXPECT_LT(iters_with_early, iters_without_early)
+        << "Early termination (" << iters_with_early << " iters) should use fewer iterations "
+        << "than no early termination (" << iters_without_early << " iters)";
+
+    // Verify the last iteration with early termination had low shift
+    if (!stats_early.empty()) {
+        float final_shift = stats_early.back().shift;
+        EXPECT_LT(final_shift, config_early.tol * 10)  // Some margin for the iteration before
+            << "Final shift should be near or below tolerance";
+    }
+}
+
+/**
+ * @brief Test that disabling early termination runs all iterations
+ */
+TEST_F(SuperKMeansTest, EarlyTermination_Disabled_RunsAllIterations) {
+    const size_t n = 10000;
+    const size_t d = 32;
+    const size_t n_clusters = 5;
+    const size_t max_iters = 15;
+
+    std::vector<float> data = make_blobs(n, d, n_clusters);
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = max_iters;
+    config.early_termination = false;
+    config.verbose = false;
+    config.sampling_fraction = 1.0f;
+
+    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        n_clusters, d, config
+    );
+    kmeans.Train(data.data(), n);
+
+    const auto& stats = kmeans.iteration_stats;
+    EXPECT_EQ(stats.size(), max_iters)
+        << "With early_termination=false, should run exactly " << max_iters << " iterations";
+}

@@ -142,7 +142,7 @@ class SuperKMeans {
         }
         const vector_value_t* SKM_RESTRICT data_p = data;
         _n_samples = GetNVectorsToSample(n, _n_clusters);
-        if (_n_samples < n) {
+        if (_n_samples < _n_clusters) {
             throw std::runtime_error("Not enough samples to train. Try increasing the sampling_fraction or max_points_per_cluster");
         }
         {
@@ -261,9 +261,10 @@ class SuperKMeans {
         size_t iters_without_improvement = 0;
 
         //
-        // FULL GEMM on low-dimensional data or too little clusters
+        // FULL GEMM on low-dimensional data or too few clusters
         //
-        if (_d < 128 || _config.use_blas_only || _n_clusters <= 128) {
+        if (_d < DIMENSION_THRESHOLD_FOR_PRUNING || _config.use_blas_only || 
+            _n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
             for (; iter_idx < _config.iters; ++iter_idx) {
                 std::swap(_horizontal_centroids, _prev_centroids);
                 GetL2NormsRowMajor(_prev_centroids.data(), _n_clusters, _centroid_norms.data());
@@ -293,8 +294,8 @@ class SuperKMeans {
                 }
                 if (_config.verbose)
                     std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
-                              << " | Objective: " << _cost << " | Shift: " << _shift
-                              << " | Split: " << _n_split << " | Recall: " << _recall
+                              << " | Objective: " << _cost << " | Objective improvement: " << 1 - (_cost / _prev_cost)
+                              << " | Shift: " << _shift  << " | Split: " << _n_split << " | Recall: " << _recall
                               << " [BLAS-only]" << std::endl
                               << std::endl;
                 if (_config.early_termination &&
@@ -371,7 +372,9 @@ class SuperKMeans {
             }
             if (_config.verbose)
                 std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
-                          << " | Objective: " << _cost << " | Shift: " << _shift
+                          << " | Objective: " << _cost 
+                          << " | Objective improvement: " << 1 - (_cost / _prev_cost)
+                          << " | Shift: " << _shift
                           << " | Split: " << _n_split << " | Recall: " << _recall
                           << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
                           << " | d': " << old_partial_d << " -> " << _partial_d << std::endl
@@ -480,7 +483,6 @@ class SuperKMeans {
         );
         std::fill(_horizontal_centroids.begin(), _horizontal_centroids.end(), 0.0);
         std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
-        _cost = 0.0;
         UpdateCentroids(data);
     }
 
@@ -505,7 +507,6 @@ class SuperKMeans {
         const layout_t& pdx_centroids,
         size_t* out_not_pruned_counts
     ) {
-        _cost = 0.0;
         batch_computer::FindNearestNeighborWithPruning(
             data,
             centroids,
@@ -661,6 +662,8 @@ class SuperKMeans {
      * @brief Computes Within-Cluster Sum of Squares (WCSS).
      */
     void ComputeCost() {
+        _prev_cost = _cost;
+        _cost = 0.0f;
 #pragma clang loop vectorize(enable)
         for (size_t i = 0; i < _n_samples; ++i) {
             _cost += _distances[i];
@@ -668,7 +671,7 @@ class SuperKMeans {
     }
 
     /**
-     * @brief Computes the average squared centroid shift from previous iteration.
+     * @brief Computes the squared centroid shift from previous iteration.
      *
      * Used for convergence detection - small shift indicates centroids have stabilized.
      */
@@ -676,12 +679,12 @@ class SuperKMeans {
         SKM_PROFILE_SCOPE("shift");
         Eigen::Map<const MatrixR> new_mat(_horizontal_centroids.data(), _n_clusters, _d);
         Eigen::Map<const MatrixR> prev_mat(_prev_centroids.data(), _n_clusters, _d);
-        _shift = 0.0f;
-#pragma omp parallel for reduction(+ : _shift) if (_n_threads > 1) num_threads(_n_threads)
+        float shift = 0.0f;
+#pragma omp parallel for reduction(+ : shift) if (_n_threads > 1) num_threads(_n_threads)
         for (size_t i = 0; i < _n_clusters; ++i) {
-            _shift += (new_mat.row(i) - prev_mat.row(i)).squaredNorm();
+            shift += (new_mat.row(i) - prev_mat.row(i)).squaredNorm();
         }
-        _shift /= (_n_clusters * _d);
+        _shift = shift;
     }
 
     /**
@@ -959,6 +962,16 @@ class SuperKMeans {
                           << " < tol " << _config.tol << ")" << std::endl;
             return true;
         }
+        if (iter_idx > 0){
+            auto cost_delta = _cost / _prev_cost;
+            if (cost_delta > 1 - _config.tol) {
+                if (_config.verbose)
+                    std::cout << "Converged at iteration " << iter_idx + 1 << " (cost " 
+                              << " improved by only " << 1 - cost_delta << ")"
+                              << std::endl;
+                return true;
+            }
+        }
         if (tracking_recall) {
             float improvement = _recall - best_recall;
             if (improvement > _config.recall_tol) {
@@ -1103,6 +1116,7 @@ class SuperKMeans {
     size_t _n_split = 0;
     size_t _centroids_to_explore = 0;
     uint32_t _vertical_d = 0;
+    float _prev_cost = 0.0f;
     float _cost = 0.0f;
     float _shift = 0.0f;
     float _recall = 0.0f;

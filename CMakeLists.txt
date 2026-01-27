@@ -54,8 +54,8 @@ endif()
 add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 include_directories(include extern)
 
-# Add test and benchmark subdirectories
 if(SKMEANS_COMPILE_TESTS)
+    enable_testing()
     message(STATUS "Tests enabled")
     add_subdirectory(tests)
 else()

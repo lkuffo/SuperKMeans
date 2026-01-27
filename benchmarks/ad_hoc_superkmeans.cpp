@@ -81,6 +81,8 @@ int main(int argc, char* argv[]) {
     config.early_termination = false;
     config.sampling_fraction = sampling_fraction;
     config.use_blas_only = false;
+    config.early_termination = true;
+    config.tol = 1e-3f;
 
     auto is_angular = std::find(bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset);
     if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
