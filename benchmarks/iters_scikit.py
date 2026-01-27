@@ -12,29 +12,23 @@ from sklearn.cluster import KMeans
 import numpy as np
 import os
 import time
-import math
 import sys
 from bench_utils import (DATASET_PARAMS, load_ground_truth, compute_recall,
                          print_recall_results, KNN_VALUES, Timer, write_results_to_csv,
-                         N_QUERIES, ANGULAR_DATASETS,
+                         N_QUERIES, ANGULAR_DATASETS, get_default_n_clusters,
                          get_data_path, get_query_path, get_ground_truth_path)
 
 if __name__ == "__main__":
-    # Experiment configuration
     algorithm = "scikit"
-
     dataset = sys.argv[1] if len(sys.argv) > 1 else "fmnist"
-
-    # Experiment name can be passed as second argument (default: "iters_scikit")
     experiment_name = sys.argv[2] if len(sys.argv) > 2 else "iters_scikit"
-
     if dataset not in DATASET_PARAMS:
         raise ValueError(
             f"Unknown dataset '{dataset}'. "
             f"Choose from {list(DATASET_PARAMS.keys())}"
         )
     num_vectors, num_dimensions = DATASET_PARAMS[dataset]
-    num_centroids = max(1, int(math.sqrt(num_vectors) * 4))
+    num_centroids = get_default_n_clusters(num_vectors)
     threads = threads
 
     print(f"=== Running algorithm: {algorithm} ===")
@@ -42,7 +36,6 @@ if __name__ == "__main__":
     print(f"num_vectors={num_vectors}, num_dimensions={num_dimensions}")
     print(f"num_centroids={num_centroids}, threads={threads}")
 
-    # Load data file (expects float32, row-major, n*d values)
     filename = get_data_path(dataset)
     data = np.fromfile(filename, dtype=np.float32)
     if data.size != num_vectors * num_dimensions:
@@ -51,29 +44,21 @@ if __name__ == "__main__":
             f"expected {num_vectors * num_dimensions}"
         )
     data = data.reshape(num_vectors, num_dimensions)
-
-    # Check if this dataset should use angular/spherical k-means
     if dataset in ANGULAR_DATASETS:
         print(f"\nWARNING: Dataset '{dataset}' should use spherical k-means, "
               f"but scikit-learn does not support this. Results may be suboptimal.")
 
-    # Load ground truth and queries once (if they exist)
     gt_filename = get_ground_truth_path(dataset)
     queries_filename = get_query_path(dataset)
-
     gt_dict = None
     queries = None
     n_queries = 0
-
     if os.path.exists(gt_filename) and os.path.exists(queries_filename):
         print(f"\n--- Loading Ground Truth and Queries ---")
         print(f"Ground truth file: {gt_filename}")
         print(f"Queries file: {queries_filename}")
 
-        # Load ground truth
         gt_dict = load_ground_truth(gt_filename)
-
-        # Load query vectors (only first N_QUERIES)
         queries = np.fromfile(queries_filename, dtype=np.float32)
         n_queries = N_QUERIES
         queries = queries[:n_queries * num_dimensions].reshape(n_queries, num_dimensions)
@@ -85,13 +70,8 @@ if __name__ == "__main__":
             print(f"Queries file not found: {queries_filename}")
         print("Recall computation will be skipped")
 
-    # Initialization methods to test
     init_methods = ['random', 'k-means++']
-
-    # Iteration counts to test (1 to 10)
     iteration_counts = list(range(1, 11))
-
-    # Grid search: outer loop over init methods, inner loop over iteration counts
     for init_method in init_methods:
         print("\n##########################################")
         print(f"# init = {init_method}")
@@ -106,19 +86,16 @@ if __name__ == "__main__":
             print(f"Running with init = {init_method}, target iterations = {n_iter}")
             print("========================================")
 
-            # Determine initialization strategy
             if init_method == 'k-means++' and previous_centers is not None:
                 # Resume from previous iteration - run just 1 more iteration
                 actual_init = previous_centers
                 actual_max_iter = 1
                 print(f"Resuming from previous iteration (running 1 more iteration)")
             else:
-                # First iteration or random initialization
                 actual_init = init_method
                 actual_max_iter = n_iter
                 cumulative_time_ms = 0.0  # Reset for 'random' or first k-means++ run
 
-            # Configure KMeans
             km = KMeans(
                 n_clusters=num_centroids,
                 init=actual_init,
@@ -130,19 +107,17 @@ if __name__ == "__main__":
                 copy_x=True
             )
 
-            # Time the training
+
             with Timer() as timer:
                 km.fit(data)
             construction_time_ms = timer.get_milliseconds()
-
-            # Get actual iterations and final objective
             actual_iterations = km.n_iter_
             final_objective = km.inertia_
 
             # For k-means++, accumulate time and track total iterations
             if init_method == 'k-means++':
                 cumulative_time_ms += construction_time_ms
-                total_iterations = n_iter  # We know we've done n_iter total iterations
+                total_iterations = n_iter
                 # Store centers for next iteration
                 previous_centers = km.cluster_centers_.copy()
             else:
@@ -157,23 +132,17 @@ if __name__ == "__main__":
                 print(f"Total iterations so far: {total_iterations}")
             print(f"Final objective (inertia): {final_objective}")
 
-            # Compute recall if ground truth and queries are available
             if gt_dict is not None and queries is not None:
                 print(f"\n--- Computing Recall ---")
 
-                # Get sklearn assignments (cluster labels for each data point)
-                assignments = km.labels_  # shape: (num_vectors,)
-                centroids = km.cluster_centers_  # shape: (num_centroids, num_dimensions)
+                assignments = km.labels_
+                centroids = km.cluster_centers_
 
-                # Compute recall for both KNN values
                 results_knn_10 = compute_recall(gt_dict, assignments, queries, centroids, num_centroids, 10)
                 print_recall_results(results_knn_10, 10)
-
                 results_knn_100 = compute_recall(gt_dict, assignments, queries, centroids, num_centroids, 100)
                 print_recall_results(results_knn_100, 100)
 
-                # Create config dictionary with scikit-learn parameters
-                # Use the original init_method, not the technical implementation detail
                 config_dict = {
                     "init": init_method,  # Use original init method, not km.init
                     "n_init": str(km.n_init),
@@ -184,7 +153,6 @@ if __name__ == "__main__":
                     "algorithm": str(km.algorithm)
                 }
 
-                # Write results to CSV (using cumulative values for proper accounting)
                 write_results_to_csv(
                     experiment_name, algorithm, dataset, n_iter, total_iterations,
                     num_dimensions, num_vectors, num_centroids, cumulative_time_ms,
@@ -194,5 +162,3 @@ if __name__ == "__main__":
             else:
                 print("Skipping CSV output (recall computation requires ground truth)")
 
-        # End n_iter loop
-    # End init_method loop

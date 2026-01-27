@@ -83,10 +83,6 @@ target_link_libraries(ad_hoc_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(sweet_pruning_spot_superkmeans.out sweet_pruning_spot_superkmeans.cpp)
 target_link_libraries(sweet_pruning_spot_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
-# Pruning bailout analysis benchmark (compare with_pruning vs blas_only)
-add_executable(pruning_bailout_analysis_superkmeans.out pruning_bailout_analysis_superkmeans.cpp)
-target_link_libraries(pruning_bailout_analysis_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
-
 # Microbenchmark for InitPositionsArray SIMD optimization
 add_executable(microbenchmark_init_positions_array.out microbenchmark_init_positions_array.cpp)
 target_link_libraries(microbenchmark_init_positions_array.out PRIVATE ${BENCH_COMMON_LIBS})

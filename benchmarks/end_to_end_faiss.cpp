@@ -12,25 +12,18 @@
 #include "bench_utils.h"
 
 int main(int argc, char* argv[]) {
-    // Experiment configuration
     const std::string algorithm = "faiss";
-
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
-
-    // Experiment name can be passed as second argument (default: "end_to_end")
     std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
-
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
         std::cerr << "Unknown dataset '" << dataset << "'\n";
         std::cerr << "Known datasets: mxbai, openai, wiki, arxiv, sift, fmnist\n";
         return 1;
     }
-
     const size_t n = it->second.first;
     const size_t d = it->second.second;
-    const size_t n_clusters =
-        std::max<int>(1u, static_cast<int>(std::sqrt(static_cast<double>(n)) * 4.0));
+    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
     int n_iters = bench_utils::MAX_ITERS;
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
@@ -58,14 +51,11 @@ int main(int argc, char* argv[]) {
 
     faiss::IndexFlatL2 index(d);
 
-    // Set up clustering parameters
     faiss::ClusteringParameters cp;
     cp.niter = n_iters;
     cp.verbose = false;
     cp.max_points_per_centroid = 999999; // We don't want to take samples
     cp.nredo = 1;
-
-    // Check if this dataset should use angular/spherical k-means
     auto is_angular = std::find(
         bench_utils::ANGULAR_DATASETS.begin(),
         bench_utils::ANGULAR_DATASETS.end(),
@@ -76,17 +66,14 @@ int main(int argc, char* argv[]) {
         cp.spherical = true;
     }
 
-    // Create the clustering object
     faiss::Clustering clus(d, n_clusters, cp);
 
-    // Time the training
     bench_utils::TicToc timer;
     timer.Tic();
     clus.train(n, data.data(), index);
     timer.Toc();
-    double construction_time_ms = timer.GetMilliseconds();
 
-    // Get actual iterations and final objective
+    double construction_time_ms = timer.GetMilliseconds();
     int actual_iterations = static_cast<int>(clus.iteration_stats.size());
     double final_objective = clus.iteration_stats.back().obj;
 
@@ -95,58 +82,40 @@ int main(int argc, char* argv[]) {
               << std::endl;
     std::cout << "Final objective: " << final_objective << std::endl;
 
-    // Compute recall if ground truth file exists
     std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
     std::string queries_filename = bench_utils::get_query_path(dataset);
-
     std::ifstream gt_file(gt_filename);
     std::ifstream queries_file(queries_filename, std::ios::binary);
-
     if (gt_file.good() && queries_file.good()) {
         gt_file.close();
         std::cout << "\n--- Computing Recall ---" << std::endl;
         std::cout << "Ground truth file: " << gt_filename << std::endl;
         std::cout << "Queries file: " << queries_filename << std::endl;
-
-        // Load ground truth
         auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
-
-        // Use only first N_QUERIES queries
         int n_queries = bench_utils::N_QUERIES;
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
 
-        // Load query vectors (only first n_queries)
         std::vector<float> queries(n_queries * d);
         queries_file.read(reinterpret_cast<char*>(queries.data()), queries.size() * sizeof(float));
         queries_file.close();
 
-        // Get cluster assignments from FAISS
-        // FAISS doesn't store assignments directly, so we need to assign data points to nearest
-        // centroids
         std::vector<faiss::idx_t> assignments(n);
         std::vector<float> distances_to_centroids(n);
-
-        // Get centroids from clustering result
         const float* centroids = clus.centroids.data();
-
-        // Assign each data point to its nearest centroid
         faiss::IndexFlatL2 centroid_index(d);
         centroid_index.add(n_clusters, centroids);
         centroid_index.search(n, data.data(), 1, distances_to_centroids.data(), assignments.data());
 
-        // Compute recall for both KNN values
         auto results_knn_10 = bench_utils::compute_recall(
             gt_map, assignments, queries.data(), centroids, n_queries, n_clusters, d, 10
         );
         bench_utils::print_recall_results(results_knn_10, 10);
-
         auto results_knn_100 = bench_utils::compute_recall(
             gt_map, assignments, queries.data(), centroids, n_queries, n_clusters, d, 100
         );
         bench_utils::print_recall_results(results_knn_100, 100);
 
-        // Create config dictionary with FAISS parameters
         std::unordered_map<std::string, std::string> config_map;
         config_map["niter"] = std::to_string(cp.niter);
         config_map["nredo"] = std::to_string(cp.nredo);
@@ -159,7 +128,6 @@ int main(int argc, char* argv[]) {
         config_map["frozen_centroids"] = cp.frozen_centroids ? "true" : "false";
         config_map["verbose"] = cp.verbose ? "true" : "false";
 
-        // Write results to CSV
         bench_utils::write_results_to_csv(
             experiment_name,
             algorithm,

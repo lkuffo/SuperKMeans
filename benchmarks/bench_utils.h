@@ -17,41 +17,35 @@
 
 namespace bench_utils {
 
+/**
+ * @brief Compute the default number of clusters for a dataset.
+ *
+ * Uses the heuristic: n_clusters = max(1, sqrt(n) * 4)
+ *
+ * @param n Number of data points
+ * @return Default number of clusters
+ */
+inline size_t get_default_n_clusters(size_t n) {
+    return std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
+}
+
 // Path constants for benchmark data
 inline const std::string BENCHMARKS_ROOT = std::string(CMAKE_SOURCE_DIR) + "/benchmarks";
 inline const std::string DATA_DIR = BENCHMARKS_ROOT + "/data";
 inline const std::string GROUND_TRUTH_DIR = BENCHMARKS_ROOT + "/ground_truth";
 
-/**
- * @brief Get the path to a data file.
- * @param dataset Dataset name (e.g., "openai", "mxbai")
- * @return Full path to the data file
- */
 inline std::string get_data_path(const std::string& dataset) {
     return DATA_DIR + "/data_" + dataset + ".bin";
 }
 
-/**
- * @brief Get the path to a query data file.
- * @param dataset Dataset name (e.g., "openai", "mxbai")
- * @return Full path to the query data file
- */
 inline std::string get_query_path(const std::string& dataset) {
     return DATA_DIR + "/data_" + dataset + "_test.bin";
 }
 
-/**
- * @brief Get the path to a ground truth file.
- * @param dataset Dataset name (e.g., "openai", "mxbai")
- * @return Full path to the ground truth file
- */
 inline std::string get_ground_truth_path(const std::string& dataset) {
     return GROUND_TRUTH_DIR + "/" + dataset + ".json";
 }
 
-/******************************************************************
- * Clock to benchmark algorithms runtime
- ******************************************************************/
 class TicToc {
   public:
     size_t accum_time = 0;
@@ -119,18 +113,16 @@ const int SCIKIT_EARLY_TERM_MAX_ITERS = 300;
 const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
 // Sampling fraction values for sampling experiment
-const std::vector<float> SAMPLING_FRACTION_VALUES =
-    {
-    // 1.0f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f, 0.4f, 0.3f, 0.2f, 0.1f, 0.05f
+const std::vector<float> SAMPLING_FRACTION_VALUES = {
+    1.0f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f, 0.4f, 0.3f, 0.2f, 0.1f, 0.05f,
     0.04f, 0.03f, 0.02, 0.01f, 0.0075f, 0.005f, 0.0025f, 0.001f, 0.0005f, 0.0001f
-    };
+};
 
 // Iteration values for pareto experiment (grid search)
-const std::vector<int> PARETO_ITERS_VALUES = {1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13,
-                                              14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25};
+const std::vector<int> PARETO_ITERS_VALUES = {1,  2,  3,  4,  5,  6,  7,  8,  9,  10};
 
 // n_clusters values for varying_k experiment
-const std::vector<int> VARYING_K_VALUES = {10, 100, 1000, 10000, 100000};
+const std::vector<int> VARYING_K_VALUES = {100, 1000, 10000, 100000};
 
 /**
  * @brief Parse ground truth JSON file.
@@ -150,7 +142,7 @@ inline std::unordered_map<int, std::vector<int>> parse_ground_truth_json(
     }
 
     std::string line;
-    std::getline(file, line); // Read entire file as one line (it's a single JSON object)
+    std::getline(file, line); // Read entire file as one line
 
     // Simple parser: look for "query_idx": [vector_ids...]
     size_t pos = 0;
@@ -346,13 +338,6 @@ std::vector<std::tuple<int, float, float, float, float>> compute_recall(
     return results;
 }
 
-/**
- * @brief Print recall results in a formatted table.
- *
- * @param results Vector of tuples (centroids_to_explore, explore_fraction, recall_mean, recall_std,
- * avg_vectors_to_visit)
- * @param knn KNN value used for this result set
- */
 inline void print_recall_results(
     const std::vector<std::tuple<int, float, float, float, float>>& results,
     int knn
@@ -428,36 +413,22 @@ inline void write_results_to_csv(
     const std::vector<std::tuple<int, float, float, float, float>>& results_knn_10,
     const std::vector<std::tuple<int, float, float, float, float>>& results_knn_100
 ) {
-    // Get architecture from environment variable
     const char* arch_env = std::getenv("SKM_ARCH");
     std::string arch = arch_env ? std::string(arch_env) : "default";
-
-    // Create results directory
     std::string results_dir = std::string(CMAKE_SOURCE_DIR) + "/benchmarks/results/" + arch;
     create_directory_recursive(results_dir);
-
-    // CSV file path
     std::string csv_path = results_dir + "/" + experiment_name + ".csv";
-
-    // Check if file exists to determine if we need to write header
     bool file_exists = (std::ifstream(csv_path).good());
-
-    // Open file in append mode
     std::ofstream csv_file(csv_path, std::ios::app);
     if (!csv_file.is_open()) {
         std::cerr << "Failed to open CSV file: " << csv_path << std::endl;
         return;
     }
-
-    // Determine if we have recall data
     bool has_recall_data = !results_knn_10.empty() || !results_knn_100.empty();
-
-    // Write header if file is new
     if (!file_exists) {
         csv_file << "timestamp,algorithm,dataset,n_iters,actual_iterations,dimensionality,data_"
                     "size,n_clusters,"
                  << "construction_time_ms,threads,final_objective";
-
         // Add columns for each KNN and explore fraction combination (only if we have recall data)
         if (has_recall_data) {
             for (int knn : KNN_VALUES) {
@@ -473,25 +444,18 @@ inline void write_results_to_csv(
                 }
             }
         }
-
         csv_file << ",config\n";
     }
-
-    // Get current timestamp
     auto now = std::chrono::system_clock::now();
     auto now_time_t = std::chrono::system_clock::to_time_t(now);
     std::tm now_tm;
     localtime_r(&now_time_t, &now_tm);
     char timestamp[32];
     std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &now_tm);
-
-    // Write data row
     csv_file << timestamp << "," << algorithm << "," << dataset << "," << n_iters << ","
              << actual_iterations << "," << dimensionality << "," << data_size << "," << n_clusters
              << "," << std::fixed << std::setprecision(2) << construction_time_ms << "," << threads
              << "," << std::setprecision(6) << final_objective;
-
-    // Write recall results only if we have data
     if (has_recall_data) {
         // Write KNN=10 results
         for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] :
@@ -501,7 +465,6 @@ inline void write_results_to_csv(
             csv_file << "," << centroids_to_explore;
             csv_file << "," << std::setprecision(2) << avg_vectors;
         }
-
         // Write KNN=100 results
         for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] :
              results_knn_100) {
@@ -512,7 +475,6 @@ inline void write_results_to_csv(
         }
     }
 
-    // Serialize config_dict to JSON
     std::ostringstream config_json_ss;
     config_json_ss << "{";
     bool first = true;

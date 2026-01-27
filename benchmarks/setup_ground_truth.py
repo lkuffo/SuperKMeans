@@ -1,10 +1,3 @@
-"""
-Generate ground truth for benchmark datasets.
-
-This script computes the exact k-nearest neighbors for query vectors
-using brute force search, and saves the results to JSON files.
-"""
-
 import json
 import numpy as np
 import os
@@ -49,7 +42,6 @@ class BruteForceFAISS:
         elif self.metric == "ip":
             self.index = faiss.IndexFlatIP(self.dimension)
         else:
-            # Default to L2
             self.index = faiss.IndexFlatL2(self.dimension)
 
         # Ensure data is float32 and contiguous
@@ -73,16 +65,12 @@ class BruteForceFAISS:
         """
         if self.index is None:
             raise ValueError("Index not fitted. Call fit() first.")
-
         # Ensure data is float32 and contiguous
         if queries.dtype != np.float32:
             queries = queries.astype(np.float32)
         if not queries.flags['C_CONTIGUOUS']:
             queries = np.ascontiguousarray(queries)
-
-        # FAISS search returns (distances, indices)
         distances, indices = self.index.search(queries, k)
-
         return distances, indices
 
 
@@ -100,17 +88,13 @@ def generate_ground_truth(dataset, knns=None, normalize=None):
             f"Choose from {list(DATASET_PARAMS.keys())}"
         )
 
-    # Use defaults if not specified
     if knns is None:
         knns = KNN_VALUES
     if normalize is None:
         normalize = dataset in ANGULAR_DATASETS
 
-    # Create ground truth directory if it doesn't exist
     if not os.path.exists(GROUND_TRUTH_DIR):
         os.makedirs(GROUND_TRUTH_DIR)
-
-    # Get dataset parameters
     num_vectors, num_dimensions = DATASET_PARAMS[dataset]
 
     print(f"\n=== Generating ground truth for {dataset} ===")
@@ -119,7 +103,6 @@ def generate_ground_truth(dataset, knns=None, normalize=None):
     print(f"Normalize: {normalize}")
     print(f"KNN values: {knns}")
 
-    # Load train data
     train_path = get_data_path(dataset)
     print(f"\nLoading train data from: {train_path}")
     train = np.fromfile(train_path, dtype=np.float32)
@@ -131,12 +114,10 @@ def generate_ground_truth(dataset, knns=None, normalize=None):
     train = train.reshape(num_vectors, num_dimensions)
     print(f"Loaded train data: {train.shape}")
 
-    # Load test/query data
     query_path = get_query_path(dataset)
     print(f"Loading query data from: {query_path}")
     test = np.fromfile(query_path, dtype=np.float32)
 
-    # Infer number of queries from file size
     if test.size % num_dimensions != 0:
         raise ValueError(
             f"Query file size mismatch: {test.size} is not divisible by {num_dimensions}"
@@ -148,47 +129,35 @@ def generate_ground_truth(dataset, knns=None, normalize=None):
     print(f"Loaded query data: {test.shape}")
     print(f"Number of queries: {num_queries}")
 
-    # Normalize if requested
     if normalize:
         print("\nNormalizing data (L2 norm)...")
         train = preprocessing.normalize(train, axis=1, norm='l2')
         test = preprocessing.normalize(test, axis=1, norm='l2')
 
-    # Fit brute force nearest neighbors using FAISS
     print("\nFitting brute force nearest neighbors (FAISS)...")
     max_knn = max(knns)
     algo = BruteForceFAISS(metric="euclidean", dimension=num_dimensions)
     algo.fit(train)
 
-    # Query for ground truth (batch processing)
     print(f"Querying for ground truth (k={max_knn})...")
     distances, indices = algo.query_batch(test, k=max_knn)
 
-    # Save ground truth for each k value
     gt_path = get_ground_truth_path(dataset)
-
     print(f"\nSaving ground truth for k={max_knn} to: {gt_path}")
-
-    # Create ground truth dictionary (query_idx -> list of neighbor indices)
     gt_dict = {}
     for i in range(num_queries):
         gt_dict[i] = indices[i, :max_knn].tolist()
-
-    # Save to JSON
     with open(gt_path, 'w') as f:
         json.dump(gt_dict, f)
 
     print(f"Saved ground truth for {num_queries} queries with k={max_knn}")
-
     print(f"\n=== Ground truth generation complete for {dataset} ===")
 
 
 def main():
     """Generate ground truth for a dataset."""
-    # Default dataset
     DEFAULT_DATASET = "contriever"
 
-    # Parse command-line arguments
     if len(sys.argv) > 1:
         dataset = sys.argv[1]
         if dataset not in DATASET_PARAMS:

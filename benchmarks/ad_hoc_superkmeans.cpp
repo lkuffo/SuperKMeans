@@ -16,27 +16,19 @@
 #include "superkmeans/superkmeans.h"
 
 int main(int argc, char* argv[]) {
-    // Experiment configuration
     const std::string algorithm = "superkmeans";
-
-    // Choose dataset by name. You can also pass the dataset name as the first CLI argument.
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
-
-    // Experiment name can be passed as second argument (default: "end_to_end")
     std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
         std::cerr << "Unknown dataset '" << dataset << "'\n";
-        std::cerr << "Known datasets: mxbai, openai, wiki, arxiv, sift, fmnist\n";
         return 1;
     }
-
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters =
-        std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
+    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
     int n_iters = bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
     std::string filename = bench_utils::get_data_path(dataset);
@@ -96,32 +88,17 @@ int main(int argc, char* argv[]) {
         config.angular = true;
     }
 
-
-    // Time the training
     auto kmeans_state =
         skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
-    std::vector<float> centroids = kmeans_state.Train(
-        data.data(), n //,
-                       // queries.data(), n_queries
-    );
     bench_utils::TicToc timer;
     timer.Tic();
-    for (int i = 0; i < 0; i++) {
-        auto _tmp_state =
-            skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                n_clusters, d, config
-            );
-        std::vector<float> _tmp_centroids = _tmp_state.Train(
-            data.data(), n //,
-            // queries.data(), n_queries
-        );
-    }
+    std::vector<float> centroids = kmeans_state.Train(
+        data.data(), n
+    );
     timer.Toc();
     double construction_time_ms = timer.GetMilliseconds();
-
-    // Get actual iterations and final objective
     int actual_iterations = static_cast<int>(kmeans_state.iteration_stats.size());
     double final_objective = kmeans_state.iteration_stats.back().objective;
 
@@ -130,14 +107,10 @@ int main(int argc, char* argv[]) {
               << std::endl;
     std::cout << "Final objective: " << final_objective << std::endl;
 
-    // return 0;
-
     // Compute recall if ground truth file exists
     std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
-
     std::ifstream gt_file(gt_filename);
     std::ifstream queries_file_check(filename_queries, std::ios::binary);
-
     if (gt_file.good() && queries_file_check.good()) {
         gt_file.close();
         queries_file_check.close();
@@ -145,15 +118,12 @@ int main(int argc, char* argv[]) {
         std::cout << "Ground truth file: " << gt_filename << std::endl;
         std::cout << "Queries file: " << filename_queries << std::endl;
 
-        // Load ground truth
         auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
 
-        // Assign each data point to its nearest centroid using SuperKMeans::Assign()
         auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
 
-        // Compute recall for both KNN values
         auto results_knn_10 = bench_utils::compute_recall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
         );
@@ -163,34 +133,6 @@ int main(int argc, char* argv[]) {
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
         );
         bench_utils::print_recall_results(results_knn_100, 100);
-
-        // COMMENTED OUT: CSV writing for ad-hoc testing
-        /*
-        // Create comprehensive config dictionary with all parameters
-        std::unordered_map<std::string, std::string> config_map;
-        config_map["iters"] = std::to_string(config.iters);
-        config_map["sampling_fraction"] = std::to_string(config.sampling_fraction);
-        config_map["n_threads"] = std::to_string(config.n_threads);
-        config_map["seed"] = std::to_string(config.seed);
-        config_map["use_blas_only"] = config.use_blas_only ? "true" : "false";
-        config_map["tol"] = std::to_string(config.tol);
-        config_map["recall_tol"] = std::to_string(config.recall_tol);
-        config_map["early_termination"] = config.early_termination ? "true" : "false";
-        config_map["sample_queries"] = config.sample_queries ? "true" : "false";
-        config_map["objective_k"] = std::to_string(config.objective_k);
-        config_map["ann_explore_fraction"] = std::to_string(config.ann_explore_fraction);
-        config_map["unrotate_centroids"] = config.unrotate_centroids ? "true" : "false";
-        config_map["perform_assignments"] = config.perform_assignments ? "true" : "false";
-        config_map["verbose"] = config.verbose ? "true" : "false";
-
-        // Write results to CSV
-        bench_utils::write_results_to_csv(
-            experiment_name, algorithm, dataset, n_iters, actual_iterations,
-            static_cast<int>(d), n, static_cast<int>(n_clusters), construction_time_ms,
-            static_cast<int>(THREADS), final_objective, config_map,
-            results_knn_10, results_knn_100
-        );
-        */
     } else {
         if (!gt_file.good()) {
             std::cout << "\nGround truth file not found: " << gt_filename << std::endl;

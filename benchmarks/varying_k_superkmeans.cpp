@@ -12,20 +12,15 @@
 #include "superkmeans/superkmeans.h"
 
 int main(int argc, char* argv[]) {
-    // Experiment configuration
     const std::string algorithm = "superkmeans";
     const std::string experiment_name = "varying_k";
-
-    // Choose dataset by name. You can pass the dataset name as the first CLI argument.
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
-
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
         std::cerr << "Unknown dataset '" << dataset << "'\n";
         std::cerr << "Known datasets: mxbai, openai, wiki, arxiv, sift, fmnist\n";
         return 1;
     }
-
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
@@ -53,7 +48,6 @@ int main(int argc, char* argv[]) {
                   << "\n";
         return 1;
     }
-
     std::ifstream file(filename, std::ios::binary);
     if (!file) {
         std::cerr << "Failed to open " << filename << std::endl;
@@ -61,7 +55,6 @@ int main(int argc, char* argv[]) {
     }
     file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
     file.close();
-
     std::ifstream file_queries(filename_queries, std::ios::binary);
     if (!file_queries) {
         std::cerr << "Failed to open " << filename_queries << std::endl;
@@ -70,7 +63,6 @@ int main(int argc, char* argv[]) {
     file_queries.read(reinterpret_cast<char*>(queries.data()), queries.size() * sizeof(float));
     file_queries.close();
 
-    // Loop over different n_clusters values
     for (int n_clusters : bench_utils::VARYING_K_VALUES) {
         std::cout << "\n========================================" << std::endl;
         std::cout << "n_clusters=" << n_clusters << std::endl;
@@ -87,8 +79,6 @@ int main(int argc, char* argv[]) {
         config.early_termination = false;
         config.sampling_fraction = sampling_fraction;
         config.use_blas_only = false;
-
-        // Check if this dataset should use angular/spherical k-means
         auto is_angular = std::find(
             bench_utils::ANGULAR_DATASETS.begin(),
             bench_utils::ANGULAR_DATASETS.end(),
@@ -104,15 +94,12 @@ int main(int argc, char* argv[]) {
                 n_clusters, d, config
             );
 
-        // Time the training
         bench_utils::TicToc timer;
         timer.Tic();
-        std::vector<float> centroids =
-            kmeans_state.Train(data.data(), n); // No early termination with queries
+        std::vector<float> centroids = kmeans_state.Train(data.data(), n); 
         timer.Toc();
-        double construction_time_ms = timer.GetMilliseconds();
 
-        // Get actual iterations and final objective
+        double construction_time_ms = timer.GetMilliseconds();
         int actual_iterations = static_cast<int>(kmeans_state.iteration_stats.size());
         double final_objective = kmeans_state.iteration_stats.back().objective;
 
@@ -122,11 +109,9 @@ int main(int argc, char* argv[]) {
         std::cout << "Final objective: " << final_objective << std::endl;
 
         // Skip assignment and recall computation for this benchmark
-        // We only care about training time and objective for the varying_k parameter sweep
-        std::vector<std::tuple<int, float, float, float, float>> results_knn_10;   // Empty
-        std::vector<std::tuple<int, float, float, float, float>> results_knn_100;  // Empty
+        std::vector<std::tuple<int, float, float, float, float>> results_knn_10;
+        std::vector<std::tuple<int, float, float, float, float>> results_knn_100;
 
-        // Create comprehensive config dictionary with all parameters
         std::unordered_map<std::string, std::string> config_map;
         config_map["iters"] = std::to_string(config.iters);
         config_map["sampling_fraction"] = std::to_string(config.sampling_fraction);
@@ -143,7 +128,6 @@ int main(int argc, char* argv[]) {
         config_map["perform_assignments"] = config.perform_assignments ? "true" : "false";
         config_map["verbose"] = config.verbose ? "true" : "false";
 
-        // Write results to CSV
         bench_utils::write_results_to_csv(
             experiment_name,
             algorithm,

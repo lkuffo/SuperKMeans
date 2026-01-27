@@ -126,12 +126,12 @@ if __name__ == "__main__":
     # test.tofile("./data/data_gist_test.bin")
     # print('gist', len(train), len(test), len(train[0]))
 
-    train, test = read_hdf5_data("contriever-768")
-    train = l2_normalize(train.astype(np.float32))
-    test = l2_normalize(test.astype(np.float32))
-    train.tofile("./data/data_contriever.bin")
-    test.tofile("./data/data_contriever_test.bin")
-    print('contriever', len(train), len(test), len(train[0]))
+    # train, test = read_hdf5_data("contriever-768")
+    # train = l2_normalize(train.astype(np.float32))
+    # test = l2_normalize(test.astype(np.float32))
+    # train.tofile("./data/data_contriever.bin")
+    # test.tofile("./data/data_contriever_test.bin")
+    # print('contriever', len(train), len(test), len(train[0]))
 
     # train, test = read_hdf5_data("simplewiki-openai-3072-normalized")
     # train = train.astype(np.float32)

@@ -12,19 +12,15 @@
 #include "bench_utils.h"
 
 int main(int argc, char* argv[]) {
-    // Experiment configuration
     const std::string algorithm = "faiss";
     const std::string experiment_name = "varying_k";
-
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("openai");
-
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
         std::cerr << "Unknown dataset '" << dataset << "'\n";
         std::cerr << "Known datasets: mxbai, openai, wiki, arxiv, sift, fmnist\n";
         return 1;
     }
-
     const size_t n = it->second.first;
     const size_t d = it->second.second;
     int n_iters = bench_utils::MAX_ITERS;
@@ -53,7 +49,6 @@ int main(int argc, char* argv[]) {
     file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
     file.close();
 
-    // Loop over different n_clusters values
     for (int n_clusters : bench_utils::VARYING_K_VALUES) {
         std::cout << "\n========================================" << std::endl;
         std::cout << "n_clusters=" << n_clusters << std::endl;
@@ -61,14 +56,11 @@ int main(int argc, char* argv[]) {
 
         faiss::IndexFlatL2 index(d);
 
-        // Set up clustering parameters
         faiss::ClusteringParameters cp;
         cp.niter = n_iters;
         cp.verbose = false;
         cp.max_points_per_centroid = 999999; // We don't want to take samples
         cp.nredo = 1;
-
-        // Check if this dataset should use angular/spherical k-means
         auto is_angular = std::find(
             bench_utils::ANGULAR_DATASETS.begin(),
             bench_utils::ANGULAR_DATASETS.end(),
@@ -79,17 +71,14 @@ int main(int argc, char* argv[]) {
             cp.spherical = true;
         }
 
-        // Create the clustering object
         faiss::Clustering clus(d, n_clusters, cp);
 
-        // Time the training
         bench_utils::TicToc timer;
         timer.Tic();
         clus.train(n, data.data(), index);
         timer.Toc();
-        double construction_time_ms = timer.GetMilliseconds();
 
-        // Get actual iterations and final objective
+        double construction_time_ms = timer.GetMilliseconds();
         int actual_iterations = static_cast<int>(clus.iteration_stats.size());
         double final_objective = clus.iteration_stats.back().obj;
 
@@ -99,11 +88,9 @@ int main(int argc, char* argv[]) {
         std::cout << "Final objective: " << final_objective << std::endl;
 
         // Skip assignment and recall computation for this benchmark
-        // We only care about training time and objective for the varying_k parameter sweep
-        std::vector<std::tuple<int, float, float, float, float>> results_knn_10;   // Empty
-        std::vector<std::tuple<int, float, float, float, float>> results_knn_100;  // Empty
+        std::vector<std::tuple<int, float, float, float, float>> results_knn_10;
+        std::vector<std::tuple<int, float, float, float, float>> results_knn_100;
 
-        // Create config dictionary with FAISS parameters
         std::unordered_map<std::string, std::string> config_map;
         config_map["niter"] = std::to_string(cp.niter);
         config_map["nredo"] = std::to_string(cp.nredo);
@@ -116,7 +103,6 @@ int main(int argc, char* argv[]) {
         config_map["frozen_centroids"] = cp.frozen_centroids ? "true" : "false";
         config_map["verbose"] = cp.verbose ? "true" : "false";
 
-        // Write results to CSV
         bench_utils::write_results_to_csv(
             experiment_name,
             algorithm,
