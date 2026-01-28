@@ -18,9 +18,9 @@
 namespace bench_utils {
 
 // Path constants for benchmark data
-inline const std::string BENCHMARKS_ROOT = std::string(CMAKE_SOURCE_DIR) + "/benchmarks";
-inline const std::string DATA_DIR = BENCHMARKS_ROOT + "/data";
-inline const std::string GROUND_TRUTH_DIR = BENCHMARKS_ROOT + "/ground_truth";
+inline const std::string BENCHMARKS_ROOT = "/data";
+inline const std::string DATA_DIR = BENCHMARKS_ROOT;
+inline const std::string GROUND_TRUTH_DIR = BENCHMARKS_ROOT;
 
 /**
  * @brief Get the path to a data file.

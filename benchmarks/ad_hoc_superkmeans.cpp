@@ -50,8 +50,8 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters =
-        std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
+    const size_t n_clusters = 10;
+         //std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
     int n_iters = bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
     std::string filename = bench_utils::get_data_path(dataset);

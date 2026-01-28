@@ -4,7 +4,7 @@ import h5py
 
 np.random.seed(42)
 
-RAW_DATA = '../../PDX/benchmarks/datasets/downloaded/'
+RAW_DATA = '/scratch/shepkema/vector-data/'
 
 def l2_normalize(x, eps=1e-12):
     norms = np.linalg.norm(x, axis=1, keepdims=True)
@@ -155,8 +155,10 @@ if __name__ == "__main__":
     write_chunk_size = 100000  # Write to disk every 100k embeddings
     embedding_dim = 1024
 
-    train_file = "./data/data_cohere.bin"
-    test_file = "./data/data_cohere_test.bin"
+    train_file = '/scratch/shepkema/vector-data/cohere/data_cohere.bin'
+    test_file = '/scratch/shepkema/vector-data/cohere/data_cohere_test.bin'
+    # train_file = "./data/data_cohere.bin"
+    # test_file = "./data/data_cohere_test.bin"
 
     if USE_SEPARATE_QUERIES:
         print(f"Loading train embeddings (max {MAX_TRAIN_SAMPLES:,})...")

@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
     printf("Triggered GPU initialization.\n");
 #endif
 
-    const std::string algorithm = "cuvs_gpu_kmeans";
+    const std::string algorithm = "cuvs";
 
     if (argc < 2) exit(1);
     bool use_cuvs = argv[1][0] == '1'; // compatibility
@@ -59,8 +59,7 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t d = it->second.second;
 
-    const size_t n_clusters = 
-        std::max<int>(1u, static_cast<int>(std::sqrt(static_cast<double>(n)) * 4.0));
+    //const size_t n_clusters = std::max<int>(1u, static_cast<int>(std::sqrt(static_cast<double>(n)) * 4.0));
 
     int n_iters = bench_utils::MAX_ITERS;
 
@@ -71,7 +70,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "=== Running algorithm: " << algorithm << " ===\n";
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
-    std::cout << "n_clusters: " << n_clusters << "\n";
+    //std::cout << "n_clusters: " << n_clusters << "\n";
 
     // ------------------------------------------------------------
     // Load data
@@ -113,6 +112,11 @@ int main(int argc, char* argv[]) {
     // ------------------------------------------------------------
     // Upload to GPU and setup cuVS KMeans
     // ------------------------------------------------------------
+    // Loop over different n_clusters values
+    for (int n_clusters : bench_utils::VARYING_K_VALUES) {
+        std::cout << "\n========================================" << std::endl;
+        std::cout << "n_clusters=" << n_clusters << std::endl;
+        std::cout << "========================================" << std::endl;
     raft::resources handle;
     auto stream = raft::resource::get_cuda_stream(handle);
 
@@ -127,7 +131,8 @@ int main(int argc, char* argv[]) {
     cuvs::cluster::kmeans::params params{};
     params.n_clusters = n_clusters;
     params.max_iter   = n_iters;
-    params.tol        = 1e-4;
+    params.tol        = 1e-20;
+    params.inertia_check = false;
 		params.init       = cuvs::cluster::kmeans::params::Random;
 		// params.seed       = 42; 
 
@@ -201,6 +206,7 @@ int main(int argc, char* argv[]) {
         config_map,
         results_knn_10,
         results_knn_100);
+}
 
     std::cout << "Benchmark complete\n";
     return 0;

@@ -137,7 +137,7 @@ target_link_libraries(end_to_end_cuvs_kmeans_clustering.out PRIVATE ${FAISS_COMM
 target_link_libraries(end_to_end_cuvs_kmeans_clustering.out PRIVATE rmm cuvs)
 
 # Varying K benchmarks (vary n_clusters instead of dataset)
-add_executable(varying_k_superkmeans.out varying_k_superkmeans.cpp)
+add_executable(varying_k_superkmeans.out varying_k_superkmeans.cpp ../include/superkmeans/distance_computers/kernels.cu)
 target_link_libraries(varying_k_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
 add_executable(varying_k_faiss.out varying_k_faiss.cpp)
