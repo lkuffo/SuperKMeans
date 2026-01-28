@@ -257,5 +257,86 @@ TEST_F(DistanceComputerTest, BatchComputer_FindKNearestNeighbors_Correctness) {
     }
 }
 
+/**
+ * @brief Test that SIMD FlipSign matches scalar reference
+ *
+ */
+TEST_F(DistanceComputerTest, FlipSign_SIMD_MatchesScalar) {
+    std::vector<size_t> dimensions = {1, 7, 8, 15, 16, 31, 32, 63, 64, 
+                                       128, 256, 512, 1024, 2048};
+
+    for (size_t d : dimensions) {
+        SCOPED_TRACE("Testing d=" + std::to_string(d));
+
+        std::vector<float> data(d);
+        std::vector<uint32_t> masks(d);
+        skmeans::GenerateRandomDataWithMasks(data.data(), masks.data(), d, 0.5f, 42);
+
+        std::vector<float> scalar_output(d);
+        std::vector<float> simd_output(d);
+
+        skmeans::ScalarUtilsComputer<skmeans::Quantization::f32>::FlipSign(
+            data.data(), scalar_output.data(), masks.data(), d
+        );
+        skmeans::UtilsComputer<skmeans::Quantization::f32>::FlipSign(
+            data.data(), simd_output.data(), masks.data(), d
+        );
+
+        for (size_t i = 0; i < d; ++i) {
+            uint32_t scalar_bits = *reinterpret_cast<const uint32_t*>(&scalar_output[i]);
+            uint32_t simd_bits = *reinterpret_cast<const uint32_t*>(&simd_output[i]);
+            EXPECT_EQ(scalar_bits, simd_bits)
+                << "FlipSign mismatch at index " << i << " for d=" << d
+                << ": scalar=" << scalar_output[i] << " (0x" << std::hex << scalar_bits << ")"
+                << ", simd=" << simd_output[i] << " (0x" << simd_bits << ")" << std::dec;
+        }
+    }
+}
+
+/**
+ * @brief Test that SIMD InitPositionsArray matches scalar reference
+ *
+ * Verifies that the SIMD implementation produces the same count and positions
+ * as the scalar reference implementation.
+ */
+TEST_F(DistanceComputerTest, InitPositionsArray_SIMD_MatchesScalar) {
+    std::vector<size_t> vector_counts = {32, 64, 128, 256, 512, 1024, 2048};
+    std::vector<float> selectivities = {0.01f, 0.03f, 0.05f, 0.10f, 0.25f, 0.50f};
+    const float threshold = 100.0f;
+
+    for (size_t n : vector_counts) {
+        for (float selectivity : selectivities) {
+            SCOPED_TRACE("Testing n=" + std::to_string(n) + 
+                         ", selectivity=" + std::to_string(selectivity));
+
+            std::vector<float> pruning_distances(n);
+            skmeans::GenerateRandomDistances(
+                pruning_distances.data(), n, threshold, selectivity, 42
+            );
+
+            std::vector<uint32_t> scalar_positions(n);
+            std::vector<uint32_t> simd_positions(n);
+            size_t scalar_count = 0;
+            size_t simd_count = 0;
+
+            skmeans::ScalarUtilsComputer<skmeans::Quantization::f32>::InitPositionsArray(
+                n, scalar_count, scalar_positions.data(), threshold, pruning_distances.data()
+            );
+            skmeans::UtilsComputer<skmeans::Quantization::f32>::InitPositionsArray(
+                n, simd_count, simd_positions.data(), threshold, pruning_distances.data()
+            );
+
+            EXPECT_EQ(scalar_count, simd_count)
+                << "Count mismatch for n=" << n << ", selectivity=" << selectivity;
+
+            for (size_t i = 0; i < scalar_count; ++i) {
+                EXPECT_EQ(scalar_positions[i], simd_positions[i])
+                    << "Position mismatch at index " << i 
+                    << " for n=" << n << ", selectivity=" << selectivity;
+            }
+        }
+    }
+}
+
 } // anonymous namespace
 

@@ -42,6 +42,12 @@ inline bool IsPowerOf2(const uint32_t x) {
     return x > 0 && (x & (x - 1)) == 0;
 }
 
+// ============================================================================
+// Testing Utilities
+// The following functions are brute-force reference implementations used
+// exclusively in the testing suite for correctness verification.
+// ============================================================================
+
 /**
  * @brief Generate synthetic clusterable data (scikit-learn style make_blobs)
  *
@@ -98,7 +104,6 @@ inline std::vector<float> MakeBlobs(
             }
         }
     }
-
     return data;
 }
 
@@ -130,12 +135,6 @@ inline std::vector<float> GenerateRandomVectors(
     }
     return output;
 }
-
-// ============================================================================
-// Testing Utilities
-// The following functions are brute-force reference implementations used
-// exclusively in the testing suite for correctness verification.
-// ============================================================================
 
 /**
  * @brief Compute squared L2 distance between two vectors (testing only)
@@ -283,6 +282,66 @@ inline uint32_t FindNearestCentroidBruteForce(
         }
     }
     return best_idx;
+}
+
+/**
+ * @brief Generate random float data and sign-flip masks (testing only)
+ *
+ * Generates random float values and a corresponding mask array for sign-flip
+ * operations. Each mask element is either 0x80000000 (flip sign) or 0 (keep sign).
+ *
+ * @param data Output: random float values (n elements)
+ * @param masks Output: sign-flip masks (n elements)
+ * @param n Number of elements to generate
+ * @param flip_probability Probability of each element having its sign flipped (0.0 to 1.0)
+ * @param seed Random seed for reproducibility
+ */
+inline void GenerateRandomDataWithMasks(
+    float* data,
+    uint32_t* masks,
+    size_t n,
+    float flip_probability = 0.5f,
+    uint32_t seed = 42
+) {
+    std::mt19937 gen(seed);
+    std::uniform_real_distribution<float> value_dist(-100.0f, 100.0f);
+    std::uniform_real_distribution<float> flip_dist(0.0f, 1.0f);
+    for (size_t i = 0; i < n; ++i) {
+        data[i] = value_dist(gen);
+        masks[i] = (flip_dist(gen) < flip_probability) ? 0x80000000 : 0;
+    }
+}
+
+/**
+ * @brief Generate random distances with controlled selectivity (testing only)
+ *
+ * Generates random distance values where a specified percentage fall below
+ * the threshold (for testing pruning algorithms).
+ *
+ * @param pruning_distances Output: array of distance values (n elements)
+ * @param n Number of distances to generate
+ * @param threshold Threshold value for comparison
+ * @param selectivity Fraction of values that should be below threshold (0.0 to 1.0)
+ * @param seed Random seed for reproducibility
+ */
+inline void GenerateRandomDistances(
+    float* pruning_distances,
+    size_t n,
+    float threshold,
+    float selectivity = 0.03f,
+    uint32_t seed = 42
+) {
+    std::mt19937 gen(seed);
+    size_t n_below = static_cast<size_t>(n * selectivity);
+    std::uniform_real_distribution<float> below_dist(0.0f, threshold * 0.99f);
+    for (size_t i = 0; i < n_below; ++i) {
+        pruning_distances[i] = below_dist(gen);
+    }
+    std::uniform_real_distribution<float> above_dist(threshold * 1.01f, threshold * 10.0f);
+    for (size_t i = n_below; i < n; ++i) {
+        pruning_distances[i] = above_dist(gen);
+    }
+    std::shuffle(pruning_distances, pruning_distances + n, gen);
 }
 
 } // namespace skmeans
