@@ -14,6 +14,10 @@
 #include "avx512_computers.h"
 #endif
 
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+#include "scalar_computers.h"
+#endif
+
 namespace skmeans {
 
 template <DistanceFunction alpha, Quantization q>

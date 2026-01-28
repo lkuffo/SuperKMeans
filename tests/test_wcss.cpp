@@ -87,7 +87,6 @@ const std::map<std::pair<size_t, size_t>, float> GROUND_TRUTH = {
 };
 // clang-format on
 
-// Test parameters: (n_clusters, dimensionality)
 class WCSSTest : public ::testing::TestWithParam<std::tuple<size_t, size_t>> {
   protected:
     void SetUp() override { omp_set_num_threads(omp_get_max_threads()); }
@@ -98,45 +97,34 @@ class WCSSTest : public ::testing::TestWithParam<std::tuple<size_t, size_t>> {
     static constexpr float CENTER_SPREAD = 10.0f;
     static constexpr unsigned int SEED = 42;
     static constexpr int N_ITERS = 10;
-    static constexpr float TOLERANCE = 0.01f; // 1% tolerance
+    static constexpr float TOLERANCE = 0.01f;
 };
 
 /**
  * @brief Test that WCSS monotonically decreases across iterations
  * and matches expected ground truth values (within 1% tolerance).
  *
- * For k-means, the objective (WCSS) should never increase between iterations.
- * The ground truth values were generated from a known-good run with the same
- * parameters (make_blobs is deterministic with fixed seed).
- *
- * This test validates:
- * 1. WCSS is strictly non-increasing across iterations
- * 2. Final WCSS matches expected value within 1% (or is lower if algorithm improved)
  */
 TEST_P(WCSSTest, MonotonicallyDecreases_AndMatchesGroundTruth) {
     auto [n_clusters, d] = GetParam();
 
-    // Skip if n_clusters > N_SAMPLES (invalid configuration)
     if (n_clusters > N_SAMPLES) {
         GTEST_SKIP() << "Skipping: n_clusters (" << n_clusters << ") > n_samples (" << N_SAMPLES
                      << ")";
     }
 
-    // Generate synthetic blob data
     std::vector<float> data =
-        skmeans::make_blobs(N_SAMPLES, d, N_TRUE_CENTERS, false, CLUSTER_STD, CENTER_SPREAD, SEED);
+        skmeans::MakeBlobs(N_SAMPLES, d, N_TRUE_CENTERS, false, CLUSTER_STD, CENTER_SPREAD, SEED);
 
     ASSERT_EQ(data.size(), N_SAMPLES * d) << "Data size mismatch";
 
-    // Configure SuperKMeans with explicit parameters for reproducibility
-    // (these values match the defaults at the time ground truth was generated)
+    // These values match the defaults at the time ground truth was generated
     skmeans::SuperKMeansConfig config;
     config.iters = N_ITERS;
     config.verbose = false;
     config.seed = SEED;
     config.early_termination = false;
     config.sampling_fraction = 1.0f;
-    // PDX pruning parameters (explicit for reproducibility)
     config.min_not_pruned_pct = 0.03f;
     config.max_not_pruned_pct = 0.05f;
     config.adjustment_factor_for_partial_d = 0.20f;
@@ -145,47 +133,40 @@ TEST_P(WCSSTest, MonotonicallyDecreases_AndMatchesGroundTruth) {
     auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
         n_clusters, d, config
     );
-
-    // Train
     auto centroids = kmeans.Train(data.data(), N_SAMPLES);
-
-    // Verify we have iteration stats
     const auto& stats = kmeans.iteration_stats;
     ASSERT_GE(stats.size(), 1) << "Expected at least 1 iteration recorded";
 
-    // Test 1: WCSS should monotonically decrease (or stay same)
+    // WCSS should monotonically decrease (or stay same)
     for (size_t i = 1; i < stats.size(); ++i) {
         float prev_wcss = stats[i - 1].objective;
         float curr_wcss = stats[i].objective;
 
-        // Allow tiny floating point tolerance
         float tolerance = prev_wcss * 1e-6f;
         EXPECT_LE(curr_wcss, prev_wcss + tolerance)
             << "WCSS increased at iteration " << (i + 1) << ": " << prev_wcss << " -> " << curr_wcss
             << " (n_clusters=" << n_clusters << ", d=" << d << ")";
     }
 
-    // Test 2: Final WCSS should match ground truth
+    // Final WCSS should match ground truth
     auto key = std::make_pair(n_clusters, d);
     auto it = GROUND_TRUTH.find(key);
     ASSERT_NE(it, GROUND_TRUTH.end()) << "No ground truth for k=" << n_clusters << ", d=" << d;
 
     float expected_wcss = it->second;
     float final_wcss = stats.back().objective;
-
-    // WCSS: should be within TOLERANCE of expected, OR lower (algorithm improvement is OK)
     float wcss_upper_bound = expected_wcss * (1.0f + TOLERANCE);
     EXPECT_LE(final_wcss, wcss_upper_bound)
         << "WCSS too high (k=" << n_clusters << ", d=" << d << "): " << final_wcss << " > "
         << wcss_upper_bound << " (expected ~" << expected_wcss << ")";
 
     // WCSS shouldn't be drastically lower (would indicate a bug or wrong test setup)
-    float wcss_lower_bound = expected_wcss * 0.5f; // 50% lower is suspicious
+    float wcss_lower_bound = expected_wcss * 0.5f;
     EXPECT_GE(final_wcss, wcss_lower_bound)
         << "WCSS suspiciously low (k=" << n_clusters << ", d=" << d << "): " << final_wcss << " < "
         << wcss_lower_bound << " (expected ~" << expected_wcss << ")";
 
-    // Test 3: All iteration stats should have valid values
+    // All iteration stats should have valid values
     for (size_t i = 0; i < stats.size(); ++i) {
         EXPECT_EQ(stats[i].iteration, i + 1) << "Iteration number mismatch at index " << i;
         EXPECT_GT(stats[i].objective, 0.0f) << "WCSS should be positive at iteration " << (i + 1);
@@ -195,19 +176,18 @@ TEST_P(WCSSTest, MonotonicallyDecreases_AndMatchesGroundTruth) {
             << "Shift is not finite at iteration " << (i + 1);
     }
 
-    // Test 4: Verify centroids are valid
+    // Verify centroids are valid
     EXPECT_EQ(centroids.size(), n_clusters * d) << "Centroid size mismatch";
     for (size_t i = 0; i < centroids.size(); ++i) {
         EXPECT_TRUE(std::isfinite(centroids[i])) << "Centroid value not finite at index " << i;
     }
 
-    // Test 5: Verify is_gemm_only flag is correct
+    // Verify is_gemm_only flag is correct
     // When d < DIMENSION_THRESHOLD_FOR_PRUNING or n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING,
     // all iterations after the first should use GEMM-only (no pruning)
     bool should_use_gemm_only = (d < skmeans::DIMENSION_THRESHOLD_FOR_PRUNING) ||
                                 (n_clusters <= skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING);
     if (should_use_gemm_only && stats.size() > 1) {
-        // Check that iteration 2 onwards has is_gemm_only = true
         for (size_t i = 1; i < stats.size(); ++i) {
             EXPECT_TRUE(stats[i].is_gemm_only)
                 << "Expected is_gemm_only=true for iteration " << (i + 1)
@@ -217,7 +197,6 @@ TEST_P(WCSSTest, MonotonicallyDecreases_AndMatchesGroundTruth) {
     }
 }
 
-// Generate test combinations
 INSTANTIATE_TEST_SUITE_P(
     WCSSParameterized,
     WCSSTest,

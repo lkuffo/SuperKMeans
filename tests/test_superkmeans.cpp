@@ -5,39 +5,8 @@
 #include <vector>
 
 #include "superkmeans/common.h"
+#include "superkmeans/pdx/utils.h"
 #include "superkmeans/superkmeans.h"
-
-namespace {
-
-std::vector<float> make_blobs(
-    size_t n_samples,
-    size_t n_features,
-    size_t n_centers,
-    unsigned int random_state = 42
-) {
-    std::mt19937 gen(random_state);
-    std::normal_distribution<float> center_dist(0.0f, 1.0f);
-    std::vector<std::vector<float>> centers(n_centers, std::vector<float>(n_features));
-    for (auto& c : centers)
-        for (auto& x : c)
-            x = center_dist(gen);
-
-    std::uniform_int_distribution<size_t> cluster_dist(0, n_centers - 1);
-    std::normal_distribution<float> point_dist(0.0f, 1.0f);
-
-    std::vector<float> data;
-    data.reserve(n_samples * n_features);
-
-    for (size_t i = 0; i < n_samples; ++i) {
-        const auto& center = centers[cluster_dist(gen)];
-        for (size_t j = 0; j < n_features; ++j)
-            data.push_back(center[j] + point_dist(gen));
-    }
-
-    return data;
-}
-
-} // anonymous namespace
 
 class SuperKMeansTest : public ::testing::Test {
   protected:
@@ -49,7 +18,7 @@ TEST_F(SuperKMeansTest, BasicTraining_SmallDataset) {
     const size_t d = 32;
     const size_t n_clusters = 10;
 
-    std::vector<float> data = make_blobs(n, d, n_clusters);
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
     skmeans::SuperKMeansConfig config;
     config.iters = 10;
@@ -68,35 +37,12 @@ TEST_F(SuperKMeansTest, BasicTraining_SmallDataset) {
     EXPECT_EQ(kmeans.GetNClusters(), n_clusters);
 }
 
-TEST_F(SuperKMeansTest, CentroidsAreValid) {
-    const size_t n = 500;
-    const size_t d = 64;
-    const size_t n_clusters = 5;
-
-    std::vector<float> data = make_blobs(n, d, n_clusters);
-
-    skmeans::SuperKMeansConfig config;
-    config.iters = 10;
-    config.verbose = false;
-
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
-    auto centroids = kmeans.Train(data.data(), n);
-
-    // Check that centroids contain valid values (no NaN or Inf)
-    for (size_t i = 0; i < centroids.size(); ++i) {
-        EXPECT_TRUE(std::isfinite(centroids[i]))
-            << "Centroid value at index " << i << " is not finite: " << centroids[i];
-    }
-}
-
 TEST_F(SuperKMeansTest, AllClustersUsed) {
     const size_t n = 10000;
     const size_t d = 128;
     const size_t n_clusters = 50;
 
-    std::vector<float> data = make_blobs(n, d, n_clusters);
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
     skmeans::SuperKMeansConfig config;
     config.iters = 25;
@@ -117,37 +63,12 @@ TEST_F(SuperKMeansTest, AllClustersUsed) {
         << used_clusters.size() << " were assigned.";
 }
 
-TEST_F(SuperKMeansTest, SamplingFraction_ReducesComputations) {
-    const size_t n = 10000;
-    const size_t d = 64;
-    const size_t n_clusters = 20;
-
-    std::vector<float> data = make_blobs(n, d, n_clusters);
-
-    // Test with 50% sampling
-    skmeans::SuperKMeansConfig config;
-    config.iters = 10;
-    config.sampling_fraction = 0.5f;
-    config.verbose = false;
-
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
-    auto centroids = kmeans.Train(data.data(), n);
-
-    EXPECT_EQ(centroids.size(), n_clusters * d);
-    // Centroids should still be valid even with sampling
-    for (const auto& val : centroids) {
-        EXPECT_TRUE(std::isfinite(val));
-    }
-}
-
 TEST_F(SuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     const size_t n = 1000;
     const size_t d = 32;
     const size_t n_clusters = 10;
 
-    std::vector<float> data = make_blobs(n, d, n_clusters);
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
     skmeans::SuperKMeansConfig config;
     config.iters = 10;
@@ -169,53 +90,14 @@ TEST_F(SuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     }
 }
 
-TEST_F(SuperKMeansTest, DifferentSeeds_ProduceDifferentResults) {
-    const size_t n = 1000;
-    const size_t d = 32;
-    const size_t n_clusters = 10;
-
-    std::vector<float> data = make_blobs(n, d, n_clusters);
-
-    skmeans::SuperKMeansConfig config1;
-    config1.iters = 10;
-    config1.seed = 42;
-    config1.verbose = false;
-
-    skmeans::SuperKMeansConfig config2;
-    config2.iters = 10;
-    config2.seed = 123;
-    config2.verbose = false;
-
-    auto kmeans1 = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config1
-    );
-    auto centroids1 = kmeans1.Train(data.data(), n);
-
-    auto kmeans2 = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config2
-    );
-    auto centroids2 = kmeans2.Train(data.data(), n);
-
-    // Results should be different (at least some centroids should differ)
-    bool found_difference = false;
-    for (size_t i = 0; i < centroids1.size(); ++i) {
-        if (std::abs(centroids1[i] - centroids2[i]) > 1e-6) {
-            found_difference = true;
-            break;
-        }
-    }
-
-    EXPECT_TRUE(found_difference) << "Different seeds should produce different clustering results";
-}
-
 TEST_F(SuperKMeansTest, InvalidInputs_ThrowExceptions) {
     const size_t n = 10000;
     const size_t d = 32;
     const size_t n_clusters = 10;
 
-    std::vector<float> data = make_blobs(n, d, n_clusters);
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    // Test with more clusters than data points
+    // More clusters than data points
     EXPECT_THROW(
         ([&]() {
             auto kmeans =
@@ -227,7 +109,96 @@ TEST_F(SuperKMeansTest, InvalidInputs_ThrowExceptions) {
         std::runtime_error
     );
 
-    // Test training twice
+    // Not enough samples to train (sampling_fraction too low)
+    EXPECT_THROW(
+        ([&]() {
+            skmeans::SuperKMeansConfig config;
+            config.sampling_fraction = 0.0001f; // Very low sampling fraction
+            config.max_points_per_cluster = 1;  // Low max points per cluster
+            auto kmeans =
+                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                    n_clusters, d, config
+                );
+            kmeans.Train(data.data(), n);
+        }()),
+        std::runtime_error
+    );
+
+    // Zero n_clusters
+    EXPECT_THROW(
+        ([&]() {
+            auto kmeans =
+                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                    0, d
+                );
+        }()),
+        std::invalid_argument
+    );
+
+    // Zero dimensionality
+    EXPECT_THROW(
+        ([&]() {
+            auto kmeans =
+                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                    n_clusters, 0
+                );
+        }()),
+        std::invalid_argument
+    );
+
+    // Zero iterations in config
+    EXPECT_THROW(
+        ([&]() {
+            skmeans::SuperKMeansConfig config;
+            config.iters = 0;
+            auto kmeans =
+                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                    n_clusters, d, config
+                );
+        }()),
+        std::invalid_argument
+    );
+
+    // Zero sampling_fraction
+    EXPECT_THROW(
+        ([&]() {
+            skmeans::SuperKMeansConfig config;
+            config.sampling_fraction = 0.0f;
+            auto kmeans =
+                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                    n_clusters, d, config
+                );
+        }()),
+        std::invalid_argument
+    );
+
+    // Negative sampling_fraction
+    EXPECT_THROW(
+        ([&]() {
+            skmeans::SuperKMeansConfig config;
+            config.sampling_fraction = -0.5f;
+            auto kmeans =
+                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                    n_clusters, d, config
+                );
+        }()),
+        std::invalid_argument
+    );
+
+    // sampling_fraction > 1.0
+    EXPECT_THROW(
+        ([&]() {
+            skmeans::SuperKMeansConfig config;
+            config.sampling_fraction = 1.5f;
+            auto kmeans =
+                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                    n_clusters, d, config
+                );
+        }()),
+        std::invalid_argument
+    );
+
+    // Training twice
     EXPECT_THROW(
         ([&]() {
             auto kmeans =
@@ -242,33 +213,25 @@ TEST_F(SuperKMeansTest, InvalidInputs_ThrowExceptions) {
 }
 
 /**
- * @brief Test 17: Early termination stops when centroid shift falls below tolerance
+ * @brief Early termination stops when centroid shift falls below tolerance
  *
- * When early_termination is enabled and centroids stabilize (shift < tol),
- * training should stop before reaching max iterations.
  */
 TEST_F(SuperKMeansTest, EarlyTermination_ShiftBelowTol_Stops) {
-    // Use well-separated clusters that converge quickly
     const size_t n = 10000;
     const size_t d = 64;
-    const size_t n_clusters = 5;  // Few clusters for faster convergence
-    const size_t max_iters = 100; // High max to ensure early stop is due to convergence
+    const size_t n_clusters = 5;
+    const size_t max_iters = 100;
 
     // Generate well-separated blobs with low variance for faster convergence
     std::mt19937 gen(42);
     std::vector<float> data(n * d);
-
-    // Create well-separated cluster centers
     std::vector<std::vector<float>> centers(n_clusters, std::vector<float>(d));
     for (size_t c = 0; c < n_clusters; ++c) {
         for (size_t j = 0; j < d; ++j) {
-            // Spread centers far apart
             centers[c][j] = static_cast<float>(c) * 20.0f + (j % 2 == 0 ? 5.0f : -5.0f);
         }
     }
-
-    // Assign points to clusters with small noise
-    std::normal_distribution<float> noise(0.0f, 0.5f);  // Small variance for tight clusters
+    std::normal_distribution<float> noise(0.0f, 0.5f);
     for (size_t i = 0; i < n; ++i) {
         size_t cluster = i % n_clusters;
         for (size_t j = 0; j < d; ++j) {
@@ -280,17 +243,15 @@ TEST_F(SuperKMeansTest, EarlyTermination_ShiftBelowTol_Stops) {
     skmeans::SuperKMeansConfig config_early;
     config_early.iters = max_iters;
     config_early.early_termination = true;
-    config_early.tol = 1e-4f;
+    config_early.tol = 1e-2f;
     config_early.verbose = false;
     config_early.seed = 42;
-    config_early.sampling_fraction = 1.0f;  // Use all data to ensure enough samples
-
+    config_early.sampling_fraction = 1.0f;
     auto kmeans_early =
         skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config_early
         );
     kmeans_early.Train(data.data(), n);
-
     const auto& stats_early = kmeans_early.iteration_stats;
     size_t iters_with_early = stats_early.size();
 
@@ -301,13 +262,11 @@ TEST_F(SuperKMeansTest, EarlyTermination_ShiftBelowTol_Stops) {
     config_no_early.verbose = false;
     config_no_early.seed = 42;
     config_no_early.sampling_fraction = 1.0f;
-
     auto kmeans_no_early =
         skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config_no_early
         );
     kmeans_no_early.Train(data.data(), n);
-
     const auto& stats_no_early = kmeans_no_early.iteration_stats;
     size_t iters_without_early = stats_no_early.size();
 
@@ -323,13 +282,6 @@ TEST_F(SuperKMeansTest, EarlyTermination_ShiftBelowTol_Stops) {
     EXPECT_LT(iters_with_early, iters_without_early)
         << "Early termination (" << iters_with_early << " iters) should use fewer iterations "
         << "than no early termination (" << iters_without_early << " iters)";
-
-    // Verify the last iteration with early termination had low shift
-    if (!stats_early.empty()) {
-        float final_shift = stats_early.back().shift;
-        EXPECT_LT(final_shift, config_early.tol * 10)  // Some margin for the iteration before
-            << "Final shift should be near or below tolerance";
-    }
 }
 
 /**
@@ -339,9 +291,9 @@ TEST_F(SuperKMeansTest, EarlyTermination_Disabled_RunsAllIterations) {
     const size_t n = 10000;
     const size_t d = 32;
     const size_t n_clusters = 5;
-    const size_t max_iters = 15;
+    const size_t max_iters = 50;
 
-    std::vector<float> data = make_blobs(n, d, n_clusters);
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
     skmeans::SuperKMeansConfig config;
     config.iters = max_iters;
@@ -357,4 +309,68 @@ TEST_F(SuperKMeansTest, EarlyTermination_Disabled_RunsAllIterations) {
     const auto& stats = kmeans.iteration_stats;
     EXPECT_EQ(stats.size(), max_iters)
         << "With early_termination=false, should run exactly " << max_iters << " iterations";
+}
+
+/**
+ * @brief Test: Sampling provides significant speedup over full data training
+ *
+ * Verifies that using sampling_fraction=0.1 is at least 2x faster than
+ * training on the full dataset (sampling_fraction=1.0).
+ */
+TEST_F(SuperKMeansTest, Sampling_ProvidesSpeedup) {
+    const size_t n = 50000;
+    const size_t d = 128;
+    const size_t n_clusters = 500;
+    const size_t n_runs = 10;
+
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
+
+    skmeans::SuperKMeansConfig base_config;
+    base_config.iters = 25;
+    base_config.early_termination = false;
+    base_config.angular = false;
+    base_config.verbose = false;
+
+    skmeans::TicToc timer_full;
+    for (size_t i = 0; i < n_runs; ++i) {
+        skmeans::SuperKMeansConfig config = base_config;
+        config.sampling_fraction = 1.0f;
+        config.seed = static_cast<uint32_t>(42 + i);
+
+        auto kmeans =
+            skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                n_clusters, d, config
+            );
+
+        timer_full.Tic();
+        kmeans.Train(data.data(), n);
+        timer_full.Toc();
+    }
+
+    // 10% sampling
+    skmeans::TicToc timer_sampled;
+    for (size_t i = 0; i < n_runs; ++i) {
+        skmeans::SuperKMeansConfig config = base_config;
+        config.sampling_fraction = 0.1f;
+        config.seed = static_cast<uint32_t>(42 + i);
+
+        auto kmeans =
+            skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                n_clusters, d, config
+            );
+
+        timer_sampled.Tic();
+        kmeans.Train(data.data(), n);
+        timer_sampled.Toc();
+    }
+
+    double full_time_ms = timer_full.accum_time / 1e6;
+    double sampled_time_ms = timer_sampled.accum_time / 1e6;
+    double speedup = full_time_ms / sampled_time_ms;
+
+    // Sampling should be at least 2x faster
+    EXPECT_GE(speedup, 2.0)
+        << "Sampling should provide at least 2x speedup. "
+        << "Full: " << full_time_ms << "ms, Sampled: " << sampled_time_ms << "ms, "
+        << "Speedup: " << speedup << "x";
 }

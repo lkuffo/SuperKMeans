@@ -1,14 +1,3 @@
-/**
- * @file test_rotation.cpp
- * @brief Tests for ADSamplingPruner rotation functionality
- *
- * Tests cover:
- * - Rotate/Unrotate inverse property
- * - Norm preservation (orthogonal transformation property)
- * - Inner product preservation (orthogonal transformation property)
- * - Both orthonormal matrix (d < 512) and DCT (d >= 512) rotation methods
- */
-
 #include <cmath>
 #include <gtest/gtest.h>
 #include <omp.h>
@@ -16,22 +5,11 @@
 #include <vector>
 
 #include "superkmeans/common.h"
+#include "superkmeans/distance_computers/scalar_computers.h"
 #include "superkmeans/pdx/adsampling.h"
+#include "superkmeans/pdx/utils.h"
 
 namespace {
-
-/**
- * @brief Generate random vectors for testing
- */
-std::vector<float> GenerateRandomVectors(size_t n, size_t d, unsigned int seed = 42) {
-    std::vector<float> output(n * d);
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (auto& val : output) {
-        val = dist(rng);
-    }
-    return output;
-}
 
 /**
  * @brief Compute L2 norm of a vector
@@ -48,11 +26,8 @@ float ComputeNorm(const float* v, size_t d) {
  * @brief Compute inner product of two vectors
  */
 float ComputeInnerProduct(const float* a, const float* b, size_t d) {
-    float dot = 0.0f;
-    for (size_t i = 0; i < d; ++i) {
-        dot += a[i] * b[i];
-    }
-    return dot;
+    return skmeans::ScalarComputer<skmeans::DistanceFunction::dp, skmeans::Quantization::f32>::
+        Horizontal(a, b, d);
 }
 
 /**
@@ -74,10 +49,6 @@ class RotationTest : public ::testing::Test {
     void SetUp() override { omp_set_num_threads(omp_get_max_threads()); }
 };
 
-// ============================================================================
-// Rotate/Unrotate Inverse Property Tests
-// ============================================================================
-
 /**
  * @brief Test that Rotate followed by Unrotate returns original vectors (low dim)
  */
@@ -85,7 +56,7 @@ TEST_F(RotationTest, RotateUnrotateInverse_LowDim) {
     const size_t d = 128;
     const size_t n = 100;
 
-    auto original = GenerateRandomVectors(n, d, 42);
+    auto original = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 42);
 
     skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 2.1f);
 
@@ -118,7 +89,7 @@ TEST_F(RotationTest, RotateUnrotateInverse_HighDim_DCT) {
     ASSERT_GE(d, skmeans::D_THRESHOLD_FOR_DCT_ROTATION)
         << "Test expects d >= D_THRESHOLD_FOR_DCT_ROTATION to use DCT rotation";
 
-    auto original = GenerateRandomVectors(n, d, 42);
+    auto original = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 42);
 
     skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 2.1f);
 
@@ -151,7 +122,7 @@ TEST_F(RotationTest, RotateUnrotateInverse_MultipleDimensions) {
     for (size_t d : dimensions) {
         SCOPED_TRACE("Testing d=" + std::to_string(d) + " (" + GetRotationMethod(d) + ")");
 
-        auto original = GenerateRandomVectors(n, d, 42);
+        auto original = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 42);
 
         skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 2.1f);
 
@@ -176,10 +147,6 @@ TEST_F(RotationTest, RotateUnrotateInverse_MultipleDimensions) {
     }
 }
 
-// ============================================================================
-// Test 12: Both DCT and Orthonormal preserve norms
-// ============================================================================
-
 /**
  * @brief Test that both rotation methods preserve vector L2 norms
  *
@@ -198,7 +165,7 @@ TEST_F(RotationTest, BothRotationMethodsPreserveNorms) {
     for (size_t d : orthonormal_dims) {
         SCOPED_TRACE("Testing orthonormal rotation d=" + std::to_string(d));
 
-        auto original = GenerateRandomVectors(n, d, 42);
+        auto original = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 42);
         skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 2.1f);
 
         std::vector<float> rotated(n * d);
@@ -220,7 +187,7 @@ TEST_F(RotationTest, BothRotationMethodsPreserveNorms) {
     for (size_t d : dct_dims) {
         SCOPED_TRACE("Testing DCT rotation d=" + std::to_string(d));
 
-        auto original = GenerateRandomVectors(n, d, 123);
+        auto original = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 123);
         skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 2.1f);
 
         std::vector<float> rotated(n * d);
@@ -238,10 +205,6 @@ TEST_F(RotationTest, BothRotationMethodsPreserveNorms) {
     }
 }
 
-// ============================================================================
-// Test 10: Rotation preserves inner products
-// ============================================================================
-
 /**
  * @brief Test that rotation preserves inner products between vectors
  *
@@ -253,19 +216,18 @@ TEST_F(RotationTest, BothRotationMethodsPreserveNorms) {
  */
 TEST_F(RotationTest, RotationPreservesInnerProducts) {
     std::vector<size_t> dimensions = {64, 128, 256, 512, 1024};
-    const size_t n = 30;  // Test n*(n-1)/2 pairs
+    const size_t n = 30;
 
     for (size_t d : dimensions) {
         SCOPED_TRACE("Testing d=" + std::to_string(d) + " (" + GetRotationMethod(d) + ")");
 
-        auto vectors = GenerateRandomVectors(n, d, 42);
+        auto vectors = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 42);
 
         skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 2.1f);
 
         std::vector<float> rotated(n * d);
         pruner.Rotate(vectors.data(), rotated.data(), n);
 
-        // Check inner products for all pairs
         for (size_t i = 0; i < n; ++i) {
             for (size_t j = i + 1; j < n; ++j) {
                 const float* vi_orig = vectors.data() + i * d;
@@ -305,7 +267,7 @@ TEST_F(RotationTest, RotationPreservesDistances) {
     for (size_t d : dimensions) {
         SCOPED_TRACE("Testing d=" + std::to_string(d) + " (" + GetRotationMethod(d) + ")");
 
-        auto vectors = GenerateRandomVectors(n, d, 42);
+        auto vectors = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 42);
 
         skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 2.1f);
 
@@ -342,10 +304,6 @@ TEST_F(RotationTest, RotationPreservesDistances) {
     }
 }
 
-// ============================================================================
-// Edge cases and additional tests
-// ============================================================================
-
 /**
  * @brief Test rotation with a single vector
  */
@@ -353,7 +311,7 @@ TEST_F(RotationTest, SingleVector) {
     std::vector<size_t> dimensions = {64, 512, 1024};
 
     for (size_t d : dimensions) {
-        auto original = GenerateRandomVectors(1, d, 42);
+        auto original = skmeans::GenerateRandomVectors(1, d, -1.0f, 1.0f, 42);
 
         skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 2.1f);
 
@@ -379,7 +337,7 @@ TEST_F(RotationTest, DifferentSeedsProduceDifferentRotations) {
     const size_t d = 256;
     const size_t n = 10;
 
-    auto original = GenerateRandomVectors(n, d, 42);
+    auto original = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 42);
 
     skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner1(d, 2.1f, 42);
     skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner2(d, 2.1f, 123);
@@ -410,7 +368,7 @@ TEST_F(RotationTest, SameSeedProducesIdenticalRotations) {
     const size_t d = 256;
     const size_t n = 10;
 
-    auto original = GenerateRandomVectors(n, d, 42);
+    auto original = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 42);
 
     skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner1(d, 2.1f, 42);
     skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner2(d, 2.1f, 42);
