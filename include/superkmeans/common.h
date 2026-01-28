@@ -81,6 +81,7 @@ static inline constexpr size_t VECTOR_CHUNK_SIZE = Y_BATCH_SIZE;
 
 static inline constexpr size_t RECALL_CONVERGENCE_PATIENCE = 2;
 static inline constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
+// Epsilon parameter of ADSampling (Reference: https://dl.acm.org/doi/abs/10.1145/3589282)
 static inline constexpr float PRUNER_INITIAL_THRESHOLD = 1.5f;
 
 static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[19] =

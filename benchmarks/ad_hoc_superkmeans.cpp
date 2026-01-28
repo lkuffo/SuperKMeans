@@ -81,7 +81,7 @@ int main(int argc, char* argv[]) {
     config.early_termination = false;
     config.sampling_fraction = sampling_fraction;
     config.use_blas_only = false;
-    config.early_termination = true;
+    config.early_termination = false;
     config.tol = 1e-3f;
 
     auto is_angular = std::find(bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset);
@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
     bench_utils::TicToc timer;
     timer.Tic();
     std::vector<float> centroids = kmeans_state.Train(
-        data.data(), n
+        data.data(), n, queries.data(), n_queries
     );
     timer.Toc();
     double construction_time_ms = timer.GetMilliseconds();
