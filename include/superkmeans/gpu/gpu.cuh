@@ -72,7 +72,7 @@ class StreamPool {
         for (size_t i{0}; i < size(); ++i) {
             streams[i].synchronize();
         }
-		}
+    }
 
     gpu::ManagedCudaStream& operator[](const size_t index) {
         assert(index < size());
@@ -139,7 +139,11 @@ class DeviceBuffer {
         ));
     }
 
-    void copy_to_device_at_offset(const T* host_ptr, const std::size_t size, const std::size_t offset) {
+    void copy_to_device_at_offset(
+        const T* host_ptr,
+        const std::size_t size,
+        const std::size_t offset
+    ) {
         CUDA_SAFE_CALL(cudaMemcpyAsync(
             reinterpret_cast<void*>(_dev_ptr) + offset,
             reinterpret_cast<const void*>(host_ptr),
@@ -234,7 +238,7 @@ class BatchedMatrixMultiplier {
     ManagedCublasHandle _cublas_handle;
 };
 
-template<typename norms_t>
+template <typename norms_t>
 struct StreamBuffers {
     cudaStream_t stream;
     gpu::DeviceBuffer<norms_t> all_distances_buf_dev;
@@ -253,7 +257,7 @@ struct StreamBuffers {
           multiplier(stream) {}
 };
 
-template<typename norms_t>
+template <typename norms_t>
 static std::vector<StreamBuffers<norms_t>> make_stream_buffers(StreamPool& pool, size_t d) {
     const int32_t n = pool.size();
 
@@ -281,6 +285,7 @@ class GPUDeviceContext {
     DeviceBuffer<distance_t> out_distances;
     DeviceBuffer<size_t> out_not_pruned_counts;
     std::vector<StreamBuffers<norms_t>> stream_buffers;
+    bool loaded_x_data = false;
 
     // Stopwatch sw = Stopwatch("GPUDeviceContext");
 

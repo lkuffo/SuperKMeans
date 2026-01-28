@@ -286,7 +286,8 @@ class SuperKMeans {
 
         // Special path for low-dimensional data or when use_blas_only is enabled: use BLAS-only for
         // all iterations
-        if (_d < 128 || _config.use_blas_only || _n_clusters <= 128) {
+				bool use_blase_only = _d < 128 || _config.use_blas_only || _n_clusters <= 128;
+        if (use_blase_only) {
             for (; iter_idx < _config.iters; ++iter_idx) {
                 // After swap: _prev_centroids has old centroids, _horizontal_centroids will be
                 // zeroed for accumulation
@@ -559,10 +560,24 @@ class SuperKMeans {
             _distances.data(),
             all_distances
         );
-        std::fill(_horizontal_centroids.begin(), _horizontal_centroids.end(), 0.0);
-        std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
-        _cost = 0.0;
-        UpdateCentroids(data);
+
+				bool should_use_cpu = false;
+				if (should_use_cpu) {
+					std::fill(_horizontal_centroids.begin(), _horizontal_centroids.end(), 0.0);
+					std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
+					UpdateCentroidsFunctional(data, _n_clusters, _n_samples, _assignments.data(), 
+							_cluster_sizes.data(), _horizontal_centroids.data(), _d);
+				} else {
+					gpu::DeviceBuffer<uint32_t> cluster_sizes_dev(gpu::compute_buffer_size<uint32_t>(_n_clusters), gpu_device_context.main_stream.get());
+					gpu::DeviceBuffer<centroid_value_t> horizontal_centroids_dev(gpu::compute_buffer_size<centroid_value_t>(_n_clusters * _d), gpu_device_context.main_stream.get());
+					kernels::GPUUpdateCentroids(gpu_device_context.x.get(), _n_clusters, _n_samples, 
+							gpu_device_context.out_knn.get(), 
+							cluster_sizes_dev.get(), horizontal_centroids_dev.get(), _d, gpu_device_context.main_stream.get());
+
+					cluster_sizes_dev.copy_to_host(_cluster_sizes.data());
+					horizontal_centroids_dev.copy_to_host(_horizontal_centroids.data());
+					gpu_device_context.main_stream.synchronize();
+				}
     }
 
     /**
@@ -604,19 +619,25 @@ class SuperKMeans {
             _initial_partial_d,
             out_not_pruned_counts
         );
-        // std::fill(_horizontal_centroids.begin(), _horizontal_centroids.end(), 0.0);
-        // std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
-        // UpdateCentroidsFunctional(data, _n_clusters, _n_samples, _assignments.data(), 
-				// 		_cluster_sizes.data(), _horizontal_centroids.data(), _d);
-				gpu::DeviceBuffer<uint32_t> cluster_sizes_dev(gpu::compute_buffer_size<uint32_t>(_n_clusters), gpu_device_context.main_stream.get());
-				gpu::DeviceBuffer<centroid_value_t> horizontal_centroids_dev(gpu::compute_buffer_size<centroid_value_t>(_n_clusters * _d), gpu_device_context.main_stream.get());
-				kernels::GPUUpdateCentroids(gpu_device_context.x.get(), _n_clusters, _n_samples, 
-						gpu_device_context.out_knn.get(), 
-				 		cluster_sizes_dev.get(), horizontal_centroids_dev.get(), _d, gpu_device_context.main_stream.get());
 
-				cluster_sizes_dev.copy_to_host(_cluster_sizes.data());
-				horizontal_centroids_dev.copy_to_host(_horizontal_centroids.data());
-				gpu_device_context.main_stream.synchronize();
+				bool should_use_cpu = false;
+				if (should_use_cpu) {
+					std::fill(_horizontal_centroids.begin(), _horizontal_centroids.end(), 0.0);
+					std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
+					UpdateCentroidsFunctional(data, _n_clusters, _n_samples, _assignments.data(), 
+							_cluster_sizes.data(), _horizontal_centroids.data(), _d);
+				} else {
+					gpu::DeviceBuffer<uint32_t> cluster_sizes_dev(gpu::compute_buffer_size<uint32_t>(_n_clusters), gpu_device_context.main_stream.get());
+					gpu::DeviceBuffer<centroid_value_t> horizontal_centroids_dev(gpu::compute_buffer_size<centroid_value_t>(_n_clusters * _d), gpu_device_context.main_stream.get());
+					kernels::GPUUpdateCentroids(gpu_device_context.x.get(), _n_clusters, _n_samples, 
+							gpu_device_context.out_knn.get(), 
+							cluster_sizes_dev.get(), horizontal_centroids_dev.get(), _d, gpu_device_context.main_stream.get());
+
+					cluster_sizes_dev.copy_to_host(_cluster_sizes.data());
+					horizontal_centroids_dev.copy_to_host(_horizontal_centroids.data());
+					gpu_device_context.main_stream.synchronize();
+				}
+
     }
 
     /**
@@ -665,7 +686,6 @@ class SuperKMeans {
 				const size_t n_samples,
 				const uint32_t* SKM_RESTRICT assignments, uint32_t* SKM_RESTRICT cluster_sizes, 
 				centroid_value_t* SKM_RESTRICT horizontal_centroids, size_t d) {
-			printf("UpdateCentroidsFunctional\n");
 #pragma omp parallel num_threads(_n_threads)
         {
             uint32_t nt = _n_threads;
