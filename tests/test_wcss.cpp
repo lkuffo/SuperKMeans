@@ -197,6 +197,100 @@ TEST_P(WCSSTest, MonotonicallyDecreases_AndMatchesGroundTruth) {
     }
 }
 
+/**
+ * @brief Test that WCSS with BLAS-only mode (no pruning) monotonically decreases
+ * and matches expected ground truth values (within 1% tolerance).
+ *
+ */
+TEST_P(WCSSTest, BlasOnly_MonotonicallyDecreases_AndMatchesGroundTruth) {
+    auto [n_clusters, d] = GetParam();
+
+    if (n_clusters > N_SAMPLES) {
+        GTEST_SKIP() << "Skipping: n_clusters (" << n_clusters << ") > n_samples (" << N_SAMPLES
+                     << ")";
+    }
+
+    std::vector<float> data =
+        skmeans::MakeBlobs(N_SAMPLES, d, N_TRUE_CENTERS, false, CLUSTER_STD, CENTER_SPREAD, SEED);
+
+    ASSERT_EQ(data.size(), N_SAMPLES * d) << "Data size mismatch";
+
+    // Same config as default test, but with use_blas_only=true
+    skmeans::SuperKMeansConfig config;
+    config.iters = N_ITERS;
+    config.verbose = false;
+    config.seed = SEED;
+    config.early_termination = false;
+    config.sampling_fraction = 1.0f;
+    config.min_not_pruned_pct = 0.03f;
+    config.max_not_pruned_pct = 0.05f;
+    config.adjustment_factor_for_partial_d = 0.20f;
+    config.angular = false;
+    config.use_blas_only = true; // Enable BLAS-only mode (no pruning)
+
+    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        n_clusters, d, config
+    );
+    auto centroids = kmeans.Train(data.data(), N_SAMPLES);
+    const auto& stats = kmeans.iteration_stats;
+    ASSERT_GE(stats.size(), 1) << "Expected at least 1 iteration recorded";
+
+    for (size_t i = 1; i < stats.size(); ++i) {
+        float prev_wcss = stats[i - 1].objective;
+        float curr_wcss = stats[i].objective;
+        float tolerance = prev_wcss * 1e-6f;
+        EXPECT_LE(curr_wcss, prev_wcss + tolerance)
+            << "WCSS increased at iteration " << (i + 1) << " [BLAS-only mode]: "
+            << prev_wcss << " -> " << curr_wcss
+            << " (n_clusters=" << n_clusters << ", d=" << d << ")";
+    }
+
+    auto key = std::make_pair(n_clusters, d);
+    auto it = GROUND_TRUTH.find(key);
+    ASSERT_NE(it, GROUND_TRUTH.end()) << "No ground truth for k=" << n_clusters << ", d=" << d;
+
+    float expected_wcss = it->second;
+    float final_wcss = stats.back().objective;
+    float wcss_upper_bound = expected_wcss * (1.0f + TOLERANCE);
+    EXPECT_LE(final_wcss, wcss_upper_bound)
+        << "WCSS too high [BLAS-only mode] (k=" << n_clusters << ", d=" << d << "): "
+        << final_wcss << " > " << wcss_upper_bound << " (expected ~" << expected_wcss << ")";
+
+    // WCSS shouldn't be drastically lower
+    float wcss_lower_bound = expected_wcss * 0.5f;
+    EXPECT_GE(final_wcss, wcss_lower_bound)
+        << "WCSS suspiciously low [BLAS-only mode] (k=" << n_clusters << ", d=" << d << "): "
+        << final_wcss << " < " << wcss_lower_bound << " (expected ~" << expected_wcss << ")";
+
+    // All iteration stats should have valid values
+    for (size_t i = 0; i < stats.size(); ++i) {
+        EXPECT_EQ(stats[i].iteration, i + 1) << "Iteration number mismatch at index " << i;
+        EXPECT_GT(stats[i].objective, 0.0f)
+            << "WCSS should be positive at iteration " << (i + 1);
+        EXPECT_TRUE(std::isfinite(stats[i].objective))
+            << "WCSS is not finite at iteration " << (i + 1);
+        EXPECT_TRUE(std::isfinite(stats[i].shift))
+            << "Shift is not finite at iteration " << (i + 1);
+    }
+
+    // Verify centroids are valid
+    EXPECT_EQ(centroids.size(), n_clusters * d) << "Centroid size mismatch";
+    for (size_t i = 0; i < centroids.size(); ++i) {
+        EXPECT_TRUE(std::isfinite(centroids[i]))
+            << "Centroid value not finite at index " << i;
+    }
+
+    // Verify that all iterations after the first use GEMM-only when use_blas_only=true
+    // (First iteration uses FirstAssignAndUpdateCentroids which doesn't set is_gemm_only)
+    if (stats.size() > 1) {
+        for (size_t i = 1; i < stats.size(); ++i) {
+            EXPECT_TRUE(stats[i].is_gemm_only)
+                << "Expected is_gemm_only=true for iteration " << (i + 1)
+                << " when use_blas_only=true (k=" << n_clusters << ", d=" << d << ")";
+        }
+    }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     WCSSParameterized,
     WCSSTest,

@@ -1,3 +1,11 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = [
+#   "numpy",
+#   "h5py",
+# ]
+# ///
+
 import numpy as np
 import os
 import h5py
@@ -15,19 +23,7 @@ def read_hdf5_data(dataset):
     hdf5_file = h5py.File(hdf5_file_name, "r")
     return np.array(hdf5_file["train"], dtype=np.float32), np.array(hdf5_file["test"], dtype=np.float32)
 
-
 if __name__ == "__main__":
-    # num_dimensions = 987
-    # num_dimensions = 1024
-    # num_vectors = 262144
-    # num_centroids = 2048
-    #
-    # print(f'Bench gen: \n- D={num_dimensions}\n- num_centroids={num_centroids}\n- dataset=RANDOM')
-    # data, _ = sklearn.datasets.make_blobs(n_samples=num_vectors, n_features=num_dimensions, centers=num_centroids, random_state=1)
-    # data = data.astype(np.float32)
-    #
-    # data.tofile("./data/data_random.bin")
-
     # train, test = read_hdf5_data("glove-200-angular")
     # train = l2_normalize(train.astype(np.float32))
     # train.tofile("./data/data_glove200.bin")

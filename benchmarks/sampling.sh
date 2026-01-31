@@ -3,16 +3,15 @@
 # Sampling benchmark runner for SuperKMeans
 # Usage: ./sampling.sh [-b build_dir] [dataset1] [dataset2] ...
 #   -b build_dir: Build directory (default: ../cmake-build-release)
-#   datasets: Dataset names (default: mxbai wiki openai arxiv sift fmnist glove100 glove50 gist contriever)
+#   datasets: Dataset names (default: mxbai openai)
 #
 # Examples:
 #   ./sampling.sh                      # Run all datasets with default build dir
 #   ./sampling.sh mxbai openai         # Run only mxbai and openai
 #   ./sampling.sh -b ../build mxbai    # Run mxbai with custom build dir
 
-set -e  # Exit on error
+set -e
 
-# Default build directory
 BUILD_DIR="../cmake-build-release"
 
 # Parse flags

@@ -3,19 +3,17 @@
 # Pareto benchmark runner for SuperKMeans (grid search over n_iters and sampling_fraction)
 # Usage: ./pareto.sh [-b build_dir] [dataset1] [dataset2] ...
 #   -b build_dir: Build directory (default: ../cmake-build-release)
-#   datasets: Dataset names (default: mxbai wiki openai arxiv sift fmnist glove100 glove50 gist contriever)
+#   datasets: Dataset names (default: mxbai openai)
 #
 # Examples:
 #   ./pareto.sh                      # Run all datasets with default build dir
 #   ./pareto.sh mxbai openai         # Run only mxbai and openai
 #   ./pareto.sh -b ../build mxbai    # Run mxbai with custom build dir
 
-set -e  # Exit on error
+set -e
 
-# Default build directory
 BUILD_DIR="../cmake-build-release"
 
-# Parse flags
 while getopts "b:" opt; do
     case $opt in
         b)
@@ -28,28 +26,20 @@ while getopts "b:" opt; do
     esac
 done
 
-# Shift past the flags
 shift $((OPTIND-1))
 
-# Define datasets array
 if [ $# -gt 0 ]; then
-    # Use datasets from command line arguments
     DATASETS=("$@")
 else
-    # Default datasets
-    DATASETS=(mxbai openai wiki arxiv sift fmnist glove200 glove100 glove50 gist contriever)
+    DATASETS=(mxbai openai)
 fi
 
-# Get absolute paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Resolve BUILD_DIR to absolute path
 if [[ "$BUILD_DIR" = /* ]]; then
-    # Already absolute
     BUILD_DIR_ABS="$BUILD_DIR"
 else
-    # Relative to SCRIPT_DIR (where this script is located)
     BUILD_DIR_ABS="$(cd "$SCRIPT_DIR" && cd "$BUILD_DIR" && pwd)"
 fi
 
@@ -61,32 +51,24 @@ echo "Project root: $PROJECT_ROOT"
 echo "Datasets: ${DATASETS[*]}"
 echo "=========================================="
 echo ""
-
-# Build C++ benchmark
 echo "Building C++ benchmark..."
 cd "$BUILD_DIR_ABS"
 cmake --build . --target pareto_superkmeans.out -j
 echo "Build complete!"
 echo ""
 
-# Change to benchmarks directory so scripts can find data files
 cd "$SCRIPT_DIR"
 
-# Loop over datasets
 for DATASET in "${DATASETS[@]}"; do
     echo ""
     echo "########################################## "
     echo "# DATASET: $DATASET"
     echo "########################################## "
     echo ""
-
-    # Run benchmark
     echo "=========================================="
     echo "Running pareto benchmark for $DATASET..."
     echo "=========================================="
     echo ""
-
-    # SuperKMeans (C++) - Grid search over n_iters and sampling_fraction
     echo "----------------------------------------"
     echo "SuperKMeans Grid Search"
     echo "----------------------------------------"

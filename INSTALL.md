@@ -6,13 +6,10 @@ Looking for installation on GPU? We have an implementation (see `gpu_optimized` 
 - C++17, CMake 3.26
 - OpenMP
 - A BLAS implementation
+- Python 3 (only for Python bindings)
 
-> [!WARNING]
-> A proper BLAS implementation is **EXTREMELY** important for performance. The pre-installed BLAS in your Linux distribution or installing via `apt` is **SLOW**.
-
-* [Installing OpenMP](#installing-openmp)
-* [Installing BLAS](#installing-blas)
-* [Troubleshooting](#troubleshooting)
+> [!IMPORTANT]
+> A proper BLAS implementation is **EXTREMELY** important for performance. The pre-installed BLAS in your Linux distribution and OpenBLAS installed via `apt` are **SLOW**.
 
 Once you have these requirements, you can install Python Bindings or compile our C++ example code.
 
@@ -30,13 +27,17 @@ git submodule update --init
 
 # Compile
 cmake . 
-make simple_example.out
+make simple_example.cpp
 
 # Run
 cd examples
 ./simple_example
 ```
 
+## Step by Step
+* [Installing OpenMP](#installing-openmp)
+* [Installing BLAS](#installing-blas)
+* [Troubleshooting](#troubleshooting)
 
 ## Installing OpenMP
 
@@ -75,22 +76,24 @@ ldconfig
 
 ## Troubleshooting
 
-### SuperKMeans is slow on my Apple Silicon
+### Super K-Means is slow on my Apple Silicon
 If you previously installed OpenBLAS in your machine, the installation may be linking to OpenBLAS instead of Apple Accelerate. You can try forcing the linking of Apple Accelerate: 
 
 ```sh
 # C++
 cmake . -DBLAS_LIBRARIES=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Accelerate.framework
+make 
 
 # Python Installation
 pip install . -C cmake.args="-DBLAS_LIBRARIES=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Accelerate.framework"
 ```
 
-### SuperKMeans is slow even after installing OpenBlas from source in Linux
+### Super K-Means is slow even after installing OpenBlas from source in Linux
 Try forcing the linking to the OpenBlas you just installed. For example:
 ```sh
 # C++
 cmake . -DBLAS_LIBRARIES=/usr/local/lib/libopenblas_neoversev2p-r0.3.31.dev.so
+make 
 
 # Python Installation
 pip install . -C cmake.args="-DBLAS_LIBRARIES=/usr/local/lib/libopenblas_neoversev2p-r0.3.31.dev.so"
