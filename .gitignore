@@ -91,6 +91,8 @@ venv
 
 *.bin
 *.png
+!benchmarks/results/plots/github_1.png
+!benchmarks/results/plots/github_2.png
 *.eps
 
 _deps
