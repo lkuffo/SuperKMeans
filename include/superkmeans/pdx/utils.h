@@ -60,7 +60,6 @@ inline bool IsPowerOf2(const uint32_t x) {
  * Creates n_samples data points distributed around n_centers cluster centers.
  * Each center is randomly generated, and points are sampled from a Gaussian
  * distribution around their assigned center.
- * TODO(lkuffo, high): This function is extremely slow. Needs refactoring.
  *
  * @param n_samples Number of samples to generate
  * @param n_features Dimensionality of each sample
@@ -82,32 +81,39 @@ inline std::vector<float> MakeBlobs(
 ) {
     std::mt19937 gen(random_state);
     std::normal_distribution<float> center_dist(0.0f, center_spread);
-    std::vector<std::vector<float>> centers(n_centers, std::vector<float>(n_features));
-    for (auto& c : centers) {
-        for (auto& x : c) {
-            x = center_dist(gen);
-        }
+
+    // Flatten centers to single allocation for better cache locality
+    std::vector<float> centers(n_centers * n_features);
+    for (size_t i = 0; i < n_centers * n_features; ++i) {
+        centers[i] = center_dist(gen);
     }
+
     std::uniform_int_distribution<size_t> cluster_dist(0, n_centers - 1);
     std::normal_distribution<float> point_dist(0.0f, cluster_std);
-    std::vector<float> data;
-    data.reserve(n_samples * n_features);
+
+    std::vector<float> data(n_samples * n_features);
     for (size_t i = 0; i < n_samples; ++i) {
-        const auto& center = centers[cluster_dist(gen)];
+        size_t center_idx = cluster_dist(gen) * n_features;
+        float* row = &data[i * n_features];
+        const float* center = &centers[center_idx];
+
         for (size_t j = 0; j < n_features; ++j) {
-            data.push_back(center[j] + point_dist(gen));
+            row[j] = center[j] + point_dist(gen);
         }
     }
 
     if (normalize) {
         for (size_t i = 0; i < n_samples; ++i) {
+            float* row = &data[i * n_features];
             float norm_sq = 0.0f;
+
             for (size_t j = 0; j < n_features; ++j) {
-                norm_sq += data[i * n_features + j] * data[i * n_features + j];
+                norm_sq += row[j] * row[j];
             }
+
             float inv_norm = 1.0f / std::sqrt(norm_sq);
             for (size_t j = 0; j < n_features; ++j) {
-                data[i * n_features + j] *= inv_norm;
+                row[j] *= inv_norm;
             }
         }
     }
