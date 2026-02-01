@@ -57,9 +57,7 @@ int main(int argc, char* argv[]) {
     cp.max_points_per_centroid = 999999; // We don't want to take samples
     cp.nredo = 1;
     auto is_angular = std::find(
-        bench_utils::ANGULAR_DATASETS.begin(),
-        bench_utils::ANGULAR_DATASETS.end(),
-        dataset
+        bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
     );
     if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
         std::cout << "Using spherical k-means for dataset: " << dataset << std::endl;

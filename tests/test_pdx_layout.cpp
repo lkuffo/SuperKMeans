@@ -59,11 +59,9 @@ float AccessPDX(
  * 2. horizontal_d + vertical_d = d
  */
 TEST(PDXLayoutTest, DimensionSplit_CorrectForVariousDimensions) {
-    std::vector<size_t> dimensions = {
-        1, 2, 4, 8, 16, 32, 48, 63, 64, 65,
-        127, 128, 129, 191, 192, 193, 255, 256, 257,
-        384, 512, 600, 768, 900, 1024, 1536, 2048, 3072, 4096
-    };
+    std::vector<size_t> dimensions = {1,   2,   4,   8,   16,   32,   48,   63,   64,  65,
+                                      127, 128, 129, 191, 192,  193,  255,  256,  257, 384,
+                                      512, 600, 768, 900, 1024, 1536, 2048, 3072, 4096};
 
     for (size_t d : dimensions) {
         SCOPED_TRACE("Testing d=" + std::to_string(d));
@@ -72,8 +70,8 @@ TEST(PDXLayoutTest, DimensionSplit_CorrectForVariousDimensions) {
 
         // horizontal_d is a multiple of H_DIM_SIZE or 0
         EXPECT_TRUE(split.horizontal_d % skmeans::H_DIM_SIZE == 0 || split.horizontal_d == 0)
-            << "horizontal_d=" << split.horizontal_d
-            << " is not a multiple of " << skmeans::H_DIM_SIZE << " (or 0) for d=" << d;
+            << "horizontal_d=" << split.horizontal_d << " is not a multiple of "
+            << skmeans::H_DIM_SIZE << " (or 0) for d=" << d;
 
         // horizontal_d + vertical_d = d
         EXPECT_EQ(split.horizontal_d + split.vertical_d, d)
@@ -105,8 +103,7 @@ TEST(PDXLayoutTest, VerticalNeverZero) {
     for (size_t d : dimensions) {
         auto split = skmeans::PDXLayout<>::GetDimensionSplit(d);
 
-        EXPECT_GT(split.vertical_d, 0u)
-            << "vertical_d should never be zero for d=" << d;
+        EXPECT_GT(split.vertical_d, 0u) << "vertical_d should never be zero for d=" << d;
     }
 }
 
@@ -120,19 +117,18 @@ TEST(PDXLayoutTest, PDXify_PreservesAllValues) {
     constexpr size_t TEST_CHUNK_SIZE = 64;
 
     std::vector<size_t> dimensions = {128, 256, 384, 512};
-    const size_t n = TEST_CHUNK_SIZE * 2 + 17;  // 2 full chunks + partial
+    const size_t n = TEST_CHUNK_SIZE * 2 + 17; // 2 full chunks + partial
 
     for (size_t d : dimensions) {
         SCOPED_TRACE("Testing PDXify d=" + std::to_string(d) + ", n=" + std::to_string(n));
 
         auto split = skmeans::PDXLayout<>::GetDimensionSplit(d);
-        if (split.horizontal_d == 0) continue;
+        if (split.horizontal_d == 0)
+            continue;
         auto input = skmeans::GenerateRandomVectors(n, d, -10.0f, 10.0f, 42);
         std::vector<float> pdx_output(n * d);
 
-        skmeans::PDXLayout<>::PDXify<false, TEST_CHUNK_SIZE>(
-            input.data(), pdx_output.data(), n, d
-        );
+        skmeans::PDXLayout<>::PDXify<false, TEST_CHUNK_SIZE>(input.data(), pdx_output.data(), n, d);
 
         size_t full_chunks = n / TEST_CHUNK_SIZE;
         size_t remaining = n % TEST_CHUNK_SIZE;
@@ -182,9 +178,7 @@ TEST(PDXLayoutTest, PDXify_FullyTransposed) {
     }
 
     std::vector<float> pdx_output(n * d);
-    skmeans::PDXLayout<>::PDXify<true, TEST_CHUNK_SIZE>(
-        input.data(), pdx_output.data(), n, d
-    );
+    skmeans::PDXLayout<>::PDXify<true, TEST_CHUNK_SIZE>(input.data(), pdx_output.data(), n, d);
 
     // Full transpose: output should be column-major (d x n instead of n x d)
     for (size_t dim = 0; dim < d; ++dim) {
@@ -198,4 +192,3 @@ TEST(PDXLayoutTest, PDXify_FullyTransposed) {
 }
 
 } // namespace
-

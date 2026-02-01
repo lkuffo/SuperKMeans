@@ -3,7 +3,7 @@
 Looking for installation on GPU? We have an implementation (see `gpu_optimized` branch)! But the installation instructions are still WiP
 
 ### Super K-Means on CPU needs:
-- C++17, CMake 3.26
+- Clang 17, CMake 3.26
 - OpenMP
 - A BLAS implementation
 - Python 3 (only for Python bindings)

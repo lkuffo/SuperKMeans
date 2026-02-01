@@ -5,9 +5,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
-#include <iostream>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -88,9 +88,8 @@ const std::unordered_map<std::string, std::pair<size_t, size_t>> DATASET_PARAMS 
     {"cohere", {10000000, 1024}},
 };
 
-const std::vector<std::string> ANGULAR_DATASETS = {
-    "yandex", "glove200", "glove100", "glove50", "llama"
-};
+const std::vector<std::string> ANGULAR_DATASETS =
+    {"yandex", "glove200", "glove100", "glove50", "llama"};
 
 // Standard exploration fractions for recall computation
 const std::vector<float> EXPLORE_FRACTIONS = {0.001f,  0.002f,  0.003f,  0.004f,  0.005f,  0.006f,
@@ -107,19 +106,20 @@ const int MAX_ITERS = 25;
 const int N_QUERIES = 1000;
 
 // Early termination benchmark configuration
-const std::vector<float> RECALL_TOL_VALUES = {0.03f, 0.02f, 0.01f, 0.0075f, 0.005f, 0.0025f, 0.001f};
+const std::vector<float> RECALL_TOL_VALUES =
+    {0.03f, 0.02f, 0.01f, 0.0075f, 0.005f, 0.0025f, 0.001f};
 const std::vector<int> FAISS_EARLY_TERM_ITERS = {10};
 const int SCIKIT_EARLY_TERM_MAX_ITERS = 300;
 const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
 // Sampling fraction values for sampling experiment
 const std::vector<float> SAMPLING_FRACTION_VALUES = {
-    1.0f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f, 0.4f, 0.3f, 0.2f, 0.1f, 0.05f,
+    1.0f,  0.9f,  0.8f, 0.7f,  0.6f,    0.5f,   0.4f,    0.3f,   0.2f,    0.1f,   0.05f,
     0.04f, 0.03f, 0.02, 0.01f, 0.0075f, 0.005f, 0.0025f, 0.001f, 0.0005f, 0.0001f
 };
 
 // Iteration values for pareto experiment (grid search)
-const std::vector<int> PARETO_ITERS_VALUES = {1,  2,  3,  4,  5,  6,  7,  8,  9,  10};
+const std::vector<int> PARETO_ITERS_VALUES = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
 
 // n_clusters values for varying_k experiment
 const std::vector<int> VARYING_K_VALUES = {100, 1000, 10000, 100000};
@@ -439,8 +439,8 @@ inline void write_results_to_csv(
                              << (explore_frac * 100.0f);
                     csv_file << ",centroids_explored@" << knn << "@" << std::fixed
                              << std::setprecision(2) << (explore_frac * 100.0f);
-                    csv_file << ",vectors_explored@" << knn << "@" << std::fixed << std::setprecision(2)
-                             << (explore_frac * 100.0f);
+                    csv_file << ",vectors_explored@" << knn << "@" << std::fixed
+                             << std::setprecision(2) << (explore_frac * 100.0f);
                 }
             }
         }

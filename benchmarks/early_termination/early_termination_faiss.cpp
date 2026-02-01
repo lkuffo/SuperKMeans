@@ -67,9 +67,7 @@ int main(int argc, char* argv[]) {
         cp.nredo = 1;
 
         auto is_angular = std::find(
-            bench_utils::ANGULAR_DATASETS.begin(),
-            bench_utils::ANGULAR_DATASETS.end(),
-            dataset
+            bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
         );
         if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
             cp.spherical = true;

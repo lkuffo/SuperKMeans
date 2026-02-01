@@ -46,9 +46,10 @@ TEST_F(AssignTest, AssignMatchesTrainAssignments_SyntheticClusters) {
         }
     }
     double mismatch_pct = 100.0 * static_cast<double>(mismatches) / static_cast<double>(n);
-    EXPECT_LE(mismatch_pct, 0.01)
-        << "Synthetic clusterable data should have very low mismatch rate, got " << mismatch_pct
-        << "%";
+    EXPECT_LE(
+        mismatch_pct, 0.01
+    ) << "Synthetic clusterable data should have very low mismatch rate, got "
+      << mismatch_pct << "%";
 }
 
 /**
@@ -82,10 +83,14 @@ TEST_F(AssignTest, EachPointAssignedToNearestCentroid) {
     for (size_t i = 0; i < n; ++i) {
         const float* point = data.data() + i * d;
         uint32_t assigned_cluster = assignments[i];
-        uint32_t nearest_cluster = skmeans::FindNearestCentroidBruteForce(point, centroids.data(), n_clusters, d);
+        uint32_t nearest_cluster =
+            skmeans::FindNearestCentroidBruteForce(point, centroids.data(), n_clusters, d);
         if (assigned_cluster != nearest_cluster) {
-            float assigned_dist = skmeans::ComputeL2DistanceSquared(point, centroids.data() + assigned_cluster * d, d);
-            float nearest_dist = skmeans::ComputeL2DistanceSquared(point, centroids.data() + nearest_cluster * d, d);
+            float assigned_dist = skmeans::ComputeL2DistanceSquared(
+                point, centroids.data() + assigned_cluster * d, d
+            );
+            float nearest_dist =
+                skmeans::ComputeL2DistanceSquared(point, centroids.data() + nearest_cluster * d, d);
             if (std::abs(assigned_dist - nearest_dist) > 1e-4f * nearest_dist) {
                 ++incorrect_assignments;
             }
@@ -102,7 +107,7 @@ TEST_F(AssignTest, EachPointAssignedToNearestCentroid) {
  */
 TEST_F(AssignTest, EachPointAssignedToNearestCentroid_HighDim) {
     const size_t n = 5000;
-    const size_t d = 512; 
+    const size_t d = 512;
     const size_t n_clusters = 50;
     const int n_iters = 10;
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 123);
@@ -125,18 +130,23 @@ TEST_F(AssignTest, EachPointAssignedToNearestCentroid_HighDim) {
     for (size_t i = 0; i < n; ++i) {
         const float* point = data.data() + i * d;
         uint32_t assigned_cluster = assignments[i];
-        uint32_t nearest_cluster = skmeans::FindNearestCentroidBruteForce(point, centroids.data(), n_clusters, d);
+        uint32_t nearest_cluster =
+            skmeans::FindNearestCentroidBruteForce(point, centroids.data(), n_clusters, d);
 
         if (assigned_cluster != nearest_cluster) {
-            float assigned_dist = skmeans::ComputeL2DistanceSquared(point, centroids.data() + assigned_cluster * d, d);
-            float nearest_dist = skmeans::ComputeL2DistanceSquared(point, centroids.data() + nearest_cluster * d, d);
+            float assigned_dist = skmeans::ComputeL2DistanceSquared(
+                point, centroids.data() + assigned_cluster * d, d
+            );
+            float nearest_dist =
+                skmeans::ComputeL2DistanceSquared(point, centroids.data() + nearest_cluster * d, d);
             if (std::abs(assigned_dist - nearest_dist) > 1e-4f * nearest_dist) {
                 ++incorrect_assignments;
             }
         }
     }
     EXPECT_EQ(incorrect_assignments, 0)
-        << "Found " << incorrect_assignments << " points not assigned to their nearest centroid (high-dim)";
+        << "Found " << incorrect_assignments
+        << " points not assigned to their nearest centroid (high-dim)";
 }
 
 /**
@@ -180,6 +190,6 @@ TEST_F(AssignTest, AllClustersNonEmpty) {
         << "Found " << empty_clusters.size() << " empty clusters out of " << n_clusters;
     std::unordered_set<uint32_t> used_clusters(assignments.begin(), assignments.end());
     EXPECT_EQ(used_clusters.size(), n_clusters)
-        << "Not all clusters were used. Expected " << n_clusters << " but only " << used_clusters.size()
-        << " were assigned.";
+        << "Not all clusters were used. Expected " << n_clusters << " but only "
+        << used_clusters.size() << " were assigned.";
 }

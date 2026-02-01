@@ -22,8 +22,8 @@ int main(int argc, char* argv[]) {
     omp_set_num_threads(THREADS);
 
     std::cout << "=== Running sweet_pruning_spot benchmark ===" << std::endl;
-    std::cout << "Fixed parameters: iters=" << n_iters << ", sampling_fraction=" << sampling_fraction
-              << std::endl;
+    std::cout << "Fixed parameters: iters=" << n_iters
+              << ", sampling_fraction=" << sampling_fraction << std::endl;
     std::cout << "Threads: " << THREADS << std::endl;
     std::cout << "Eigen # threads: " << Eigen::nbThreads()
               << " (note: it will always be 1 if BLAS is enabled)" << std::endl;
@@ -97,7 +97,8 @@ int main(int argc, char* argv[]) {
         std::cout << "Loaded ground truth with " << gt_map.size() << " queries" << std::endl;
 
         for (float adjustment_factor : adjustment_factors) {
-            std::cout << "\n=== Testing adjustment_factor: " << adjustment_factor << " ===" << std::endl;
+            std::cout << "\n=== Testing adjustment_factor: " << adjustment_factor
+                      << " ===" << std::endl;
             for (const auto& params : pruning_params) {
                 float min_not_pruned_pct = params.first;
                 float max_not_pruned_pct = params.second;
@@ -120,7 +121,11 @@ int main(int argc, char* argv[]) {
                 config.min_not_pruned_pct = min_not_pruned_pct;
                 config.max_not_pruned_pct = max_not_pruned_pct;
                 config.adjustment_factor_for_partial_d = adjustment_factor;
-                auto is_angular = std::find(bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset);
+                auto is_angular = std::find(
+                    bench_utils::ANGULAR_DATASETS.begin(),
+                    bench_utils::ANGULAR_DATASETS.end(),
+                    dataset
+                );
                 if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
                     std::cout << "Using spherical k-means" << std::endl;
                     config.angular = true;
@@ -141,8 +146,8 @@ int main(int argc, char* argv[]) {
                 double final_objective = kmeans_state.iteration_stats.back().objective;
 
                 std::cout << "Training: " << construction_time_ms << " ms, "
-                        << "Objective: " << final_objective << ", "
-                        << "Iterations: " << actual_iterations << std::endl;
+                          << "Objective: " << final_objective << ", "
+                          << "Iterations: " << actual_iterations << std::endl;
 
                 // Skip assignment and recall computation for this benchmark
                 std::vector<std::tuple<int, float, float, float, float>> results_knn_10;
@@ -165,7 +170,8 @@ int main(int argc, char* argv[]) {
                 config_map["verbose"] = config.verbose ? "true" : "false";
                 config_map["min_not_pruned_pct"] = std::to_string(config.min_not_pruned_pct);
                 config_map["max_not_pruned_pct"] = std::to_string(config.max_not_pruned_pct);
-                config_map["adjustment_factor_for_partial_d"] = std::to_string(config.adjustment_factor_for_partial_d);
+                config_map["adjustment_factor_for_partial_d"] =
+                    std::to_string(config.adjustment_factor_for_partial_d);
                 config_map["not_pruned_pct_window_size"] = std::to_string(PRUNING_PCT_WINDOW_SIZE);
 
                 bench_utils::write_results_to_csv(
@@ -184,7 +190,7 @@ int main(int argc, char* argv[]) {
                     results_knn_10,
                     results_knn_100
                 );
-            } 
+            }
         }
     }
     std::cout << "\n========================================" << std::endl;

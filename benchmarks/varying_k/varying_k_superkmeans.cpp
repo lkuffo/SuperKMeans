@@ -80,9 +80,7 @@ int main(int argc, char* argv[]) {
         config.sampling_fraction = sampling_fraction;
         config.use_blas_only = false;
         auto is_angular = std::find(
-            bench_utils::ANGULAR_DATASETS.begin(),
-            bench_utils::ANGULAR_DATASETS.end(),
-            dataset
+            bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
         );
         if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
             std::cout << "Using spherical k-means for dataset: " << dataset << std::endl;
@@ -96,7 +94,7 @@ int main(int argc, char* argv[]) {
 
         bench_utils::TicToc timer;
         timer.Tic();
-        std::vector<float> centroids = kmeans_state.Train(data.data(), n); 
+        std::vector<float> centroids = kmeans_state.Train(data.data(), n);
         timer.Toc();
 
         double construction_time_ms = timer.GetMilliseconds();

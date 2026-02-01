@@ -87,9 +87,7 @@ int main(int argc, char* argv[]) {
             config.sampling_fraction = sampling_fraction;
             config.use_blas_only = false;
             auto is_angular = std::find(
-                bench_utils::ANGULAR_DATASETS.begin(),
-                bench_utils::ANGULAR_DATASETS.end(),
-                dataset
+                bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
             );
             if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
                 config.angular = true;

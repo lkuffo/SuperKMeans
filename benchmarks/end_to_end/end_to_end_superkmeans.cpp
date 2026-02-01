@@ -78,9 +78,7 @@ int main(int argc, char* argv[]) {
     config.use_blas_only = false;
 
     auto is_angular = std::find(
-        bench_utils::ANGULAR_DATASETS.begin(),
-        bench_utils::ANGULAR_DATASETS.end(),
-        dataset
+        bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
     );
     if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
         std::cout << "Using spherical k-means for dataset: " << dataset << std::endl;
@@ -116,7 +114,7 @@ int main(int argc, char* argv[]) {
         std::cout << "\n--- Computing Recall ---" << std::endl;
         std::cout << "Ground truth file: " << gt_filename << std::endl;
         std::cout << "Queries file: " << filename_queries << std::endl;
-        
+
         auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;

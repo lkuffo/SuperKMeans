@@ -35,13 +35,13 @@ class ADSamplingPruner {
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
   public:
-    uint32_t num_dimensions;     
+    uint32_t num_dimensions;
     std::vector<float> ratios{}; // Precomputed pruning threshold ratios
 
     /**
      * @brief Constructor
      *
-     * @param num_dimensions_ 
+     * @param num_dimensions_
      * @param epsilon0 Pruning threshold parameter (higher = more aggressive pruning, less accuracy)
      * @param seed Random seed for reproducible rotation matrix generation
      */
@@ -52,7 +52,7 @@ class ADSamplingPruner {
         bool matrix_created = false;
 #ifdef HAS_FFTW
 #ifdef __AVX2__
-// x86 machines don't behave well with FFTW with non-power-of-2 dimensions
+        // x86 machines don't behave well with FFTW with non-power-of-2 dimensions
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION && IsPowerOf2(num_dimensions)) {
 #else
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
@@ -162,7 +162,7 @@ class ADSamplingPruner {
         Eigen::Map<MatrixR> out(out_buffer, n, num_dimensions);
 #ifdef HAS_FFTW
 #ifdef __AVX2__
-// x86 machines don't behave well with FFTW with non-power-of-2 dimensions
+        // x86 machines don't behave well with FFTW with non-power-of-2 dimensions
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION && IsPowerOf2(num_dimensions)) {
 #else
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
@@ -178,19 +178,7 @@ class ADSamplingPruner {
             fftwf_plan plan;
             fftwf_plan_with_nthreads(g_n_threads);
             plan = fftwf_plan_many_r2r(
-                1,
-                &n0,
-                howmany,
-                out.data(),
-                NULL,
-                1,
-                n0,
-                out.data(),
-                NULL,
-                1,
-                n0,
-                kind,
-                flag
+                1, &n0, howmany, out.data(), NULL, 1, n0, out.data(), NULL, 1, n0, kind, flag
             );
             fftwf_execute(plan);
             fftwf_destroy_plan(plan);
@@ -212,13 +200,19 @@ class ADSamplingPruner {
         int ldb = static_cast<int>(num_dimensions);
         int ldc = static_cast<int>(num_dimensions);
         sgemm_(
-            &trans_a, &trans_b,
-            &m, &n_blas, &k,
+            &trans_a,
+            &trans_b,
+            &m,
+            &n_blas,
+            &k,
             &alpha,
-            matrix.data(), &lda,
-            vectors, &ldb,
+            matrix.data(),
+            &lda,
+            vectors,
+            &ldb,
             &beta,
-            out_buffer, &ldc
+            out_buffer,
+            &ldc
         );
     }
 
@@ -236,7 +230,7 @@ class ADSamplingPruner {
         Eigen::Map<MatrixR> out(out_buffer, n, num_dimensions);
 #ifdef HAS_FFTW
 #ifdef __AVX2__
-// x86 machines don't behave well with FFTW with non-power-of-2 dimensions
+        // x86 machines don't behave well with FFTW with non-power-of-2 dimensions
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION && IsPowerOf2(num_dimensions)) {
 #else
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {

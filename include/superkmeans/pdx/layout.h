@@ -46,13 +46,7 @@ class PDXLayout {
      * @param d Number of dimensions
      * @param hor_data Optional pointer to auxiliary horizontal data for faster pruning
      */
-    PDXLayout(
-        scalar_t* pdx_data,
-        pruner_t& pruner,
-        size_t n_points,
-        size_t d,
-        scalar_t* hor_data
-    ) {
+    PDXLayout(scalar_t* pdx_data, pruner_t& pruner, size_t n_points, size_t d, scalar_t* hor_data) {
         index = std::make_unique<index_t>(); // PDXLayout is owner of the Index
         FromBufferToPDXIndex(pdx_data, n_points, d, hor_data);
         searcher = std::make_unique<searcher_t>(*index, pruner);
@@ -111,7 +105,7 @@ class PDXLayout {
     }
 
     /**
-     * @brief Get number of vertical and horizontal dimensions. 
+     * @brief Get number of vertical and horizontal dimensions.
      * 25% vertical and 75% horizontal.
      *
      * @param d Number of dimensions (cols) in the data
@@ -166,7 +160,7 @@ class PDXLayout {
 
         const size_t full_chunks = n / CHUNK_SIZE;
         const size_t n_remaining = n % CHUNK_SIZE;
- 
+
         // TODO(@lkuffo, med): Remove dependency on Eigen
         for (size_t i = 0; i < full_chunks; ++i) {
             auto chunk_offset = (i * CHUNK_SIZE) * d; // Chunk offset is the same in both layouts

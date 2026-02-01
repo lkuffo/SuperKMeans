@@ -8,7 +8,6 @@ TabWidth: 4
 BreakBeforeBraces: Attach
 AllowShortFunctionsOnASingleLine: InlineOnly
 
-# Column width
 ColumnLimit: 100
 
 # Pointer/reference alignment

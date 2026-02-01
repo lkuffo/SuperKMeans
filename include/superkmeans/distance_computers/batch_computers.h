@@ -13,23 +13,22 @@
 // Eigen already declares sgemm_, so we don't need to redeclare it
 // TODO(lkuffo, low): However, I would like to have more control over this
 extern "C" {
-    /* declare BLAS functions, see http://www.netlib.org/clapack/cblas/ */
-    // int sgemm_(
-    //         const char* transa,
-    //         const char* transb,
-    //         FINTEGER* m,
-    //         FINTEGER* n,
-    //         FINTEGER* k,
-    //         const float* alpha,
-    //         const float* a,
-    //         FINTEGER* lda,
-    //         const float* b,
-    //         FINTEGER* ldb,
-    //         float* beta,
-    //         float* c,
-    //         FINTEGER* ldc);
+/* declare BLAS functions, see http://www.netlib.org/clapack/cblas/ */
+// int sgemm_(
+//         const char* transa,
+//         const char* transb,
+//         FINTEGER* m,
+//         FINTEGER* n,
+//         FINTEGER* k,
+//         const float* alpha,
+//         const float* a,
+//         FINTEGER* lda,
+//         const float* b,
+//         FINTEGER* ldb,
+//         float* beta,
+//         float* c,
+//         FINTEGER* ldc);
 }
-
 
 namespace skmeans {
 
@@ -82,18 +81,24 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
         int k = static_cast<int>(partial_d > 0 && partial_d < d ? partial_d : d);
         float alpha = 1.0f;
         float beta = 0.0f;
-        int lda = static_cast<int>(d);  // d of y (row stride in row-major)
-        int ldb = static_cast<int>(d);  // d of x (row stride in row-major)
-        int ldc = static_cast<int>(batch_n_y);  // Leading dimension of tmp_distances_buf
+        int lda = static_cast<int>(d);         // d of y (row stride in row-major)
+        int ldb = static_cast<int>(d);         // d of x (row stride in row-major)
+        int ldc = static_cast<int>(batch_n_y); // Leading dimension of tmp_distances_buf
 
         sgemm_(
-            &trans_a, &trans_b,
-            &m, &n, &k,
+            &trans_a,
+            &trans_b,
+            &m,
+            &n,
+            &k,
             &alpha,
-            batch_y_p, &lda,
-            batch_x_p, &ldb,
+            batch_y_p,
+            &lda,
+            batch_x_p,
+            &ldb,
             &beta,
-            tmp_distances_buf, &ldc
+            tmp_distances_buf,
+            &ldc
         );
     }
 
@@ -144,20 +149,21 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                     batch_n_y = n_y - j;
                 }
 #if defined(__APPLE__)
-                    // AMX (used with Apple Accelerate) benefits from a different strategy for parallelization
+                // AMX (used with Apple Accelerate) benefits from a different strategy for
+                // parallelization
 #pragma omp parallel for num_threads(g_n_threads) schedule(static)
-                    for (size_t r = 0; r < batch_n_x; r += MINI_BATCH_SIZE) {
-                        auto mini_batch_n_x = std::min(MINI_BATCH_SIZE, batch_n_x - r);
-                        BlasMatrixMultiplication(
-                            batch_x_p + r * d,
-                            batch_y_p,
-                            mini_batch_n_x,
-                            batch_n_y,
-                            d,
-                            0,
-                            tmp_distances_buf + r * batch_n_y
-                        );
-                    }
+                for (size_t r = 0; r < batch_n_x; r += MINI_BATCH_SIZE) {
+                    auto mini_batch_n_x = std::min(MINI_BATCH_SIZE, batch_n_x - r);
+                    BlasMatrixMultiplication(
+                        batch_x_p + r * d,
+                        batch_y_p,
+                        mini_batch_n_x,
+                        batch_n_y,
+                        d,
+                        0,
+                        tmp_distances_buf + r * batch_n_y
+                    );
+                }
 #else
                 BlasMatrixMultiplication(
                     batch_x_p, batch_y_p, batch_n_x, batch_n_y, d, 0, tmp_distances_buf
@@ -295,7 +301,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
      *
      * Hybrid approach that computes partial distances (first partial_d dimensions)
      * via GEMM, then uses ADSampling+PDX pruning to skip full distance computation
-     * for unlikely candidates. 
+     * for unlikely candidates.
      *
      * @param x Query vectors in row-major layout (n_x × d)
      * @param y Reference vectors in row-major layout (n_y × d)
@@ -343,7 +349,8 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                 {
                     SKM_PROFILE_SCOPE("search/blas");
 #if defined(__APPLE__)
-                    // AMX (used with Apple Accelerate) benefits from a different strategy for parallelization
+                    // AMX (used with Apple Accelerate) benefits from a different strategy for
+                    // parallelization
 #pragma omp parallel for num_threads(g_n_threads) schedule(static)
                     for (size_t r = 0; r < batch_n_x; r += MINI_BATCH_SIZE) {
                         auto mini_batch_n_x = std::min(MINI_BATCH_SIZE, batch_n_x - r);
@@ -384,7 +391,8 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                         const auto i_idx = i + r;
                         auto data_p = x + (i_idx * d);
 
-                        // To prune even better, we get the initial threshold from the previously assigned centroid
+                        // To prune even better, we get the initial threshold from the previously
+                        // assigned centroid
                         const auto prev_assignment = out_knn[i_idx];
                         distance_t dist_to_prev_centroid;
                         if (j == 0) {

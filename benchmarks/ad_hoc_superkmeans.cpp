@@ -83,7 +83,9 @@ int main(int argc, char* argv[]) {
     config.use_blas_only = false;
     config.tol = 1e-3f;
 
-    auto is_angular = std::find(bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset);
+    auto is_angular = std::find(
+        bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
+    );
     if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
         std::cout << "Using spherical k-means" << std::endl;
         config.angular = true;

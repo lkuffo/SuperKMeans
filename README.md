@@ -86,7 +86,7 @@ Check our [examples](./examples/) for a fully working C++ example.
 We provide Python bindings for ease of use. 
 
 ### Prerequisites
-- C++17, CMake 3.26
+- Clang 17, CMake 3.26
 - OpenMP
 - A BLAS implementation
 - Python 3 (only for Python bindings)

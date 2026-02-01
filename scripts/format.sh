@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# Format C++ files using clang-format
+# This script formats all .cpp, .h, and .hpp files in the project
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+echo "Formatting C++ files in SuperKMeans project..."
+echo "Project root: $PROJECT_ROOT"
+
+# Check if clang-format is available
+if ! command -v clang-format &> /dev/null; then
+    echo "Error: clang-format not found. Please install it first."
+    exit 1
+fi
+
+DIRECTORIES=(
+    "include"
+    "python"
+    "tests"
+    "benchmarks"
+    "examples"
+)
+
+EXTENSIONS=("cpp" "h" "hpp")
+
+total_files=0
+
+# Format files in each directory
+for dir in "${DIRECTORIES[@]}"; do
+    dir_path="$PROJECT_ROOT/$dir"
+
+    if [ ! -d "$dir_path" ]; then
+        echo "Warning: Directory $dir does not exist, skipping..."
+        continue
+    fi
+
+    echo "Processing directory: $dir"
+
+    for ext in "${EXTENSIONS[@]}"; do
+        while IFS= read -r -d '' file; do
+            echo "  Formatting: ${file#$PROJECT_ROOT/}"
+            clang-format -i "$file"
+            ((total_files++))
+        done < <(find "$dir_path" -type f -name "*.$ext" -print0)
+    done
+done
+
+echo ""
+echo "Done! Formatted $total_files file(s)."

@@ -13,12 +13,12 @@ namespace skmeans {
  * @brief PDXearch
  *
  * Implements the PDXearch algorithm for finding the nearest neighbor using the PDX
- * data layout combined with ADSampling-based pruning. 
+ * data layout combined with ADSampling-based pruning.
  * In this lightweight version, we optimize for top-1 search.
  * Reference: https://dl.acm.org/doi/abs/10.1145/3725333
  *
  * @tparam q Quantization type (f32 or u8)
- * @tparam Index 
+ * @tparam Index
  * @tparam alpha Distance function (l2 or dp)
  */
 template <
@@ -35,7 +35,7 @@ class PDXearch {
     using VectorComparator_t = VectorComparator<q>;
     using Pruner = ADSamplingPruner<q>;
 
-    Pruner& pruner;       
+    Pruner& pruner;
     INDEX_TYPE& pdx_data;
 
     /**
@@ -47,7 +47,6 @@ class PDXearch {
     PDXearch(INDEX_TYPE& data_index, Pruner& pruner) : pruner(pruner), pdx_data(data_index) {}
 
   protected:
-
     /**
      * @brief Retrieves the pruning threshold from the pruner.
      */
@@ -180,7 +179,7 @@ class PDXearch {
             );
         }
 
-        // Go through all the remaining vertical dimensions which are stored in the horizontal layout
+        // Go through all the remaining vertical dimensions stored in the horizontal layout
         if (n_vectors_not_pruned && current_vertical_dimension < pdx_data.num_vertical_dimensions) {
             cur_n_vectors_not_pruned = n_vectors_not_pruned;
             size_t dimensions_left = pdx_data.num_vertical_dimensions - current_vertical_dimension;

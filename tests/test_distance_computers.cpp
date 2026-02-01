@@ -1,6 +1,6 @@
+#include <cmath>
 #include <gtest/gtest.h>
 #include <omp.h>
-#include <cmath>
 #include <random>
 #include <vector>
 
@@ -22,9 +22,8 @@ class DistanceComputerTest : public ::testing::Test {
  *
  */
 TEST_F(DistanceComputerTest, SIMD_MatchesScalar_L2) {
-    std::vector<size_t> dimensions = {1, 3, 7, 8, 15, 16, 31, 32, 63, 64, 
-                                       100, 127, 128, 255, 256, 384, 512, 
-                                       768, 1000, 1024, 1536, 2048};
+    std::vector<size_t> dimensions = {1,   3,   7,   8,   15,  16,  31,  32,   63,   64,   100,
+                                      127, 128, 255, 256, 384, 512, 768, 1000, 1024, 1536, 2048};
     const size_t n_pairs = 100;
 
     for (size_t d : dimensions) {
@@ -37,23 +36,20 @@ TEST_F(DistanceComputerTest, SIMD_MatchesScalar_L2) {
             const float* v1 = vectors1.data() + i * d;
             const float* v2 = vectors2.data() + i * d;
 
-            float scalar_dist = skmeans::ScalarComputer<
-                skmeans::DistanceFunction::l2, 
-                skmeans::Quantization::f32
-            >::Horizontal(v1, v2, d);
+            float scalar_dist =
+                skmeans::ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>::
+                    Horizontal(v1, v2, d);
 
             float simd_dist = skmeans::DistanceComputer<
                 skmeans::DistanceFunction::l2,
-                skmeans::Quantization::f32
-            >::Horizontal(v1, v2, d);
+                skmeans::Quantization::f32>::Horizontal(v1, v2, d);
 
             float abs_error = std::abs(scalar_dist - simd_dist);
             float rel_error = abs_error / std::max(scalar_dist, 1e-6f);
 
             EXPECT_LT(rel_error, 1e-5f)
-                << "SIMD/Scalar mismatch at d=" << d << ", pair " << i
-                << ": scalar=" << scalar_dist << ", simd=" << simd_dist
-                << ", rel_error=" << rel_error;
+                << "SIMD/Scalar mismatch at d=" << d << ", pair " << i << ": scalar=" << scalar_dist
+                << ", simd=" << simd_dist << ", rel_error=" << rel_error;
         }
     }
 }
@@ -72,11 +68,9 @@ TEST_F(DistanceComputerTest, SIMD_ZeroDistanceForIdenticalVectors) {
 
             float dist = skmeans::DistanceComputer<
                 skmeans::DistanceFunction::l2,
-                skmeans::Quantization::f32
-            >::Horizontal(v, v, d);
+                skmeans::Quantization::f32>::Horizontal(v, v, d);
 
-            EXPECT_NEAR(dist, 0.0f, 1e-10f)
-                << "Distance to self should be zero at d=" << d;
+            EXPECT_NEAR(dist, 0.0f, 1e-10f) << "Distance to self should be zero at d=" << d;
         }
     }
 }
@@ -100,9 +94,10 @@ TEST_F(DistanceComputerTest, BatchComputer_FindNearestNeighbor_Correctness) {
         {5000, 1000, 128},
     };
     for (const auto& tc : test_cases) {
-        SCOPED_TRACE("Testing n_x=" + std::to_string(tc.n_x) + 
-                     ", n_y=" + std::to_string(tc.n_y) + 
-                     ", d=" + std::to_string(tc.d));
+        SCOPED_TRACE(
+            "Testing n_x=" + std::to_string(tc.n_x) + ", n_y=" + std::to_string(tc.n_y) +
+            ", d=" + std::to_string(tc.d)
+        );
 
         auto x = skmeans::GenerateRandomVectors(tc.n_x, tc.d, -10.0f, 10.0f, 42);
         auto y = skmeans::GenerateRandomVectors(tc.n_y, tc.d, -10.0f, 10.0f, 123);
@@ -112,8 +107,7 @@ TEST_F(DistanceComputerTest, BatchComputer_FindNearestNeighbor_Correctness) {
         std::vector<uint32_t> bf_knn(tc.n_x);
         std::vector<float> bf_distances(tc.n_x);
         skmeans::FindNearestNeighborBruteForce(
-            x.data(), y.data(), tc.n_x, tc.n_y, tc.d,
-            bf_knn.data(), bf_distances.data()
+            x.data(), y.data(), tc.n_x, tc.n_y, tc.d, bf_knn.data(), bf_distances.data()
         );
 
         std::vector<uint32_t> batch_knn(tc.n_x);
@@ -121,10 +115,15 @@ TEST_F(DistanceComputerTest, BatchComputer_FindNearestNeighbor_Correctness) {
         std::vector<float> tmp_buf(skmeans::X_BATCH_SIZE * skmeans::Y_BATCH_SIZE);
         skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>::
             FindNearestNeighbor(
-                x.data(), y.data(),
-                tc.n_x, tc.n_y, tc.d,
-                norms_x.data(), norms_y.data(),
-                batch_knn.data(), batch_distances.data(),
+                x.data(),
+                y.data(),
+                tc.n_x,
+                tc.n_y,
+                tc.d,
+                norms_x.data(),
+                norms_y.data(),
+                batch_knn.data(),
+                batch_distances.data(),
                 tmp_buf.data()
             );
 
@@ -132,22 +131,22 @@ TEST_F(DistanceComputerTest, BatchComputer_FindNearestNeighbor_Correctness) {
         for (size_t i = 0; i < tc.n_x; ++i) {
             if (batch_knn[i] != bf_knn[i]) {
                 // Check if distances are the same (tie-breaking)
-                float rel_diff = std::abs(batch_distances[i] - bf_distances[i]) / 
-                                std::max(bf_distances[i], 1e-6f);
+                float rel_diff = std::abs(batch_distances[i] - bf_distances[i]) /
+                                 std::max(bf_distances[i], 1e-6f);
                 if (rel_diff > 1e-4f) {
                     ++mismatches;
                 }
             }
         }
-        EXPECT_EQ(mismatches, 0)
-            << "Found " << mismatches << " mismatches in nearest neighbor results";
+        EXPECT_EQ(mismatches, 0) << "Found " << mismatches
+                                 << " mismatches in nearest neighbor results";
 
         for (size_t i = 0; i < tc.n_x; ++i) {
-            float rel_error = std::abs(batch_distances[i] - bf_distances[i]) / 
-                             std::max(bf_distances[i], 1e-6f);
+            float rel_error =
+                std::abs(batch_distances[i] - bf_distances[i]) / std::max(bf_distances[i], 1e-6f);
             EXPECT_LT(rel_error, 1e-4f)
-                << "Distance mismatch at index " << i 
-                << ": batch=" << batch_distances[i] << ", bf=" << bf_distances[i];
+                << "Distance mismatch at index " << i << ": batch=" << batch_distances[i]
+                << ", bf=" << bf_distances[i];
         }
     }
 }
@@ -167,21 +166,30 @@ TEST_F(DistanceComputerTest, BatchComputer_SingleQuery) {
 
     std::vector<uint32_t> bf_knn(1);
     std::vector<float> bf_distances(1);
-    skmeans::FindNearestNeighborBruteForce(x.data(), y.data(), 1, n_y, d, bf_knn.data(), bf_distances.data());
+    skmeans::FindNearestNeighborBruteForce(
+        x.data(), y.data(), 1, n_y, d, bf_knn.data(), bf_distances.data()
+    );
 
     std::vector<uint32_t> batch_knn(1);
     std::vector<float> batch_distances(1);
     std::vector<float> tmp_buf(skmeans::X_BATCH_SIZE * skmeans::Y_BATCH_SIZE);
     skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>::
         FindNearestNeighbor(
-            x.data(), y.data(), 1, n_y, d,
-            norms_x.data(), norms_y.data(),
-            batch_knn.data(), batch_distances.data(),
+            x.data(),
+            y.data(),
+            1,
+            n_y,
+            d,
+            norms_x.data(),
+            norms_y.data(),
+            batch_knn.data(),
+            batch_distances.data(),
             tmp_buf.data()
         );
 
     EXPECT_EQ(batch_knn[0], bf_knn[0]);
-    float rel_error = std::abs(batch_distances[0] - bf_distances[0]) / std::max(bf_distances[0], 1e-6f);
+    float rel_error =
+        std::abs(batch_distances[0] - bf_distances[0]) / std::max(bf_distances[0], 1e-6f);
     EXPECT_LT(rel_error, 1e-4f);
 }
 
@@ -204,8 +212,7 @@ TEST_F(DistanceComputerTest, BatchComputer_FindKNearestNeighbors_Correctness) {
     std::vector<uint32_t> bf_knn(n_x * k);
     std::vector<float> bf_distances(n_x * k);
     skmeans::FindKNearestNeighborsBruteForce(
-        x.data(), y.data(), n_x, n_y, d, k,
-        bf_knn.data(), bf_distances.data()
+        x.data(), y.data(), n_x, n_y, d, k, bf_knn.data(), bf_distances.data()
     );
 
     std::vector<uint32_t> batch_knn(n_x * k);
@@ -213,11 +220,16 @@ TEST_F(DistanceComputerTest, BatchComputer_FindKNearestNeighbors_Correctness) {
     std::vector<float> tmp_buf(skmeans::X_BATCH_SIZE * skmeans::Y_BATCH_SIZE);
     skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>::
         FindKNearestNeighbors(
-            x.data(), y.data(),
-            n_x, n_y, d,
-            norms_x.data(), norms_y.data(),
+            x.data(),
+            y.data(),
+            n_x,
+            n_y,
+            d,
+            norms_x.data(),
+            norms_y.data(),
             k,
-            batch_knn.data(), batch_distances.data(),
+            batch_knn.data(),
+            batch_distances.data(),
             tmp_buf.data()
         );
 
@@ -229,15 +241,15 @@ TEST_F(DistanceComputerTest, BatchComputer_FindKNearestNeighbors_Correctness) {
             // Check if indices match
             if (batch_knn[idx] != bf_knn[idx]) {
                 // Allow mismatch if distances are equal (tie-breaking)
-                float rel_diff = std::abs(batch_distances[idx] - bf_distances[idx]) / 
-                                std::max(bf_distances[idx], 1e-6f);
+                float rel_diff = std::abs(batch_distances[idx] - bf_distances[idx]) /
+                                 std::max(bf_distances[idx], 1e-6f);
                 if (rel_diff > 1e-4f) {
                     ++index_mismatches;
                 }
             }
             // Check distance accuracy
-            float rel_error = std::abs(batch_distances[idx] - bf_distances[idx]) / 
-                             std::max(bf_distances[idx], 1e-6f);
+            float rel_error = std::abs(batch_distances[idx] - bf_distances[idx]) /
+                              std::max(bf_distances[idx], 1e-6f);
             if (rel_error > 1e-4f) {
                 ++distance_mismatches;
             }
@@ -262,8 +274,7 @@ TEST_F(DistanceComputerTest, BatchComputer_FindKNearestNeighbors_Correctness) {
  *
  */
 TEST_F(DistanceComputerTest, FlipSign_SIMD_MatchesScalar) {
-    std::vector<size_t> dimensions = {1, 7, 8, 15, 16, 31, 32, 63, 64, 
-                                       128, 256, 512, 1024, 2048};
+    std::vector<size_t> dimensions = {1, 7, 8, 15, 16, 31, 32, 63, 64, 128, 256, 512, 1024, 2048};
 
     for (size_t d : dimensions) {
         SCOPED_TRACE("Testing d=" + std::to_string(d));
@@ -306,8 +317,9 @@ TEST_F(DistanceComputerTest, InitPositionsArray_SIMD_MatchesScalar) {
 
     for (size_t n : vector_counts) {
         for (float selectivity : selectivities) {
-            SCOPED_TRACE("Testing n=" + std::to_string(n) + 
-                         ", selectivity=" + std::to_string(selectivity));
+            SCOPED_TRACE(
+                "Testing n=" + std::to_string(n) + ", selectivity=" + std::to_string(selectivity)
+            );
 
             std::vector<float> pruning_distances(n);
             skmeans::GenerateRandomDistances(
@@ -331,12 +343,11 @@ TEST_F(DistanceComputerTest, InitPositionsArray_SIMD_MatchesScalar) {
 
             for (size_t i = 0; i < scalar_count; ++i) {
                 EXPECT_EQ(scalar_positions[i], simd_positions[i])
-                    << "Position mismatch at index " << i 
-                    << " for n=" << n << ", selectivity=" << selectivity;
+                    << "Position mismatch at index " << i << " for n=" << n
+                    << ", selectivity=" << selectivity;
             }
         }
     }
 }
 
 } // anonymous namespace
-

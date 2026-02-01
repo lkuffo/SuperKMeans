@@ -36,7 +36,7 @@ float ComputeInnerProduct(const float* a, const float* b, size_t d) {
 std::string GetRotationMethod(size_t d) {
     // Note: On x86 with AVX2, DCT requires power-of-2 dimensions
 #ifdef __AVX2__
-    bool uses_dct = (d >= skmeans::D_THRESHOLD_FOR_DCT_ROTATION) && 
+    bool uses_dct = (d >= skmeans::D_THRESHOLD_FOR_DCT_ROTATION) &&
                     skmeans::IsPowerOf2(static_cast<uint32_t>(d));
 #else
     bool uses_dct = (d >= skmeans::D_THRESHOLD_FOR_DCT_ROTATION);
@@ -177,9 +177,8 @@ TEST_F(RotationTest, BothRotationMethodsPreserveNorms) {
 
             float rel_error = std::abs(original_norm - rotated_norm) / original_norm;
             EXPECT_LT(rel_error, 1e-5f)
-                << "Orthonormal rotation should preserve norm for vector " << i
-                << " at d=" << d << " (original=" << original_norm 
-                << ", rotated=" << rotated_norm << ")";
+                << "Orthonormal rotation should preserve norm for vector " << i << " at d=" << d
+                << " (original=" << original_norm << ", rotated=" << rotated_norm << ")";
         }
     }
 
@@ -239,10 +238,11 @@ TEST_F(RotationTest, RotationPreservesInnerProducts) {
                 float rot_dot = ComputeInnerProduct(vi_rot, vj_rot, d);
 
                 float abs_error = std::abs(orig_dot - rot_dot);
-                
+
                 // For very small dot products, use absolute error threshold
                 // For larger dot products, use relative error threshold
-                // Both should be satisfied for orthogonal transformations within numerical precision
+                // Both should be satisfied for orthogonal transformations within numerical
+                // precision
                 bool abs_ok = abs_error < 1e-4f;
                 float rel_error = abs_error / std::max(std::abs(orig_dot), 1.0f);
                 bool rel_ok = rel_error < 1e-3f;
@@ -295,9 +295,9 @@ TEST_F(RotationTest, RotationPreservesDistances) {
                 float rel_error = std::abs(orig_dist_sq - rot_dist_sq) / orig_dist_sq;
 
                 EXPECT_LT(rel_error, 1e-4f)
-                    << "Distance not preserved for vectors " << i << " and " << j
-                    << " at d=" << d << " (" << GetRotationMethod(d) << ")"
-                    << ": original=" << std::sqrt(orig_dist_sq) 
+                    << "Distance not preserved for vectors " << i << " and " << j << " at d=" << d
+                    << " (" << GetRotationMethod(d) << ")"
+                    << ": original=" << std::sqrt(orig_dist_sq)
                     << ", rotated=" << std::sqrt(rot_dist_sq);
             }
         }
@@ -357,8 +357,7 @@ TEST_F(RotationTest, DifferentSeedsProduceDifferentRotations) {
         }
     }
 
-    EXPECT_TRUE(found_difference)
-        << "Different seeds should produce different rotation matrices";
+    EXPECT_TRUE(found_difference) << "Different seeds should produce different rotation matrices";
 }
 
 /**
@@ -387,4 +386,3 @@ TEST_F(RotationTest, SameSeedProducesIdenticalRotations) {
 }
 
 } // anonymous namespace
-

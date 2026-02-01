@@ -139,7 +139,6 @@ int main() {
     std::cout << "done" << std::endl;
     std::cout << std::endl;
 
-
     std::cout << "Running benchmarks..." << std::endl;
     size_t scalar_total_count = 0;
     size_t simd_total_count = 0;

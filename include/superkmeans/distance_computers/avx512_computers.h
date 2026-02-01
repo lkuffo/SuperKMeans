@@ -53,7 +53,8 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::u8> {
             _mm512_subs_epu8(a_u8_vec, b_u8_vec), _mm512_subs_epu8(b_u8_vec, a_u8_vec)
         );
 
-        // Multiply and accumulate at `int8` level which are actually uint7, accumulate at `int32` level:
+        // Multiply and accumulate at `int8` level which are actually uint7, accumulate at `int32`
+        // level:
         d2_i32_vec = _mm512_dpbusds_epi32(d2_i32_vec, d_u8_vec, d_u8_vec);
         if (num_dimensions)
             goto simsimd_l2sq_u8_ice_cycle;

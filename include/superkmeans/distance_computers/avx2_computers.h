@@ -138,7 +138,6 @@ class SIMDComputer<skmeans::DistanceFunction::dp, skmeans::Quantization::f32> {
     };
 };
 
-
 template <Quantization q>
 class SIMDUtilsComputer {};
 

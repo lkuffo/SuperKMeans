@@ -1,9 +1,9 @@
-#include <gtest/gtest.h>
-#include <omp.h>
 #include <cmath>
+#include <gtest/gtest.h>
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <omp.h>
 #include <tuple>
 #include <vector>
 
@@ -14,9 +14,9 @@
 namespace {
 
 // Ground truth WCSS values for each (n_clusters, dimensionality) combination
-// Generated with: N_SAMPLES=100000, N_TRUE_CENTERS=100, CLUSTER_STD=1.0, CENTER_SPREAD=10.0, SEED=42, N_ITERS=10
-// Regenerate with: ./generate_wcss_ground_truth.out
-// Format: {n_clusters, dimensionality} -> expected_wcss
+// Generated with: N_SAMPLES=100000, N_TRUE_CENTERS=100, CLUSTER_STD=1.0, CENTER_SPREAD=10.0,
+// SEED=42, N_ITERS=10 Regenerate with: ./generate_wcss_ground_truth.out Format: {n_clusters,
+// dimensionality} -> expected_wcss
 
 // clang-format off
 const std::map<std::pair<size_t, size_t>, float> GROUND_TRUTH = {
@@ -190,9 +190,9 @@ TEST_P(WCSSTest, MonotonicallyDecreases_AndMatchesGroundTruth) {
     if (should_use_gemm_only && stats.size() > 1) {
         for (size_t i = 1; i < stats.size(); ++i) {
             EXPECT_TRUE(stats[i].is_gemm_only)
-                << "Expected is_gemm_only=true for iteration " << (i + 1)
-                << " (d=" << d << " < " << skmeans::DIMENSION_THRESHOLD_FOR_PRUNING
-                << " or k=" << n_clusters << " <= " << skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING << ")";
+                << "Expected is_gemm_only=true for iteration " << (i + 1) << " (d=" << d << " < "
+                << skmeans::DIMENSION_THRESHOLD_FOR_PRUNING << " or k=" << n_clusters
+                << " <= " << skmeans::N_CLUSTERS_THRESHOLD_FOR_PRUNING << ")";
         }
     }
 }
@@ -240,9 +240,8 @@ TEST_P(WCSSTest, BlasOnly_MonotonicallyDecreases_AndMatchesGroundTruth) {
         float curr_wcss = stats[i].objective;
         float tolerance = prev_wcss * 1e-6f;
         EXPECT_LE(curr_wcss, prev_wcss + tolerance)
-            << "WCSS increased at iteration " << (i + 1) << " [BLAS-only mode]: "
-            << prev_wcss << " -> " << curr_wcss
-            << " (n_clusters=" << n_clusters << ", d=" << d << ")";
+            << "WCSS increased at iteration " << (i + 1) << " [BLAS-only mode]: " << prev_wcss
+            << " -> " << curr_wcss << " (n_clusters=" << n_clusters << ", d=" << d << ")";
     }
 
     auto key = std::make_pair(n_clusters, d);
@@ -253,20 +252,20 @@ TEST_P(WCSSTest, BlasOnly_MonotonicallyDecreases_AndMatchesGroundTruth) {
     float final_wcss = stats.back().objective;
     float wcss_upper_bound = expected_wcss * (1.0f + TOLERANCE);
     EXPECT_LE(final_wcss, wcss_upper_bound)
-        << "WCSS too high [BLAS-only mode] (k=" << n_clusters << ", d=" << d << "): "
-        << final_wcss << " > " << wcss_upper_bound << " (expected ~" << expected_wcss << ")";
+        << "WCSS too high [BLAS-only mode] (k=" << n_clusters << ", d=" << d << "): " << final_wcss
+        << " > " << wcss_upper_bound << " (expected ~" << expected_wcss << ")";
 
     // WCSS shouldn't be drastically lower
     float wcss_lower_bound = expected_wcss * 0.5f;
     EXPECT_GE(final_wcss, wcss_lower_bound)
-        << "WCSS suspiciously low [BLAS-only mode] (k=" << n_clusters << ", d=" << d << "): "
-        << final_wcss << " < " << wcss_lower_bound << " (expected ~" << expected_wcss << ")";
+        << "WCSS suspiciously low [BLAS-only mode] (k=" << n_clusters << ", d=" << d
+        << "): " << final_wcss << " < " << wcss_lower_bound << " (expected ~" << expected_wcss
+        << ")";
 
     // All iteration stats should have valid values
     for (size_t i = 0; i < stats.size(); ++i) {
         EXPECT_EQ(stats[i].iteration, i + 1) << "Iteration number mismatch at index " << i;
-        EXPECT_GT(stats[i].objective, 0.0f)
-            << "WCSS should be positive at iteration " << (i + 1);
+        EXPECT_GT(stats[i].objective, 0.0f) << "WCSS should be positive at iteration " << (i + 1);
         EXPECT_TRUE(std::isfinite(stats[i].objective))
             << "WCSS is not finite at iteration " << (i + 1);
         EXPECT_TRUE(std::isfinite(stats[i].shift))
@@ -276,8 +275,7 @@ TEST_P(WCSSTest, BlasOnly_MonotonicallyDecreases_AndMatchesGroundTruth) {
     // Verify centroids are valid
     EXPECT_EQ(centroids.size(), n_clusters * d) << "Centroid size mismatch";
     for (size_t i = 0; i < centroids.size(); ++i) {
-        EXPECT_TRUE(std::isfinite(centroids[i]))
-            << "Centroid value not finite at index " << i;
+        EXPECT_TRUE(std::isfinite(centroids[i])) << "Centroid value not finite at index " << i;
     }
 
     // Verify that all iterations after the first use GEMM-only when use_blas_only=true

@@ -16,8 +16,9 @@ int main() {
     constexpr int N_ITERS = 10;
 
     std::vector<size_t> k_values = {10, 100, 1000, 10000};
-    std::vector<size_t> d_values = {4,   16,  32,   64,   100,  128,  384, 512,
-                                    600, 768, 900, 1024, 1536, 2000, 3072};
+    std::vector<size_t> d_values = {
+        4, 16, 32, 64, 100, 128, 384, 512, 600, 768, 900, 1024, 1536, 2000, 3072
+    };
 
     omp_set_num_threads(omp_get_max_threads());
 
@@ -25,8 +26,8 @@ int main() {
     std::cout << "// Ground truth WCSS values for test_wcss.cpp\n";
     std::cout << "// Generated with: N_SAMPLES=" << N_SAMPLES
               << ", N_TRUE_CENTERS=" << N_TRUE_CENTERS << ", CLUSTER_STD=" << CLUSTER_STD
-              << ", CENTER_SPREAD=" << CENTER_SPREAD << ", SEED=" << SEED
-              << ", N_ITERS=" << N_ITERS << "\n";
+              << ", CENTER_SPREAD=" << CENTER_SPREAD << ", SEED=" << SEED << ", N_ITERS=" << N_ITERS
+              << "\n";
     std::cout << "// Copy-paste the following into GROUND_TRUTH map:\n\n";
 
     for (size_t k : k_values) {
@@ -60,6 +61,5 @@ int main() {
             std::cerr << " WCSS=" << wcss << "\n";
         }
     }
-    std::cout << "\n// End of ground truth values\n";
     return 0;
 }

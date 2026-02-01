@@ -369,8 +369,8 @@ TEST_F(SuperKMeansTest, Sampling_ProvidesSpeedup) {
     double speedup = full_time_ms / sampled_time_ms;
 
     // Sampling should be at least 2x faster
-    EXPECT_GE(speedup, 2.0)
-        << "Sampling should provide at least 2x speedup. "
-        << "Full: " << full_time_ms << "ms, Sampled: " << sampled_time_ms << "ms, "
-        << "Speedup: " << speedup << "x";
+    EXPECT_GE(speedup, 2.0) << "Sampling should provide at least 2x speedup. "
+                            << "Full: " << full_time_ms << "ms, Sampled: " << sampled_time_ms
+                            << "ms, "
+                            << "Speedup: " << speedup << "x";
 }

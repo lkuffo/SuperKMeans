@@ -89,9 +89,7 @@ int main(int argc, char* argv[]) {
         config.sampling_fraction = sampling_fraction;
         config.use_blas_only = false;
         auto is_angular = std::find(
-            bench_utils::ANGULAR_DATASETS.begin(),
-            bench_utils::ANGULAR_DATASETS.end(),
-            dataset
+            bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
         );
         if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
             config.angular = true;
@@ -128,7 +126,7 @@ int main(int argc, char* argv[]) {
             auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
             std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                       << " from ground truth)" << std::endl;
-            
+
             auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
             auto results_knn_10 = bench_utils::compute_recall(
                 gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10

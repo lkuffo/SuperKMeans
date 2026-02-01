@@ -51,7 +51,6 @@ class ScalarComputer<DistanceFunction::dp, Quantization::f32> {
     };
 };
 
-
 template <Quantization q>
 class ScalarUtilsComputer {};
 

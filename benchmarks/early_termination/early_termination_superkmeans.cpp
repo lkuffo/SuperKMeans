@@ -98,9 +98,7 @@ int main(int argc, char* argv[]) {
             config.use_blas_only = false;
 
             auto is_angular = std::find(
-                bench_utils::ANGULAR_DATASETS.begin(),
-                bench_utils::ANGULAR_DATASETS.end(),
-                dataset
+                bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
             );
             if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
                 config.angular = true;
@@ -116,7 +114,7 @@ int main(int argc, char* argv[]) {
             std::vector<float> centroids =
                 kmeans_state.Train(data.data(), n, queries.data(), n_queries);
             timer.Toc();
-            
+
             double construction_time_ms = timer.GetMilliseconds();
             int actual_iterations = static_cast<int>(kmeans_state.iteration_stats.size());
             double final_objective = kmeans_state.iteration_stats.back().objective;

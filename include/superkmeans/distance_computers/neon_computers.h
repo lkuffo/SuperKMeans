@@ -16,14 +16,14 @@ class SIMDComputer<DistanceFunction::l2, Quantization::u8> {
     using distance_t = skmeans_distance_t<Quantization::u8>;
     using value_t = skmeans_value_t<Quantization::u8>;
 
-    /** 
-    * @brief Computes the L2 distance between two uint8 vectors using NEON.
-    * Taken from SimSimd library: https://github.com/ashvardanian/SimSIMD
-    * @param vector1 Input vector 1
-    * @param vector2 Input vector 2
-    * @param num_dimensions Number of dimensions
-    * @return L2 distance between the two vectors
-    */
+    /**
+     * @brief Computes the L2 distance between two uint8 vectors using NEON.
+     * Taken from SimSimd library: https://github.com/ashvardanian/SimSIMD
+     * @param vector1 Input vector 1
+     * @param vector2 Input vector 2
+     * @param num_dimensions Number of dimensions
+     * @return L2 distance between the two vectors
+     */
     static distance_t Horizontal(
         const value_t* SKM_RESTRICT vector1,
         const value_t* SKM_RESTRICT vector2,
@@ -92,7 +92,6 @@ class SIMDComputer<DistanceFunction::l2, Quantization::f32> {
 #endif
     };
 };
-
 
 template <Quantization q>
 class SIMDUtilsComputer {};

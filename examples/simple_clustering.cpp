@@ -1,9 +1,9 @@
-#include <vector>
+#include "superkmeans/pdx/utils.h"
+#include "superkmeans/superkmeans.h"
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
-#include "superkmeans/superkmeans.h"
-#include "superkmeans/pdx/utils.h"
+#include <vector>
 
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [n] [d] [k]\n"
