@@ -23,7 +23,7 @@ int main() {
     std::vector<size_t> k_values = {10, 100, 250};
     std::vector<size_t> d_values = {4, 16, 32, 64, 100, 128, 384, 512, 600, 768};
 
-    omp_set_num_threads(omp_get_max_threads());
+    omp_set_num_threads(1);
 
     std::cerr << "Generating test data (" << N_SAMPLES << " × " << MAX_D << ")...\n";
     auto full_data = skmeans::MakeBlobs(
