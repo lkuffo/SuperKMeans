@@ -31,6 +31,11 @@ High number of clusters? No problem! SuperKMeans scales like charm:
 - Faster **without compromising clustering quality**.
 - Efficient in **CPUs** (ARM and x86) and **GPUs**.
 
+## Our secret sauce
+- Reliable and efficient **pruning of dimensions**.
+- We will release our paper with all the details soon!
+- In the benchmarks you see in the cover image, **all algorithms are clustering the same data**: No dimensionality reduction, no sampling, same number of iterations, no early-termination.
+
 ## Usage
 ```py
 from superkmeans import SuperKMeans
