@@ -15,8 +15,8 @@ int main() {
     constexpr size_t N_SAMPLES = 10000;
     constexpr size_t MAX_D = 768;
     constexpr size_t N_TRUE_CENTERS = 500;
-    constexpr float CLUSTER_STD = 0.5f;
-    constexpr float CENTER_SPREAD = 50.0f;
+    constexpr float CLUSTER_STD = 0.25f;
+    constexpr float CENTER_SPREAD = 5.0f;
     constexpr unsigned int SEED = 42;
     constexpr int N_ITERS = 10;
 
