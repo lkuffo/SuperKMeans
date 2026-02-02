@@ -15,8 +15,8 @@ int main() {
     constexpr size_t N_SAMPLES = 10000;
     constexpr size_t MAX_D = 768;
     constexpr size_t N_TRUE_CENTERS = 100;
-    constexpr float CLUSTER_STD = 1.0f;
-    constexpr float CENTER_SPREAD = 10.0f;
+    constexpr float CLUSTER_STD = 0.5f;
+    constexpr float CENTER_SPREAD = 50.0f;
     constexpr unsigned int SEED = 42;
     constexpr int N_ITERS = 10;
 
@@ -74,10 +74,12 @@ int main() {
             config.seed = SEED;
             config.early_termination = false;
             config.sampling_fraction = 1.0f;
+            config.max_points_per_cluster = 99999;
             config.min_not_pruned_pct = 0.03f;
             config.max_not_pruned_pct = 0.05f;
             config.adjustment_factor_for_partial_d = 0.20f;
             config.angular = false;
+            config.n_threads = 1;
 
             auto kmeans =
                 skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(

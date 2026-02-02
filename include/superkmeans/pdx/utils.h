@@ -88,17 +88,22 @@ inline std::vector<float> MakeBlobs(
         centers[i] = center_dist(gen);
     }
 
-    std::uniform_int_distribution<size_t> cluster_dist(0, n_centers - 1);
-    std::normal_distribution<float> point_dist(0.0f, cluster_std);
-
     std::vector<float> data(n_samples * n_features);
-#pragma omp parallel for
-    for (size_t i = 0; i < n_samples; ++i) {
-        size_t center_idx = cluster_dist(gen) * n_features;
-        float* row = &data[i * n_features];
-        const float* center = &centers[center_idx];
-        for (size_t j = 0; j < n_features; ++j) {
-            row[j] = center[j] + point_dist(gen);
+#pragma omp parallel
+    {
+        std::uniform_int_distribution<size_t> cluster_dist(0, n_centers - 1);
+        std::normal_distribution<float> point_dist(0.0f, cluster_std);
+        std::mt19937 thread_gen(
+            static_cast<uint32_t>(random_state) +
+            static_cast<uint32_t>(omp_get_thread_num()));
+#pragma omp for
+        for (size_t i = 0; i < n_samples; ++i) {
+            size_t center_idx = cluster_dist(thread_gen) * n_features;
+            float* row = &data[i * n_features];
+            const float* center = &centers[center_idx];
+            for (size_t j = 0; j < n_features; ++j) {
+                row[j] = center[j] + point_dist(thread_gen);
+            }
         }
     }
     if (normalize) {
