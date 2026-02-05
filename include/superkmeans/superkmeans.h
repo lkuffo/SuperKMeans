@@ -70,6 +70,7 @@ struct SuperKMeansIterationStats {
 
 template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
 class SuperKMeans {
+  protected:
     using centroid_value_t = skmeans_centroid_value_t<q>;
     using vector_value_t = skmeans_value_t<q>;
     using pruner_t = ADSamplingPruner<q>;

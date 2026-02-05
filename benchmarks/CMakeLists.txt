@@ -82,6 +82,10 @@ target_link_libraries(pareto_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp)
 target_link_libraries(ad_hoc_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
+# Ad-hoc balanced superkmeans benchmark
+add_executable(ad_hoc_balanced_superkmeans.out ad_hoc_balanced_superkmeans.cpp)
+target_link_libraries(ad_hoc_balanced_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
 # Sweet pruning spot benchmark (grid search over pruning parameters)
 add_executable(sweet_pruning_spot_superkmeans.out sweet_pruning_spot_superkmeans.cpp)
 target_link_libraries(sweet_pruning_spot_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
@@ -109,6 +113,7 @@ add_custom_target(benchmarks
         sampling_superkmeans.out
         pareto_superkmeans.out
         ad_hoc_superkmeans.out
+        ad_hoc_balanced_superkmeans.out
         sweet_pruning_spot_superkmeans.out
         microbenchmark_init_positions_array.out
         microbenchmark_flip_sign.out

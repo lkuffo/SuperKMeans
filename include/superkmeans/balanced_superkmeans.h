@@ -90,7 +90,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 "The number of points should be at least as large as the number of clusters"
             );
         }
-        if (n_queries > 0 && queries == nullptr && !this->_config.sample_queries) {
+        if (n_queries > 0 && queries == nullptr && !this->balanced_config.sample_queries) {
             throw std::invalid_argument(
                 "Queries must be provided if n_queries > 0 and sample_queries is false"
             );
@@ -128,7 +128,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         if (this->_partial_d > this->_vertical_d) {
             this->_partial_d = this->_vertical_d;
         }
-        if (this->_config.verbose) {
+        if (this->balanced_config.verbose) {
             std::cout << "Front dimensions (d') = " << this->_partial_d << std::endl;
             std::cout << "Trailing dimensions (d'') = " << this->_d - this->_vertical_d
                       << std::endl;
@@ -137,9 +137,12 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         //
         // MESOCLUSTERING
         //
+        if (this->balanced_config.verbose) {
+            std::cout << "\n=== PHASE 1: MESOCLUSTERING (k=" << n_mesoclusters << " clusters) ===" << std::endl;
+        }
         auto centroids_pdx_wrapper =
             this->GenerateCentroids(data_p, this->_n_samples, n_mesoclusters);
-        if (this->_config.verbose) {
+        if (this->balanced_config.verbose) {
             std::cout << "Sampling data..." << std::endl;
         }
         std::vector<vector_value_t>
@@ -150,7 +153,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
         {
             SKM_PROFILE_SCOPE("rotator");
-            if (this->_config.verbose)
+            if (this->balanced_config.verbose)
                 std::cout << "Rotating..." << std::endl;
             this->_pruner->Rotate(
                 this->_horizontal_centroids.data(), this->_prev_centroids.data(), n_mesoclusters
@@ -164,7 +167,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
         // TODO(@lkuffo, crit) N_QUERIES LOGIC
 
-        if (this->_config.verbose)
+        if (this->balanced_config.verbose)
             std::cout << "1st iteration..." << std::endl;
 
         size_t iter_idx = 0;
@@ -172,10 +175,10 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         size_t iters_without_improvement = 0;
 
         // Buffers for RunIteration (needed for function signature even if unused in GEMM-only mode)
-        std::vector<vector_value_t> centroids_partial_norms(n_mesoclusters);
+        std::vector<vector_value_t> centroids_partial_norms(this->_n_clusters);
         std::vector<size_t> not_pruned_counts(this->_n_samples);
 
-        this->RunIteration<true>(
+        this->template RunIteration<true>(
             data_to_cluster,
             tmp_distances_buf.data(),
             centroids_pdx_wrapper,
@@ -203,7 +206,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
                 n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                 for (; iter_idx < this->balanced_config.iters_mesoclustering; ++iter_idx) {
-                    this->RunIteration<true>(
+                    this->template RunIteration<true>(
                         data_to_cluster,
                         tmp_distances_buf.data(),
                         centroids_pdx_wrapper,
@@ -217,7 +220,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         false, // is_first_iter
                         this->balanced_iteration_stats.mesoclustering_iteration_stats
                     );
-                    if (this->_config.early_termination &&
+                    if (this->balanced_config.early_termination &&
                         this->ShouldStopEarly(
                             n_queries > 0, best_recall, iters_without_improvement, iter_idx
                         )) {
@@ -229,7 +232,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                     data_to_cluster, this->_n_samples, this->_data_norms.data(), this->_partial_d
                 );
                 for (; iter_idx < this->balanced_config.iters_mesoclustering; ++iter_idx) {
-                    this->RunIteration<false>(
+                    this->template RunIteration<false>(
                         data_to_cluster,
                         tmp_distances_buf.data(),
                         centroids_pdx_wrapper,
@@ -243,7 +246,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         false, // is_first_iter
                         this->balanced_iteration_stats.mesoclustering_iteration_stats
                     );
-                    if (this->_config.early_termination &&
+                    if (this->balanced_config.early_termination &&
                         this->ShouldStopEarly(
                             n_queries > 0, best_recall, iters_without_improvement, iter_idx
                         )) {
@@ -265,6 +268,10 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         // FINE-CLUSTERING
         // Each mesocluster is re-clustered sequentially
         //
+        if (this->balanced_config.verbose) {
+            std::cout << "\n=== PHASE 2: FINE-CLUSTERING (subdividing " << n_mesoclusters
+                      << " mesoclusters into total " << this->_n_clusters << " clusters) ===" << std::endl;
+        }
         size_t max_mesocluster_size =
             *std::max_element(this->_cluster_sizes.begin(), this->_cluster_sizes.end());
         std::vector<vector_value_t> mesocluster_buffer(max_mesocluster_size * this->_d);
@@ -290,7 +297,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 assignments_indirection_buffer.data()
             );
             auto mesocluster_data_to_cluster = mesocluster_buffer.data();
-            auto mesocluster_centroids_pdx_wrapper = GenerateCentroids(
+            auto mesocluster_centroids_pdx_wrapper = this->GenerateCentroids(
                 mesocluster_data_to_cluster, mesocluster_size, n_fineclusters, false
             );
             this->GetL2NormsRowMajor(
@@ -301,7 +308,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             float fine_best_recall = 0.0f;
             iters_without_improvement = 0;
 
-            this->RunIteration<true>(
+            this->template RunIteration<true>(
                 mesocluster_data_to_cluster,
                 tmp_distances_buf.data(),
                 mesocluster_centroids_pdx_wrapper,
@@ -318,7 +325,6 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
             fine_iter_idx = 1;
             fine_best_recall = this->_recall;
-            not_pruned_counts.clear();
 
             if (this->balanced_config.iters_fineclustering > 1) {
                 //
@@ -328,7 +334,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                     n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                     for (; fine_iter_idx < this->balanced_config.iters_fineclustering;
                          ++fine_iter_idx) {
-                        this->RunIteration<true>(
+                        this->template RunIteration<true>(
                             mesocluster_data_to_cluster,
                             tmp_distances_buf.data(),
                             mesocluster_centroids_pdx_wrapper,
@@ -342,7 +348,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                             false, // is_first_iter
                             this->balanced_iteration_stats.fineclustering_iteration_stats
                         );
-                        if (this->_config.early_termination && this->ShouldStopEarly(
+                        if (this->balanced_config.early_termination && this->ShouldStopEarly(
                                                                    n_queries > 0,
                                                                    fine_best_recall,
                                                                    iters_without_improvement,
@@ -360,7 +366,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                     );
                     for (; fine_iter_idx < this->balanced_config.iters_fineclustering;
                          ++fine_iter_idx) {
-                        this->RunIteration<false>(
+                        this->template RunIteration<false>(
                             mesocluster_data_to_cluster,
                             tmp_distances_buf.data(),
                             mesocluster_centroids_pdx_wrapper,
@@ -374,7 +380,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                             false, // is_first_iter
                             this->balanced_iteration_stats.fineclustering_iteration_stats
                         );
-                        if (this->_config.early_termination && this->ShouldStopEarly(
+                        if (this->balanced_config.early_termination && this->ShouldStopEarly(
                                                                    n_queries > 0,
                                                                    fine_best_recall,
                                                                    iters_without_improvement,
@@ -392,7 +398,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             GetTrueAssignmentsFromIndirectionBuffer(
                 assignments_indirection_buffer.data(),
                 final_assignments.data(),
-                this->_assignments,
+                this->_assignments.data(),
                 mesocluster_size,
                 fineclusters_offset
             );
@@ -408,6 +414,10 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
         // Now we move to the last refinement phase in which we perform clustering with all
         // _n_clusters. Recall our initial buffers for centroids have enough space for _n_clusters.
+        if (this->balanced_config.verbose) {
+            std::cout << "\n=== PHASE 3: REFINEMENT (fine-tuning all " << this->_n_clusters
+                      << " clusters) ===" << std::endl;
+        }
         this->_n_samples = initial_n_samples;
         this->_partial_d = initial_partial_d;
 
@@ -429,7 +439,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 this->_n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                 for (; refinement_iter_idx < this->balanced_config.iters_refinement;
                      ++refinement_iter_idx) {
-                    this->RunIteration<true>(
+                    this->template RunIteration<true>(
                         data_to_cluster,
                         tmp_distances_buf.data(),
                         final_refinement_pdx_wrapper,
@@ -454,7 +464,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 );
                 for (; refinement_iter_idx < this->balanced_config.iters_refinement;
                      ++refinement_iter_idx) {
-                    this->RunIteration<false>(
+                    this->template RunIteration<false>(
                         data_to_cluster,
                         tmp_distances_buf.data(),
                         final_refinement_pdx_wrapper,
@@ -473,11 +483,11 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         }
 
         this->_trained = true;
-        auto output_centroids = this->GetOutputCentroids(this->_config.unrotate_centroids);
-        if (this->_config.perform_assignments) {
-            this->_assignments = Assign(data, output_centroids.data(), n, this->_n_clusters);
+        auto output_centroids = this->GetOutputCentroids(this->balanced_config.unrotate_centroids);
+        if (this->balanced_config.perform_assignments) {
+            this->_assignments = this->Assign(data, output_centroids.data(), n, this->_n_clusters);
         }
-        if (this->_config.verbose) {
+        if (this->balanced_config.verbose) {
             Profiler::Get().PrintHierarchical();
         }
         return output_centroids;
@@ -551,7 +561,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
             PDXLayout<q, alpha>::template PDXify<false>(
-                this->_horizontal_centroids.data(), this->_centroids.data(), n_clusters, _d
+                this->_horizontal_centroids.data(), this->_centroids.data(), n_clusters, this->_d
             );
         }
         //! We wrap _centroids and _partial_horizontal_centroids in the PDXLayout wrapper
