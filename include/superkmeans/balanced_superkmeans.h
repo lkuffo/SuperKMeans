@@ -81,7 +81,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         if (this->_trained) {
             throw std::runtime_error("The clustering has already been trained");
         }
-        n_mesoclusters = static_cast<size_t>(std::floor(std::sqrt(this->_n_clusters)));
+        n_mesoclusters = static_cast<size_t>(std::round(std::sqrt(this->_n_clusters)));
         balanced_iteration_stats.fineclustering_iteration_stats.clear();
         balanced_iteration_stats.mesoclustering_iteration_stats.clear();
         balanced_iteration_stats.refinement_iteration_stats.clear();
@@ -105,8 +105,8 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         }
         {
             SKM_PROFILE_SCOPE("allocator");
-            this->mesoclusters_assignments.resize(n);
-            this->final_assignments.resize(n);
+            this->mesoclusters_assignments.resize(this->_n_samples);
+            this->final_assignments.resize(this->_n_samples);
             this->mesoclusters_sizes.resize(n_mesoclusters);
             this->final_centroids.resize(this->_n_clusters * this->_d);
             // We use the same buffers for the mesocentroids
@@ -273,9 +273,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         std::vector<uint32_t> assignments_indirection_buffer(max_mesocluster_size);
         size_t fineclusters_left_to_build = this->_n_clusters;
         size_t fineclusters_offset = 0;
-        size_t final_assignments_offset = 0;
         for (size_t k = 0; k < n_mesoclusters; ++k) {
-            size_t n_fineclusters = std::min(n_mesoclusters, fineclusters_left_to_build);
+            size_t n_fineclusters =
+                (k == n_mesoclusters - 1) ? fineclusters_left_to_build : n_mesoclusters;
             fineclusters_left_to_build -= n_fineclusters;
             this->_partial_d = initial_partial_d;
 
@@ -294,7 +294,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 mesocluster_data_to_cluster, mesocluster_size, n_fineclusters, false
             );
             this->GetL2NormsRowMajor(
-                this->_horizontal_centroids.data(), n_mesoclusters, this->_centroid_norms.data()
+                this->_horizontal_centroids.data(), n_fineclusters, this->_centroid_norms.data()
             );
 
             size_t fine_iter_idx = 0;
@@ -325,7 +325,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 // FULL GEMM on low-dimensional data or too few clusters
                 //
                 if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
-                    n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                    n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                     for (; fine_iter_idx < this->balanced_config.iters_fineclustering;
                          ++fine_iter_idx) {
                         this->RunIteration<true>(
@@ -391,19 +391,19 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             // resolved
             GetTrueAssignmentsFromIndirectionBuffer(
                 assignments_indirection_buffer.data(),
-                final_assignments.data() + final_assignments_offset,
+                final_assignments.data(),
                 this->_assignments,
-                mesocluster_size
+                mesocluster_size,
+                fineclusters_offset
             );
             // We move the resulting centroids from this fineclustering to the final buffer of
             // centroids
             memcpy(
                 static_cast<void*>(final_centroids.data() + fineclusters_offset * this->_d),
                 static_cast<void*>(fine_centroids.data()),
-                sizeof(centroid_value_t) * n_fineclusters
+                sizeof(centroid_value_t) * n_fineclusters * this->_d
             );
-            final_assignments_offset += mesocluster_size;
-            fineclusters_offset += n_fineclusters * this->_d;
+            fineclusters_offset += n_fineclusters;
         }
 
         // Now we move to the last refinement phase in which we perform clustering with all
@@ -421,13 +421,13 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         // RunIteration<false>
         // 2 refinement iterations GEMM+PRUNING with data_to_sample and final_centroids
         size_t refinement_iter_idx = 0;
-        if (this->balanced_config.iters_refinement > 1) {
+        if (this->balanced_config.iters_refinement > 0) {
             //
             // FULL GEMM on low-dimensional data or too few clusters
             //
             if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
-                n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-                for (; refinement_iter_idx < this->balanced_config.iters_fineclustering;
+                this->_n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                for (; refinement_iter_idx < this->balanced_config.iters_refinement;
                      ++refinement_iter_idx) {
                     this->RunIteration<true>(
                         data_to_cluster,
@@ -452,7 +452,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 this->GetPartialL2NormsRowMajor(
                     data_to_cluster, this->_n_samples, this->_data_norms.data(), this->_partial_d
                 );
-                for (; refinement_iter_idx < this->balanced_config.iters_fineclustering;
+                for (; refinement_iter_idx < this->balanced_config.iters_refinement;
                      ++refinement_iter_idx) {
                     this->RunIteration<false>(
                         data_to_cluster,
@@ -502,7 +502,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         // TODO(@lkuffo, high): I would need to see how numpy does this to be more efficient
         for (size_t i = 0; i < n_samples; ++i) {
             if (mesoclusters_assignments[i] == mesocluster_id) {
-                this->data_norms[samples_compacted] = immutable_data_norms[i];
+                this->_data_norms[samples_compacted] = immutable_data_norms[i];
                 assignments_indirection_buffer[samples_compacted] = i;
                 memcpy(
                     static_cast<void*>(mesocluster_buffer + samples_compacted * this->_d),
@@ -518,10 +518,16 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         const uint32_t* SKM_RESTRICT assignments_indirection_buffer,
         uint32_t* SKM_RESTRICT output_assignments,
         const uint32_t* SKM_RESTRICT input_assignments,
-        const size_t n_samples_in_mesocluster
+        const size_t n_samples_in_mesocluster,
+        const size_t cluster_id_offset
     ) {
         for (size_t i = 0; i < n_samples_in_mesocluster; ++i) {
-            output_assignments[i] = assignments_indirection_buffer[input_assignments[i]];
+            size_t original_idx = assignments_indirection_buffer[i];
+            uint32_t local_cluster_id = input_assignments[i];
+            // Assignments in fineclustering are from 0 to n_fineclusters-1
+            // We need to add the offset to put the global cluster id in the final assignments
+            uint32_t global_cluster_id = local_cluster_id + cluster_id_offset;
+            output_assignments[original_idx] = global_cluster_id;
         }
     }
 
@@ -538,9 +544,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         const size_t n_clusters
     ) {
         memcpy(
-            (void*) (this->_horizontal_centroids),
+            (void*) (this->_horizontal_centroids.data()),
             (void*) (centroids),
-            sizeof(centroid_value_t) * n_clusters * this->d
+            sizeof(centroid_value_t) * n_clusters * this->_d
         );
         {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
