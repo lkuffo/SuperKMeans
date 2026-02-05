@@ -10,7 +10,8 @@ namespace skmeans {
 struct BalancedSuperKMeansConfig : SuperKMeansConfig {
     uint32_t n_points_per_mesocluster = 1024;
     uint32_t iters_mesoclustering = 10;
-    float sampling_fraction_mesoclustering = 0.3f;
+    uint32_t iters_fineclustering = 10;
+    uint32_t iters_refinement = 2;
 };
 
 /**
@@ -19,7 +20,7 @@ struct BalancedSuperKMeansConfig : SuperKMeansConfig {
 struct BalancedSuperKMeansIterationStats {
     std::vector<SuperKMeansIterationStats> mesoclustering_iteration_stats;
     std::vector<SuperKMeansIterationStats> refinement_iteration_stats;
-    std::vector<std::vector<SuperKMeansIterationStats>> fineclustering_iteration_stats;
+    std::vector<SuperKMeansIterationStats> fineclustering_iteration_stats;
 };
 
 template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
@@ -45,7 +46,6 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         : SuperKMeans<q, alpha>(n_clusters, dimensionality, config), balanced_config(config) {
         SKMEANS_ENSURE_POSITIVE(config.n_points_per_mesocluster);
         SKMEANS_ENSURE_POSITIVE(config.iters_mesoclustering);
-        SKMEANS_ENSURE_POSITIVE(config.sampling_fraction_mesoclustering);
 
         if (n_clusters <= 128) {
             std::cout << "WARNING: n_clusters <= 128 is not recommended for BalancedSuperKMeans. "
@@ -107,6 +107,8 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             SKM_PROFILE_SCOPE("allocator");
             this->mesoclusters_assignments.resize(n);
             this->final_assignments.resize(n);
+            this->mesoclusters_sizes.resize(n_mesoclusters);
+            this->final_centroids.resize(this->_n_clusters * this->_d);
             // We use the same buffers for the mesocentroids
             this->_centroids.resize(this->_n_clusters * this->_d);
             this->_horizontal_centroids.resize(this->_n_clusters * this->_d);
@@ -122,6 +124,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         this->_partial_horizontal_centroids.resize(this->_n_clusters * this->_vertical_d);
 
         this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 2);
+        auto initial_partial_d = this->_partial_d;
         if (this->_partial_d > this->_vertical_d) {
             this->_partial_d = this->_vertical_d;
         }
@@ -143,6 +146,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             data_samples_buffer; // Samples for mesoclustering and fineclustering
         this->SampleAndRotateVectors(data_p, data_samples_buffer, n, this->_n_samples, true);
         auto data_to_cluster = data_samples_buffer.data();
+        auto initial_n_samples = this->_n_samples;
 
         {
             SKM_PROFILE_SCOPE("rotator");
@@ -177,12 +181,12 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             centroids_pdx_wrapper,
             centroids_partial_norms,
             not_pruned_counts,
-            nullptr,  // rotated_queries (TODO: implement query logic)
-            0,        // n_queries
+            nullptr, // rotated_queries (TODO: implement query logic)
+            0,       // n_queries
             this->_n_samples,
             n_mesoclusters,
             iter_idx,
-            true,  // is_first_iter
+            true, // is_first_iter
             this->balanced_iteration_stats.mesoclustering_iteration_stats
         );
 
@@ -205,12 +209,12 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         centroids_pdx_wrapper,
                         centroids_partial_norms,
                         not_pruned_counts,
-                        nullptr,  // rotated_queries
-                        0,        // n_queries
+                        nullptr, // rotated_queries
+                        0,       // n_queries
                         this->_n_samples,
                         n_mesoclusters,
                         iter_idx,
-                        false,  // is_first_iter
+                        false, // is_first_iter
                         this->balanced_iteration_stats.mesoclustering_iteration_stats
                     );
                     if (this->_config.early_termination &&
@@ -231,12 +235,12 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         centroids_pdx_wrapper,
                         centroids_partial_norms,
                         not_pruned_counts,
-                        nullptr,  // rotated_queries
-                        0,        // n_queries
+                        nullptr, // rotated_queries
+                        0,       // n_queries
                         this->_n_samples,
                         n_mesoclusters,
                         iter_idx,
-                        false,  // is_first_iter
+                        false, // is_first_iter
                         this->balanced_iteration_stats.mesoclustering_iteration_stats
                     );
                     if (this->_config.early_termination &&
@@ -248,8 +252,12 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 }
             }
         }
-        auto meso_centroids = this->GetOutputCentroids(true);
-        mesoclusters_assignments = this->_assignments; // TODO(@lkuffo, high): Deep copy?
+        auto meso_centroids = this->GetOutputCentroids(false);
+        mesoclusters_sizes = this->_cluster_sizes; // TODO(@lkuffo, high): Deep copy?
+        mesoclusters_assignments =
+            this->_assignments; // TODO(@lkuffo, high): Deep copy? I dont really like this because
+                                // we need smaller buffers (we are taking samples)
+        immutable_data_norms = this->_data_norms; // TODO(@lkuffo, high): Deep copy?
         // TODO(@lkuffo, high: Need a fast assign, for now we use the iter_idx-1 assignments)
         // mesoclusters_assignments = Assign(data, meso_centroids.data(), n, n_mesoclusters);
 
@@ -257,35 +265,212 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         // FINE-CLUSTERING
         // Each mesocluster is re-clustered sequentially
         //
-        size_t max_mesocluster_size = *std::max_element(this->_cluster_sizes.begin(), this->_cluster_sizes.end());
+        size_t max_mesocluster_size =
+            *std::max_element(this->_cluster_sizes.begin(), this->_cluster_sizes.end());
         std::vector<vector_value_t> mesocluster_buffer(max_mesocluster_size * this->_d);
         std::vector<vector_value_t> mesocluster_data_norms(max_mesocluster_size);
         std::vector<vector_value_t> mesocluster_partial_data_norms(max_mesocluster_size);
+        std::vector<uint32_t> assignments_indirection_buffer(max_mesocluster_size);
         size_t fineclusters_left_to_build = this->_n_clusters;
+        size_t fineclusters_offset = 0;
+        size_t final_assignments_offset = 0;
         for (size_t k = 0; k < n_mesoclusters; ++k) {
             size_t n_fineclusters = std::min(n_mesoclusters, fineclusters_left_to_build);
             fineclusters_left_to_build -= n_fineclusters;
+            this->_partial_d = initial_partial_d;
 
-            // Reset partial_d
-            // Copy in mesocluster_buffer, the vectors assigned to this mesocluster
-            // Get how many they are (n_samples_in_mesocluster)
-            // They are already rotated, so you just have to copy
-            // Copy the full norms of these vectors
-            // DO NOT SAMPLE POINTS... SAMPLE WAS ALREADY TAKEN
-            // Generate centroids from this buffer
+            auto mesocluster_size = mesoclusters_sizes[k];
+            this->_n_samples = mesocluster_size;
+            CompactMesoclusterToBuffer(
+                k,
+                mesocluster_size,
+                data_to_cluster,
+                initial_n_samples,
+                mesocluster_buffer.data(),
+                assignments_indirection_buffer.data()
+            );
+            auto mesocluster_data_to_cluster = mesocluster_buffer.data();
+            auto mesocluster_centroids_pdx_wrapper = GenerateCentroids(
+                mesocluster_data_to_cluster, mesocluster_size, n_fineclusters, false
+            );
+            this->GetL2NormsRowMajor(
+                this->_horizontal_centroids.data(), n_mesoclusters, this->_centroid_norms.data()
+            );
 
-            // Run the clustering as normal. Everything should fall in place
+            size_t fine_iter_idx = 0;
+            float fine_best_recall = 0.0f;
+            iters_without_improvement = 0;
 
-            // Get output_centroids
-            // Copy output_centroids into a final buffer with the final centroids
-            // Copy n_samples_in_mesocluster of this->_assignments into final_assignments
-            // final_assignments_offset += n_samples_in_mesocluster
+            this->RunIteration<true>(
+                mesocluster_data_to_cluster,
+                tmp_distances_buf.data(),
+                mesocluster_centroids_pdx_wrapper,
+                centroids_partial_norms,
+                not_pruned_counts,
+                nullptr, // rotated_queries (TODO: implement query logic)
+                0,       // n_queries
+                this->_n_samples,
+                n_fineclusters,
+                fine_iter_idx,
+                true, // is_first_iter
+                this->balanced_iteration_stats.fineclustering_iteration_stats
+            );
+
+            fine_iter_idx = 1;
+            fine_best_recall = this->_recall;
+            not_pruned_counts.clear();
+
+            if (this->balanced_config.iters_fineclustering > 1) {
+                //
+                // FULL GEMM on low-dimensional data or too few clusters
+                //
+                if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                    n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                    for (; fine_iter_idx < this->balanced_config.iters_fineclustering;
+                         ++fine_iter_idx) {
+                        this->RunIteration<true>(
+                            mesocluster_data_to_cluster,
+                            tmp_distances_buf.data(),
+                            mesocluster_centroids_pdx_wrapper,
+                            centroids_partial_norms,
+                            not_pruned_counts,
+                            nullptr, // rotated_queries
+                            0,       // n_queries
+                            this->_n_samples,
+                            n_fineclusters,
+                            fine_iter_idx,
+                            false, // is_first_iter
+                            this->balanced_iteration_stats.fineclustering_iteration_stats
+                        );
+                        if (this->_config.early_termination && this->ShouldStopEarly(
+                                                                   n_queries > 0,
+                                                                   fine_best_recall,
+                                                                   iters_without_improvement,
+                                                                   fine_iter_idx
+                                                               )) {
+                            break;
+                        }
+                    }
+                } else { // Rest of Iterations with GEMM+PRUNING
+                    this->GetPartialL2NormsRowMajor(
+                        mesocluster_data_to_cluster,
+                        this->_n_samples,
+                        this->_data_norms.data(),
+                        this->_partial_d
+                    );
+                    for (; fine_iter_idx < this->balanced_config.iters_fineclustering;
+                         ++fine_iter_idx) {
+                        this->RunIteration<false>(
+                            mesocluster_data_to_cluster,
+                            tmp_distances_buf.data(),
+                            mesocluster_centroids_pdx_wrapper,
+                            centroids_partial_norms,
+                            not_pruned_counts,
+                            nullptr, // rotated_queries
+                            0,       // n_queries
+                            this->_n_samples,
+                            n_fineclusters,
+                            fine_iter_idx,
+                            false, // is_first_iter
+                            this->balanced_iteration_stats.fineclustering_iteration_stats
+                        );
+                        if (this->_config.early_termination && this->ShouldStopEarly(
+                                                                   n_queries > 0,
+                                                                   fine_best_recall,
+                                                                   iters_without_improvement,
+                                                                   fine_iter_idx
+                                                               )) {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            auto fine_centroids = this->GetOutputCentroids(false);
+            // If we want to use PRUNING in the refinement iterations, I need this indirection to be
+            // resolved
+            GetTrueAssignmentsFromIndirectionBuffer(
+                assignments_indirection_buffer.data(),
+                final_assignments.data() + final_assignments_offset,
+                this->_assignments,
+                mesocluster_size
+            );
+            // We move the resulting centroids from this fineclustering to the final buffer of
+            // centroids
+            memcpy(
+                static_cast<void*>(final_centroids.data() + fineclusters_offset * this->_d),
+                static_cast<void*>(fine_centroids.data()),
+                sizeof(centroid_value_t) * n_fineclusters
+            );
+            final_assignments_offset += mesocluster_size;
+            fineclusters_offset += n_fineclusters * this->_d;
         }
 
-        // Copy final_assignments into this->_assignments
+        // Now we move to the last refinement phase in which we perform clustering with all
+        // _n_clusters. Recall our initial buffers for centroids have enough space for _n_clusters.
+        this->_n_samples = initial_n_samples;
+        this->_partial_d = initial_partial_d;
+
+        // We just transfer the state of centroids to the proper class variables, no rotation.
+        auto final_refinement_pdx_wrapper =
+            SetupCentroids(final_centroids.data(), this->_n_clusters);
+        this->GetL2NormsRowMajor(
+            this->_horizontal_centroids.data(), this->_n_clusters, this->_centroid_norms.data()
+        );
+
+        // RunIteration<false>
         // 2 refinement iterations GEMM+PRUNING with data_to_sample and final_centroids
-        // and all n_clusters
-        //
+        size_t refinement_iter_idx = 0;
+        if (this->balanced_config.iters_refinement > 1) {
+            //
+            // FULL GEMM on low-dimensional data or too few clusters
+            //
+            if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                for (; refinement_iter_idx < this->balanced_config.iters_fineclustering;
+                     ++refinement_iter_idx) {
+                    this->RunIteration<true>(
+                        data_to_cluster,
+                        tmp_distances_buf.data(),
+                        final_refinement_pdx_wrapper,
+                        centroids_partial_norms,
+                        not_pruned_counts,
+                        nullptr, // rotated_queries
+                        0,       // n_queries
+                        this->_n_samples,
+                        this->_n_clusters,
+                        refinement_iter_idx,
+                        false, // is_first_iter
+                        this->balanced_iteration_stats.refinement_iteration_stats
+                    );
+                }
+            } else { // Rest of Iterations with GEMM+PRUNING
+                // TODO(@lkuffo, high): The only reason I need to do this (again) in the first time
+                //   is because we are
+                //   using the same this->_data_norms.data() buffer in the fineclustering, which
+                //   replaces the norms that I already calculated before and put in this buffer.
+                this->GetPartialL2NormsRowMajor(
+                    data_to_cluster, this->_n_samples, this->_data_norms.data(), this->_partial_d
+                );
+                for (; refinement_iter_idx < this->balanced_config.iters_fineclustering;
+                     ++refinement_iter_idx) {
+                    this->RunIteration<false>(
+                        data_to_cluster,
+                        tmp_distances_buf.data(),
+                        final_refinement_pdx_wrapper,
+                        centroids_partial_norms,
+                        not_pruned_counts,
+                        nullptr, // rotated_queries
+                        0,       // n_queries
+                        this->_n_samples,
+                        this->_n_clusters,
+                        refinement_iter_idx,
+                        false, // is_first_iter
+                        this->balanced_iteration_stats.refinement_iteration_stats
+                    );
+                }
+            }
+        }
 
         this->_trained = true;
         auto output_centroids = this->GetOutputCentroids(this->_config.unrotate_centroids);
@@ -298,11 +483,92 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         return output_centroids;
     }
 
-    size_t n_mesoclusters;
+    /*
+     * Compact data assigned to a mesocluster in mesocluster_buffer
+     * They are already rotated, so we just have to copy
+     * Additionally, we have to copy their norms in a sequential buffer to not recompute them
+     * In theory, we don't have to re-sample data here.
+     */
+    void CompactMesoclusterToBuffer(
+        const size_t mesocluster_id,
+        const size_t mesocluster_size,
+        const vector_value_t* SKM_RESTRICT data,
+        const size_t n_samples,
+        vector_value_t* SKM_RESTRICT mesocluster_buffer,
+        uint32_t* SKM_RESTRICT assignments_indirection_buffer
+    ) {
+        size_t samples_compacted = 0;
+        // Iterate through all data to compact the mesocluster in a contiguous block
+        // TODO(@lkuffo, high): I would need to see how numpy does this to be more efficient
+        for (size_t i = 0; i < n_samples; ++i) {
+            if (mesoclusters_assignments[i] == mesocluster_id) {
+                this->data_norms[samples_compacted] = immutable_data_norms[i];
+                assignments_indirection_buffer[samples_compacted] = i;
+                memcpy(
+                    static_cast<void*>(mesocluster_buffer + samples_compacted * this->_d),
+                    static_cast<const void*>(data + i * this->_d),
+                    sizeof(vector_value_t) * this->_d
+                );
+                samples_compacted++;
+            }
+        }
+    }
+
+    void GetTrueAssignmentsFromIndirectionBuffer(
+        const uint32_t* SKM_RESTRICT assignments_indirection_buffer,
+        uint32_t* SKM_RESTRICT output_assignments,
+        const uint32_t* SKM_RESTRICT input_assignments,
+        const size_t n_samples_in_mesocluster
+    ) {
+        for (size_t i = 0; i < n_samples_in_mesocluster; ++i) {
+            output_assignments[i] = assignments_indirection_buffer[input_assignments[i]];
+        }
+    }
+
+    /**
+     * @brief Setup centroids to be used for clustering
+     *
+     *
+     * @param centroids Centroids to setup
+     * @param n_clusters Number of centroids to setupt
+     * @return PDXLayout wrapper for the centroids
+     */
+    PDXLayout<q, alpha> SetupCentroids(
+        const centroid_value_t* SKM_RESTRICT centroids,
+        const size_t n_clusters
+    ) {
+        memcpy(
+            (void*) (this->_horizontal_centroids),
+            (void*) (centroids),
+            sizeof(centroid_value_t) * n_clusters * this->d
+        );
+        {
+            SKM_PROFILE_SCOPE("consolidate/pdxify");
+            PDXLayout<q, alpha>::template PDXify<false>(
+                this->_horizontal_centroids.data(), this->_centroids.data(), n_clusters, _d
+            );
+        }
+        //! We wrap _centroids and _partial_horizontal_centroids in the PDXLayout wrapper
+        //! Any updates to these objects is reflected in the PDXLayout
+        auto pdx_centroids = PDXLayout<q, alpha>(
+            this->_centroids.data(),
+            *this->_pruner,
+            n_clusters,
+            this->_d,
+            this->_partial_horizontal_centroids.data()
+        );
+        this->CentroidsToAuxiliaryHorizontal(n_clusters);
+        return pdx_centroids;
+    }
+
+    size_t n_mesoclusters = 0;
 
     std::vector<uint32_t> mesoclusters_assignments;
+    std::vector<uint32_t> mesoclusters_sizes;
     std::vector<uint32_t> final_assignments;
+    std::vector<vector_value_t> immutable_data_norms;
     std::vector<centroid_value_t> meso_centroids;
+    std::vector<centroid_value_t> final_centroids;
     BalancedSuperKMeansConfig balanced_config;
     BalancedSuperKMeansIterationStats balanced_iteration_stats;
 };

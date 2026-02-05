@@ -870,12 +870,14 @@ class SuperKMeans {
      *
      * @param data Data matrix
      * @param n_clusters Number of centroids to generate
+     * @param rotate Wheter to rotate the sampled centroids
      * @return PDXLayout wrapper for the centroids
      */
     PDXLayout<q, alpha> GenerateCentroids(
         const vector_value_t* SKM_RESTRICT data,
         const size_t n_points,
-        const size_t n_clusters
+        const size_t n_clusters,
+        const bool rotate = true
     ) {
         {
             SKM_PROFILE_SCOPE("sampling");
@@ -898,9 +900,15 @@ class SuperKMeans {
         }
         // We populate the _centroids buffer with the centroids in the PDX layout
         std::vector<centroid_value_t> rotated_centroids(n_clusters * _d);
-        {
+        if (rotate) {
             SKM_PROFILE_SCOPE("rotator");
             _pruner->Rotate(_horizontal_centroids.data(), rotated_centroids.data(), n_clusters);
+        } else {
+            memcpy(
+                static_cast<void*>(rotated_centroids.data()),
+                static_cast<void*>(_horizontal_centroids.data()),
+                sizeof(centroid_value_t) * n_clusters
+            );
         }
         {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
@@ -910,6 +918,8 @@ class SuperKMeans {
         }
         //! We wrap _centroids and _partial_horizontal_centroids in the PDXLayout wrapper
         //! Any updates to these objects is reflected in the PDXLayout
+        //! _partial_horizontal_centroids are not filled until ConsolidateCentroids is called()
+        // after the first iteration
         auto pdx_centroids = PDXLayout<q, alpha>(
             _centroids.data(), *_pruner, n_clusters, _d, _partial_horizontal_centroids.data()
         );
