@@ -162,6 +162,8 @@ class SuperKMeans {
             _data_norms.resize(_n_samples);
             _centroid_norms.resize(_n_clusters);
         }
+        std::vector<vector_value_t> centroids_partial_norms(_n_clusters);
+        std::vector<size_t> not_pruned_counts(_n_samples);
         std::vector<distance_t> tmp_distances_buf(X_BATCH_SIZE * Y_BATCH_SIZE);
         _vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(_d).vertical_d;
         _partial_horizontal_centroids.resize(_n_clusters * _vertical_d);
@@ -230,37 +232,24 @@ class SuperKMeans {
         //
         if (_config.verbose)
             std::cout << "1st iteration..." << std::endl;
-        FirstAssignAndUpdateCentroids(
+        size_t iter_idx = 0;
+        float best_recall = 0.0f;
+        size_t iters_without_improvement = 0;
+        RunIteration<true>(
             data_to_cluster,
-            _prev_centroids.data(),
             tmp_distances_buf.data(),
+            centroids_pdx_wrapper,
+            centroids_partial_norms,
+            not_pruned_counts,
+            rotated_queries.data(),
+            n_queries,
             _n_samples,
-            _n_clusters
+            _n_clusters,
+            iter_idx,
+            true  // is_first_iter
         );
-        UpdateCentroids(data_to_cluster, _n_samples, _n_clusters);
-        ConsolidateCentroids(_n_samples, _n_clusters);
-        ComputeCost(_n_samples);
-        ComputeShift(_n_clusters);
-        if (n_queries) {
-            _recall = ComputeRecall(rotated_queries.data(), n_queries);
-        }
-        size_t iter_idx = 1;
-        {
-            SuperKMeansIterationStats stats;
-            stats.iteration = 1;
-            stats.objective = _cost;
-            stats.shift = _shift;
-            stats.split = _n_split;
-            stats.recall = _recall;
-            stats.is_gemm_only = false;
-            iteration_stats.push_back(stats);
-        }
-        if (_config.verbose)
-            std::cout << "Iteration 1" << "/" << _config.iters << " | Objective: " << _cost
-                      << " | Shift: " << _shift << " | Split: " << _n_split
-                      << " | Recall: " << _recall << std::endl
-                      << std::endl;
-
+        iter_idx = 1;
+        best_recall = _recall;
         if (_config.iters <= 1) {
             auto output_centroids = GetOutputCentroids(_config.unrotate_centroids);
             if (_config.perform_assignments) {
@@ -272,51 +261,25 @@ class SuperKMeans {
             return output_centroids;
         }
 
-        float best_recall = _recall;
-        size_t iters_without_improvement = 0;
-
         //
         // FULL GEMM on low-dimensional data or too few clusters
         //
         if (_d < DIMENSION_THRESHOLD_FOR_PRUNING || _config.use_blas_only ||
             _n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
             for (; iter_idx < _config.iters; ++iter_idx) {
-                std::swap(_horizontal_centroids, _prev_centroids);
-                GetL2NormsRowMajor(_prev_centroids.data(), _n_clusters, _centroid_norms.data());
-                FirstAssignAndUpdateCentroids(
+                RunIteration<true>(
                     data_to_cluster,
-                    _prev_centroids.data(),
                     tmp_distances_buf.data(),
+                    centroids_pdx_wrapper,
+                    centroids_partial_norms,
+                    not_pruned_counts,
+                    rotated_queries.data(),
+                    n_queries,
                     _n_samples,
-                    _n_clusters
+                    _n_clusters,
+                    iter_idx,
+                    false  // is_first_iter
                 );
-                UpdateCentroids(data_to_cluster, _n_samples, _n_clusters);
-                ConsolidateCentroids(_n_samples, _n_clusters);
-                ComputeCost(_n_samples);
-                ComputeShift(_n_clusters);
-                if (n_queries) {
-                    GetL2NormsRowMajor(
-                        _horizontal_centroids.data(), _n_clusters, _centroid_norms.data()
-                    );
-                    _recall = ComputeRecall(rotated_queries.data(), n_queries);
-                }
-                {
-                    SuperKMeansIterationStats stats;
-                    stats.iteration = iter_idx + 1;
-                    stats.objective = _cost;
-                    stats.shift = _shift;
-                    stats.split = _n_split;
-                    stats.recall = _recall;
-                    stats.is_gemm_only = true;
-                    iteration_stats.push_back(stats);
-                }
-                if (_config.verbose)
-                    std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
-                              << " | Objective: " << _cost
-                              << " | Objective improvement: " << 1 - (_cost / _prev_cost)
-                              << " | Shift: " << _shift << " | Split: " << _n_split
-                              << " | Recall: " << _recall << " [BLAS-only]" << std::endl
-                              << std::endl;
                 if (_config.early_termination &&
                     ShouldStopEarly(
                         n_queries > 0, best_recall, iters_without_improvement, iter_idx
@@ -338,73 +301,27 @@ class SuperKMeans {
         //
         // Rest of iterations with GEMM+PRUNING
         //
-        std::vector<vector_value_t> centroids_partial_norms(_n_clusters);
-        std::vector<size_t> not_pruned_counts(_n_samples);
         GetPartialL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data(), _partial_d);
         for (; iter_idx < _config.iters; ++iter_idx) {
-            std::swap(_horizontal_centroids, _prev_centroids);
-            GetPartialL2NormsRowMajor(
-                _prev_centroids.data(), _n_clusters, centroids_partial_norms.data(), _partial_d
-            );
-            std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
-            AssignAndUpdateCentroids(
+            RunIteration<false>(
                 data_to_cluster,
-                _prev_centroids.data(),
-                centroids_partial_norms.data(),
                 tmp_distances_buf.data(),
                 centroids_pdx_wrapper,
-                not_pruned_counts.data(),
+                centroids_partial_norms,
+                not_pruned_counts,
+                rotated_queries.data(),
+                n_queries,
                 _n_samples,
-                _n_clusters
+                _n_clusters,
+                iter_idx,
+                false  // is_first_iter
             );
-            UpdateCentroids(data_to_cluster, _n_samples, _n_clusters);
-
-            auto old_partial_d = _partial_d;
-            bool partial_d_changed = false;
-            // TODO(@lkuffo, medium): I believe if this number starts at > 20%,
-            // we should abort PRUNING and do FULL GEMM in the next iterations.
-            float avg_not_pruned_pct =
-                TunePartialD(not_pruned_counts.data(), _n_samples, _n_clusters, partial_d_changed);
-            if (partial_d_changed) {
-                GetPartialL2NormsRowMajor(
-                    data_to_cluster, _n_samples, _data_norms.data(), _partial_d
-                );
-            }
-            ConsolidateCentroids(_n_samples, _n_clusters);
-            ComputeCost(_n_samples);
-            ComputeShift(_n_clusters);
-            if (n_queries) {
-                GetL2NormsRowMajor(
-                    _horizontal_centroids.data(), _n_clusters, _centroid_norms.data()
-                );
-                _recall = ComputeRecall(rotated_queries.data(), n_queries);
-            }
-            {
-                SuperKMeansIterationStats stats;
-                stats.iteration = iter_idx + 1;
-                stats.objective = _cost;
-                stats.shift = _shift;
-                stats.split = _n_split;
-                stats.recall = _recall;
-                stats.not_pruned_pct = avg_not_pruned_pct;
-                stats.partial_d = old_partial_d;
-                stats.is_gemm_only = false;
-                iteration_stats.push_back(stats);
-            }
-            if (_config.verbose)
-                std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
-                          << " | Objective: " << _cost
-                          << " | Objective improvement: " << 1 - (_cost / _prev_cost)
-                          << " | Shift: " << _shift << " | Split: " << _n_split
-                          << " | Recall: " << _recall
-                          << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
-                          << " | d': " << old_partial_d << " -> " << _partial_d << std::endl
-                          << std::endl;
             if (_config.early_termination &&
                 ShouldStopEarly(n_queries > 0, best_recall, iters_without_improvement, iter_idx)) {
                 break;
             }
         }
+
         _trained = true;
         auto output_centroids = GetOutputCentroids(_config.unrotate_centroids);
         if (_config.perform_assignments) {
@@ -601,6 +518,131 @@ class SuperKMeans {
 #pragma clang loop vectorize(enable)
         for (size_t i = 0; i < _d; ++i) {
             _horizontal_centroids[cluster_idx * _d + i] += vector[i];
+        }
+    }
+
+    /**
+     * @brief Runs a single K-Means iteration with either GEMM-only or GEMM+PRUNING strategy.
+     *
+     *
+     * @tparam GEMM_ONLY If true, uses full GEMM (FirstAssignAndUpdateCentroids).
+     *                   If false, uses GEMM+PRUNING (AssignAndUpdateCentroids with TunePartialD).
+     *
+     * @param data_to_cluster Training data (rotated, row-major)
+     * @param tmp_distances_buf Workspace buffer for distance computations
+     * @param centroids_pdx_wrapper PDX-layout centroids (only used when !GEMM_ONLY)
+     * @param centroids_partial_norms Partial norms buffer (only used when !GEMM_ONLY)
+     * @param not_pruned_counts Pruning statistics buffer (only used when !GEMM_ONLY)
+     * @param rotated_queries Query vectors for recall computation (nullptr if n_queries==0)
+     * @param n_queries Number of query vectors
+     * @param n_samples Number of training samples
+     * @param n_clusters Number of clusters
+     * @param iter_idx Current iteration index (0-based)
+     * @param is_first_iter Whether this is the first iteration (skips centroid swap)
+     */
+    template <bool GEMM_ONLY>
+    void RunIteration(
+        const vector_value_t* SKM_RESTRICT data_to_cluster,
+        distance_t* SKM_RESTRICT tmp_distances_buf,
+        const layout_t& centroids_pdx_wrapper,
+        std::vector<vector_value_t>& centroids_partial_norms,
+        std::vector<size_t>& not_pruned_counts,
+        const vector_value_t* SKM_RESTRICT rotated_queries,
+        const size_t n_queries,
+        const size_t n_samples,
+        const size_t n_clusters,
+        size_t& iter_idx,
+        const bool is_first_iter
+    ) {
+        // Step 1: Swap centroids (skip for first iteration)
+        if (!is_first_iter) {
+            std::swap(_horizontal_centroids, _prev_centroids);
+        }
+
+        // Step 2: Compute norms (full or partial depending on strategy)
+        if constexpr (GEMM_ONLY) {
+            GetL2NormsRowMajor(_prev_centroids.data(), n_clusters, _centroid_norms.data());
+        } else {
+            GetPartialL2NormsRowMajor(
+                _prev_centroids.data(), n_clusters, centroids_partial_norms.data(), _partial_d
+            );
+        }
+
+        // Step 3: Assign points to centroids and prepare for centroid updates
+        if constexpr (GEMM_ONLY) {
+            FirstAssignAndUpdateCentroids(
+                data_to_cluster, _prev_centroids.data(), tmp_distances_buf, n_samples, n_clusters
+            );
+        } else {
+            std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
+            AssignAndUpdateCentroids(
+                data_to_cluster,
+                _prev_centroids.data(),
+                centroids_partial_norms.data(),
+                tmp_distances_buf,
+                centroids_pdx_wrapper,
+                not_pruned_counts.data(),
+                n_samples,
+                n_clusters
+            );
+        }
+
+        // Step 4: Update centroids based on assignments
+        UpdateCentroids(data_to_cluster, n_samples, n_clusters);
+
+        // Step 5: Tune partial_d (only for GEMM+PRUNING strategy)
+        float avg_not_pruned_pct = -1.0f;
+        uint32_t old_partial_d = _partial_d;
+        if constexpr (!GEMM_ONLY) {
+            bool partial_d_changed = false;
+            avg_not_pruned_pct =
+                TunePartialD(not_pruned_counts.data(), n_samples, n_clusters, partial_d_changed);
+            if (partial_d_changed) {
+                GetPartialL2NormsRowMajor(data_to_cluster, n_samples, _data_norms.data(), _partial_d);
+            }
+        }
+
+        // Step 6: Finalize centroids (normalize, handle empty clusters, convert to PDX)
+        ConsolidateCentroids(n_samples, n_clusters);
+
+        // Step 7: Compute objective and shift
+        ComputeCost(n_samples);
+        ComputeShift(n_clusters);
+
+        // Step 8: Compute recall if queries provided
+        if (n_queries) {
+            GetL2NormsRowMajor(_horizontal_centroids.data(), n_clusters, _centroid_norms.data());
+            _recall = ComputeRecall(rotated_queries, n_queries);
+        }
+
+        // Step 9: Record iteration statistics
+        SuperKMeansIterationStats stats;
+        stats.iteration = iter_idx + 1;
+        stats.objective = _cost;
+        stats.shift = _shift;
+        stats.split = _n_split;
+        stats.recall = _recall;
+        stats.is_gemm_only = GEMM_ONLY;
+        if constexpr (!GEMM_ONLY) {
+            stats.not_pruned_pct = avg_not_pruned_pct;
+            stats.partial_d = old_partial_d;
+        }
+        iteration_stats.push_back(stats);
+
+        // Step 10: Verbose logging
+        if (_config.verbose) {
+            std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
+                      << " | Objective: " << _cost
+                      << " | Objective improvement: " << (iter_idx > 0 ? 1 - (_cost / _prev_cost) : 0.0f)
+                      << " | Shift: " << _shift << " | Split: " << _n_split
+                      << " | Recall: " << _recall;
+            if constexpr (GEMM_ONLY) {
+                std::cout << " [BLAS-only]";
+            } else {
+                std::cout << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
+                          << " | d': " << old_partial_d << " -> " << _partial_d;
+            }
+            std::cout << std::endl << std::endl;
         }
     }
 
