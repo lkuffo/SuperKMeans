@@ -246,7 +246,8 @@ class SuperKMeans {
             _n_samples,
             _n_clusters,
             iter_idx,
-            true  // is_first_iter
+            true,  // is_first_iter
+            iteration_stats
         );
         iter_idx = 1;
         best_recall = _recall;
@@ -278,7 +279,8 @@ class SuperKMeans {
                     _n_samples,
                     _n_clusters,
                     iter_idx,
-                    false  // is_first_iter
+                    false,  // is_first_iter
+                    iteration_stats
                 );
                 if (_config.early_termination &&
                     ShouldStopEarly(
@@ -314,7 +316,8 @@ class SuperKMeans {
                 _n_samples,
                 _n_clusters,
                 iter_idx,
-                false  // is_first_iter
+                false,  // is_first_iter
+                iteration_stats
             );
             if (_config.early_termination &&
                 ShouldStopEarly(n_queries > 0, best_recall, iters_without_improvement, iter_idx)) {
@@ -552,7 +555,8 @@ class SuperKMeans {
         const size_t n_samples,
         const size_t n_clusters,
         size_t& iter_idx,
-        const bool is_first_iter
+        const bool is_first_iter,
+        std::vector<SuperKMeansIterationStats>& target_stats
     ) {
         // Step 1: Swap centroids (skip for first iteration)
         if (!is_first_iter) {
@@ -627,7 +631,7 @@ class SuperKMeans {
             stats.not_pruned_pct = avg_not_pruned_pct;
             stats.partial_d = old_partial_d;
         }
-        iteration_stats.push_back(stats);
+        target_stats.push_back(stats);
 
         // Step 10: Verbose logging
         if (_config.verbose) {
