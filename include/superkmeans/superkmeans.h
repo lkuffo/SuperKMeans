@@ -462,7 +462,6 @@ class SuperKMeans {
         }
         stats.geometric_mean = (non_zero_count > 0) ? std::exp(log_sum / non_zero_count) : 0.0f;
 
-
         float sq_sum = std::inner_product(
             cluster_sizes.begin(), cluster_sizes.end(),
             cluster_sizes.begin(), 0.0f
@@ -644,12 +643,10 @@ class SuperKMeans {
         const bool is_first_iter,
         std::vector<SuperKMeansIterationStats>& target_stats
     ) {
-        // Step 1: Swap centroids (skip for first iteration)
         if (!is_first_iter) {
             std::swap(_horizontal_centroids, _prev_centroids);
         }
 
-        // Step 2: Compute norms (full or partial depending on strategy)
         if constexpr (GEMM_ONLY) {
             GetL2NormsRowMajor(_prev_centroids.data(), n_clusters, _centroid_norms.data());
         } else {
@@ -658,7 +655,6 @@ class SuperKMeans {
             );
         }
 
-        // Step 3: Assign points to centroids and prepare for centroid updates
         if constexpr (GEMM_ONLY) {
             FirstAssignAndUpdateCentroids(
                 data_to_cluster, _prev_centroids.data(), tmp_distances_buf, n_samples, n_clusters
@@ -678,10 +674,8 @@ class SuperKMeans {
             );
         }
 
-        // Step 4: Update centroids based on assignments
         UpdateCentroids(data_to_cluster, n_samples, n_clusters);
 
-        // Step 5: Tune partial_d (only for GEMM+PRUNING strategy)
         float avg_not_pruned_pct = -1.0f;
         uint32_t old_partial_d = _partial_d;
         if constexpr (!GEMM_ONLY) {
@@ -693,20 +687,16 @@ class SuperKMeans {
             }
         }
 
-        // Step 6: Finalize centroids (normalize, handle empty clusters, convert to PDX)
         ConsolidateCentroids(n_samples, n_clusters);
 
-        // Step 7: Compute objective and shift
         ComputeCost(n_samples);
         ComputeShift(n_clusters);
 
-        // Step 8: Compute recall if queries provided
         if (n_queries) {
             GetL2NormsRowMajor(_horizontal_centroids.data(), n_clusters, _centroid_norms.data());
             _recall = ComputeRecall(rotated_queries, n_queries);
         }
 
-        // Step 9: Record iteration statistics
         SuperKMeansIterationStats stats;
         stats.iteration = iter_idx + 1;
         stats.objective = _cost;
@@ -720,7 +710,6 @@ class SuperKMeans {
         }
         target_stats.push_back(stats);
 
-        // Step 10: Verbose logging
         if (_config.verbose) {
             std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
                       << " | Objective: " << _cost

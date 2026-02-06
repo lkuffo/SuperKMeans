@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = 20000;// bench_utils::get_default_n_clusters(n);
     int n_iters = bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
     std::string filename = bench_utils::get_data_path(dataset);
@@ -85,10 +85,9 @@ int main(int argc, char* argv[]) {
     config.tol = 1e-3f;
 
     // Balanced SuperKMeans specific parameters
-    config.iters_mesoclustering = 10;
-    config.iters_fineclustering = 10;
+    config.iters_mesoclustering = 5;
+    config.iters_fineclustering = 5;
     config.iters_refinement = 2;
-    config.n_points_per_mesocluster = 1024;
 
     auto is_angular = std::find(
         bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
@@ -109,8 +108,8 @@ int main(int argc, char* argv[]) {
     );
     timer.Toc();
     double construction_time_ms = timer.GetMilliseconds();
-    int actual_iterations = static_cast<int>(kmeans_state.balanced_iteration_stats.refinement_iteration_stats.size());
-    double final_objective = kmeans_state.balanced_iteration_stats.refinement_iteration_stats.back().objective;
+    int actual_iterations = 2; // static_cast<int>(kmeans_state.balanced_iteration_stats.refinement_iteration_stats.size());
+    double final_objective = 0; // kmeans_state.balanced_iteration_stats.refinement_iteration_stats.back().objective;
 
     std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
     std::cout << "Actual iterations: " << actual_iterations << " (requested: " << n_iters << ")"

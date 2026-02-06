@@ -1,6 +1,7 @@
 #pragma once
 
 #include "superkmeans/superkmeans.h"
+#include "superkmeans/pdx/utils.h"
 
 namespace skmeans {
 
@@ -8,7 +9,6 @@ namespace skmeans {
  * @brief Configuration parameters for Balanced SuperKMeans clustering.
  */
 struct BalancedSuperKMeansConfig : SuperKMeansConfig {
-    uint32_t n_points_per_mesocluster = 1024;
     uint32_t iters_mesoclustering = 10;
     uint32_t iters_fineclustering = 10;
     uint32_t iters_refinement = 2;
@@ -44,7 +44,6 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         const BalancedSuperKMeansConfig& config
     )
         : SuperKMeans<q, alpha>(n_clusters, dimensionality, config), balanced_config(config) {
-        SKMEANS_ENSURE_POSITIVE(config.n_points_per_mesocluster);
         SKMEANS_ENSURE_POSITIVE(config.iters_mesoclustering);
 
         if (n_clusters <= 128) {
@@ -134,9 +133,13 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                       << std::endl;
         }
 
+        std::cout << "Points per mesocluster: " << static_cast<float>(this->_n_samples) / static_cast<float>(n_mesoclusters) << std::endl;
+
         //
         // MESOCLUSTERING
         //
+        TicToc timer_mesoclustering;
+        timer_mesoclustering.Tic();
         if (this->balanced_config.verbose) {
             std::cout << "\n=== PHASE 1: MESOCLUSTERING (k=" << n_mesoclusters << " clusters) ===" << std::endl;
         }
@@ -255,6 +258,8 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 }
             }
         }
+        timer_mesoclustering.Toc();
+
         auto meso_centroids = this->GetOutputCentroids(false);
         mesoclusters_sizes = this->_cluster_sizes; // TODO(@lkuffo, high): Deep copy?
         mesoclusters_assignments =
@@ -280,6 +285,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             mesoclusters_sizes
         );
 
+        TicToc timer_fineclustering;
+        timer_fineclustering.Tic();
+
         size_t max_mesocluster_size =
             *std::max_element(this->_cluster_sizes.begin(), this->_cluster_sizes.end());
         std::vector<vector_value_t> mesocluster_buffer(max_mesocluster_size * this->_d);
@@ -297,7 +305,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             this->_partial_d = initial_partial_d;
 
             auto mesocluster_size = mesoclusters_sizes[k];
+            auto points_per_finecluster = static_cast<float>(mesocluster_size) / static_cast<float>(n_fineclusters);
             std::cout << "Mesocluster size: " << mesocluster_size << std::endl;
+            std::cout << "Points per fine cluster: " << points_per_finecluster << std::endl;
             this->_n_samples = mesocluster_size;
             CompactMesoclusterToBuffer(
                 k,
@@ -342,7 +352,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 // FULL GEMM on low-dimensional data or too few clusters
                 //
                 if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
-                    n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                    n_fineclusters <= 500 //|| N_CLUSTERS_THRESHOLD_FOR_PRUNING
+                    //points_per_finecluster > 2000.0f
+                ) {
                     for (; fine_iter_idx < this->balanced_config.iters_fineclustering;
                          ++fine_iter_idx) {
                         this->template RunIteration<true>(
@@ -422,6 +434,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             );
             fineclusters_offset += n_fineclusters;
         }
+        timer_fineclustering.Toc();
 
         // Now we move to the last refinement phase in which we perform clustering with all
         // _n_clusters. Recall our initial buffers for centroids have enough space for _n_clusters.
@@ -453,6 +466,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             static_cast<void*>(final_assignments.data()),
             sizeof(uint32_t) * this->_n_samples
         );
+
+        TicToc timer_refinement;
+        timer_refinement.Tic();
 
         // RunIteration<false>
         // 2 refinement iterations GEMM+PRUNING with data_to_sample and final_centroids
@@ -507,7 +523,12 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 }
             }
         }
+        timer_refinement.Toc();
 
+        std::cout << "Mesoclustering time: " << timer_mesoclustering.GetMilliseconds() << " ms" << std::endl;
+        std::cout << "Fineclustering time: " << timer_fineclustering.GetMilliseconds() << " ms" << std::endl;
+        std::cout << "Refinement time: " << timer_refinement.GetMilliseconds() << " ms" << std::endl;
+        std::cout << "Total time: " << timer_mesoclustering.GetMilliseconds() + timer_fineclustering.GetMilliseconds() + timer_refinement.GetMilliseconds() << " ms" << std::endl;
         this->_trained = true;
 
         auto output_centroids = this->GetOutputCentroids(this->balanced_config.unrotate_centroids);
@@ -531,15 +552,15 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
      * @param n_clusters Number of clusters
      */
     void SplitClusters(const size_t n_samples, const size_t n_clusters) override {
-        constexpr float kAdjustCentersWeight = 7.0f;  // Weight for current center in weighted average
-        constexpr float kBalancingThreshold = 0.25f;  // Clusters smaller than 25% of average are adjusted
+        constexpr float CENTER_ADJUSTMENT_WEIGHT = 7.0f;  // Weight for current center in weighted average
+        constexpr float BALANCING_THRESHOLD = 0.25f;  // Clusters smaller than 25% of average are adjusted
 
         this->_n_split = 0;
         std::mt19937 rng(this->_config.seed);
         auto _horizontal_centroids_p = this->_horizontal_centroids.data();
 
         size_t average_size = n_samples / n_clusters;
-        size_t threshold_size = static_cast<size_t>(average_size * kBalancingThreshold);
+        size_t threshold_size = static_cast<size_t>(average_size * BALANCING_THRESHOLD);
 
         for (size_t ci = 0; ci < n_clusters; ci++) {
             if (this->_cluster_sizes[ci] == 0) {
@@ -600,7 +621,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             // a sample from the selected larger cluster.
             // Weight of the current center for the weighted average.
             // We dump it for anomalously small clusters, but keep constant otherwise.
-            float wc = std::min(static_cast<float>(csize), kAdjustCentersWeight);
+            float wc = std::min(static_cast<float>(csize), CENTER_ADJUSTMENT_WEIGHT);
             float wd = 1.0f;  // Weight for the datapoint used to shift the center.
             for (size_t j = 0; j < this->_d; j++) {
                 float val = 0.0f;
