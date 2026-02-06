@@ -327,6 +327,32 @@ class SuperKMeans {
         }
 
         _trained = true;
+
+        // Calculate cluster_size statistics
+        float sum = std::accumulate(this->_cluster_sizes.begin(), this->_cluster_sizes.end(), 0.0f);
+        float mean = sum / this->_cluster_sizes.size();
+
+        // Standard deviation
+        float sq_sum = std::inner_product(
+            this->_cluster_sizes.begin(), this->_cluster_sizes.end(),
+            this->_cluster_sizes.begin(), 0.0f
+        );
+        float stdev = std::sqrt(sq_sum / this->_cluster_sizes.size() - mean * mean);
+
+        // Coefficient of variation
+        float cv = stdev / mean;
+
+        // Min/max
+        auto minmax = std::minmax_element(this->_cluster_sizes.begin(), this->_cluster_sizes.end());
+
+        std::cout << "Cluster size stats: "
+                    << "mean=" << mean
+                    << ", std=" << stdev
+                    << ", CV=" << cv
+                    << ", min=" << *minmax.first
+                    << ", max=" << *minmax.second
+                    << std::endl;
+
         auto output_centroids = GetOutputCentroids(_config.unrotate_centroids);
         if (_config.perform_assignments) {
             _assignments = Assign(data, output_centroids.data(), n, _n_clusters);
@@ -579,6 +605,7 @@ class SuperKMeans {
                 data_to_cluster, _prev_centroids.data(), tmp_distances_buf, n_samples, n_clusters
             );
         } else {
+            // TODO(@lkuffo, crit): (change to use n_samples rather than begin, end)
             std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
             AssignAndUpdateCentroids(
                 data_to_cluster,

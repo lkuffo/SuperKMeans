@@ -72,7 +72,7 @@ int main(int argc, char* argv[]) {
 
     skmeans::BalancedSuperKMeansConfig config;
     // Base SuperKMeans config parameters
-    config.iters = n_iters;
+    config.iters = 10;
     config.verbose = true;
     config.n_threads = THREADS;
     config.objective_k = 100;
@@ -87,7 +87,7 @@ int main(int argc, char* argv[]) {
     // Balanced SuperKMeans specific parameters
     config.iters_mesoclustering = 10;
     config.iters_fineclustering = 10;
-    config.iters_refinement = 2;
+    config.iters_refinement = 5;
     config.n_points_per_mesocluster = 1024;
 
     auto is_angular = std::find(
@@ -109,8 +109,8 @@ int main(int argc, char* argv[]) {
     );
     timer.Toc();
     double construction_time_ms = timer.GetMilliseconds();
-    int actual_iterations = static_cast<int>(kmeans_state.iteration_stats.size());
-    double final_objective = kmeans_state.iteration_stats.back().objective;
+    int actual_iterations = static_cast<int>(kmeans_state.balanced_iteration_stats.refinement_iteration_stats.size());
+    double final_objective = kmeans_state.balanced_iteration_stats.refinement_iteration_stats.back().objective;
 
     std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
     std::cout << "Actual iterations: " << actual_iterations << " (requested: " << n_iters << ")"

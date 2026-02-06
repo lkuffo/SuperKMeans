@@ -71,7 +71,7 @@ int main(int argc, char* argv[]) {
     file_queries.close();
 
     skmeans::SuperKMeansConfig config;
-    config.iters = n_iters;
+    config.iters = 10;
     config.verbose = true;
     config.n_threads = THREADS;
     config.objective_k = 100;

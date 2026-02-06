@@ -272,21 +272,32 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             std::cout << "\n=== PHASE 2: FINE-CLUSTERING (subdividing " << n_mesoclusters
                       << " mesoclusters into total " << this->_n_clusters << " clusters) ===" << std::endl;
         }
+        // Calculate proportional allocation of fine clusters per mesocluster
+        auto fine_clusters_nums = ArrangeFineClusters(
+            this->_n_clusters,
+            n_mesoclusters,
+            this->_n_samples,
+            mesoclusters_sizes
+        );
+
         size_t max_mesocluster_size =
             *std::max_element(this->_cluster_sizes.begin(), this->_cluster_sizes.end());
         std::vector<vector_value_t> mesocluster_buffer(max_mesocluster_size * this->_d);
         std::vector<vector_value_t> mesocluster_data_norms(max_mesocluster_size);
         std::vector<vector_value_t> mesocluster_partial_data_norms(max_mesocluster_size);
         std::vector<uint32_t> assignments_indirection_buffer(max_mesocluster_size);
-        size_t fineclusters_left_to_build = this->_n_clusters;
         size_t fineclusters_offset = 0;
         for (size_t k = 0; k < n_mesoclusters; ++k) {
-            size_t n_fineclusters =
-                (k == n_mesoclusters - 1) ? fineclusters_left_to_build : n_mesoclusters;
-            fineclusters_left_to_build -= n_fineclusters;
+            size_t n_fineclusters = fine_clusters_nums[k];
+
+            // Skip empty mesoclusters
+            if (n_fineclusters == 0) {
+                continue;
+            }
             this->_partial_d = initial_partial_d;
 
             auto mesocluster_size = mesoclusters_sizes[k];
+            std::cout << "Mesocluster size: " << mesocluster_size << std::endl;
             this->_n_samples = mesocluster_size;
             CompactMesoclusterToBuffer(
                 k,
@@ -424,8 +435,23 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         // We just transfer the state of centroids to the proper class variables, no rotation.
         auto final_refinement_pdx_wrapper =
             SetupCentroids(final_centroids.data(), this->_n_clusters);
+
+        // (RunIteration with is_first_iter=false will swap _horizontal_centroids and _prev_centroids)
+        // Copy final_centroids to _prev_centroids so the swap in RunIteration works correctly
+        memcpy(
+            static_cast<void*>(this->_prev_centroids.data()),
+            static_cast<void*>(final_centroids.data()),
+            sizeof(centroid_value_t) * this->_n_clusters * this->_d
+        );
+
         this->GetL2NormsRowMajor(
-            this->_horizontal_centroids.data(), this->_n_clusters, this->_centroid_norms.data()
+            this->_prev_centroids.data(), this->_n_clusters, this->_centroid_norms.data()
+        );
+        
+        memcpy(
+            static_cast<void*>(this->_assignments.data()),
+            static_cast<void*>(final_assignments.data()),
+            sizeof(uint32_t) * this->_n_samples
         );
 
         // RunIteration<false>
@@ -483,6 +509,38 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         }
 
         this->_trained = true;
+
+        // Compute cluster_sizes from assignments:
+        std::vector<size_t> cluster_sizes(this->_n_clusters, 0);
+        for (size_t i = 0; i < this->_n_samples; ++i) {
+            cluster_sizes[this->_assignments[i]]++;
+        }
+
+        // Calculate cluster_size statistics
+        float sum = std::accumulate(cluster_sizes.begin(), cluster_sizes.end(), 0.0f);
+        float mean = sum / cluster_sizes.size();
+
+        // Standard deviation
+        float sq_sum = std::inner_product(
+            cluster_sizes.begin(), cluster_sizes.end(),
+            cluster_sizes.begin(), 0.0f
+        );
+        float stdev = std::sqrt(sq_sum / cluster_sizes.size() - mean * mean);
+
+        // Coefficient of variation
+        float cv = stdev / mean;
+
+        // Min/max
+        auto minmax = std::minmax_element(cluster_sizes.begin(), cluster_sizes.end());
+
+        std::cout << "Cluster size stats: "
+                    << "mean=" << mean
+                    << ", std=" << stdev
+                    << ", CV=" << cv
+                    << ", min=" << *minmax.first
+                    << ", max=" << *minmax.second
+                    << std::endl;
+
         auto output_centroids = this->GetOutputCentroids(this->balanced_config.unrotate_centroids);
         if (this->balanced_config.perform_assignments) {
             this->_assignments = this->Assign(data, output_centroids.data(), n, this->_n_clusters);
@@ -522,6 +580,78 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 samples_compacted++;
             }
         }
+    }
+
+    /**
+     * @brief Arrange fine clusters proportionally to mesocluster sizes
+     *
+     * Allocates the total number of clusters across mesoclusters proportionally
+     * to their sizes, ensuring balanced distribution.
+     *
+     * @param n_clusters Total number of fine clusters to distribute
+     * @param n_mesoclusters Number of mesoclusters
+     * @param n_samples Total number of samples
+     * @param mesocluster_sizes Sizes of each mesocluster
+     * @return Vector of fine cluster counts per mesocluster
+     */
+    std::vector<size_t> ArrangeFineClusters(
+        size_t n_clusters,
+        size_t n_mesoclusters,
+        size_t n_samples,
+        const std::vector<uint32_t>& mesocluster_sizes
+    ) {
+        std::vector<size_t> fine_clusters_nums(n_mesoclusters);
+
+        size_t n_clusters_remaining = n_clusters;
+        size_t n_nonempty_mesoclusters_remaining = 0;
+
+        // Count non-empty mesoclusters
+        for (size_t i = 0; i < n_mesoclusters; ++i) {
+            if (mesocluster_sizes[i] > 0) {
+                n_nonempty_mesoclusters_remaining++;
+            }
+        }
+
+        size_t n_samples_remaining = n_samples;
+
+        for (size_t i = 0; i < n_mesoclusters; ++i) {
+            if (i < n_mesoclusters - 1) {
+                // Handle empty mesoclusters
+                if (mesocluster_sizes[i] == 0) {
+                    fine_clusters_nums[i] = 0;
+                } else {
+                    n_nonempty_mesoclusters_remaining--;
+
+                    // Proportional allocation: round to nearest integer
+                    double proportion = static_cast<double>(n_clusters_remaining * mesocluster_sizes[i]) /
+                                      static_cast<double>(n_samples_remaining);
+                    size_t allocated = static_cast<size_t>(proportion + 0.5);
+
+                    // Ensure we don't allocate more than what's left minus other non-empty mesoclusters
+                    allocated = std::min(allocated, n_clusters_remaining - n_nonempty_mesoclusters_remaining);
+
+                    // Ensure at least 1 cluster for non-empty mesoclusters
+                    fine_clusters_nums[i] = std::max(allocated, size_t{1});
+                }
+            } else {
+                // Last mesocluster gets all remaining clusters
+                fine_clusters_nums[i] = n_clusters_remaining;
+            }
+
+            n_clusters_remaining -= fine_clusters_nums[i];
+            n_samples_remaining -= mesocluster_sizes[i];
+        }
+
+        // if (this->balanced_config.verbose) {
+        //     std::cout << "Fine clusters per mesocluster: [";
+        //     for (size_t i = 0; i < n_mesoclusters; ++i) {
+        //         std::cout << fine_clusters_nums[i];
+        //         if (i < n_mesoclusters - 1) std::cout << ", ";
+        //     }
+        //     std::cout << "]" << std::endl;
+        // }
+
+        return fine_clusters_nums;
     }
 
     void GetTrueAssignmentsFromIndirectionBuffer(
