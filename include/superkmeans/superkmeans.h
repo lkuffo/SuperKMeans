@@ -68,6 +68,40 @@ struct SuperKMeansIterationStats {
     bool is_gemm_only = false;
 };
 
+/**
+ * @brief Statistics about cluster size balance.
+ */
+struct ClusterBalanceStats {
+    float mean = 0.0f;
+    float geometric_mean = 0.0f;
+    float stdev = 0.0f;
+    float cv = 0.0f;
+    size_t min = 0;
+    size_t max = 0;
+
+    std::string to_json() const {
+        std::ostringstream oss;
+        oss << "{\"mean\":" << mean
+            << ",\"geometric_mean\":" << geometric_mean
+            << ",\"stdev\":" << stdev
+            << ",\"cv\":" << cv
+            << ",\"min\":" << min
+            << ",\"max\":" << max << "}";
+        return oss.str();
+    }
+
+    void print() const {
+        std::cout << "Cluster size stats: "
+                  << "mean=" << mean
+                  << ", gmean=" << geometric_mean
+                  << ", std=" << stdev
+                  << ", CV=" << cv
+                  << ", min=" << min
+                  << ", max=" << max
+                  << std::endl;
+    }
+};
+
 template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
 class SuperKMeans {
   protected:
@@ -328,31 +362,6 @@ class SuperKMeans {
 
         _trained = true;
 
-        // Calculate cluster_size statistics
-        float sum = std::accumulate(this->_cluster_sizes.begin(), this->_cluster_sizes.end(), 0.0f);
-        float mean = sum / this->_cluster_sizes.size();
-
-        // Standard deviation
-        float sq_sum = std::inner_product(
-            this->_cluster_sizes.begin(), this->_cluster_sizes.end(),
-            this->_cluster_sizes.begin(), 0.0f
-        );
-        float stdev = std::sqrt(sq_sum / this->_cluster_sizes.size() - mean * mean);
-
-        // Coefficient of variation
-        float cv = stdev / mean;
-
-        // Min/max
-        auto minmax = std::minmax_element(this->_cluster_sizes.begin(), this->_cluster_sizes.end());
-
-        std::cout << "Cluster size stats: "
-                    << "mean=" << mean
-                    << ", std=" << stdev
-                    << ", CV=" << cv
-                    << ", min=" << *minmax.first
-                    << ", max=" << *minmax.second
-                    << std::endl;
-
         auto output_centroids = GetOutputCentroids(_config.unrotate_centroids);
         if (_config.perform_assignments) {
             _assignments = Assign(data, output_centroids.data(), n, _n_clusters);
@@ -419,6 +428,56 @@ class SuperKMeans {
 
     /** @brief Returns whether the model has been trained. */
     [[nodiscard]] inline bool IsTrained() const noexcept { return _trained; }
+
+    /**
+     * @brief Calculate cluster balance statistics from assignments
+     *
+     * @param assignments Array of cluster assignments [n_samples]
+     * @param n_samples Number of samples
+     * @param n_clusters Number of clusters
+     * @return ClusterBalanceStats containing mean, stdev, CV, min, max
+     */
+    [[nodiscard]] static ClusterBalanceStats GetClustersBalanceStats(
+        const uint32_t* assignments,
+        size_t n_samples,
+        size_t n_clusters
+    ) {
+        ClusterBalanceStats stats;
+        std::vector<size_t> cluster_sizes(n_clusters, 0);
+        for (size_t i = 0; i < n_samples; ++i) {
+            cluster_sizes[assignments[i]]++;
+        }
+
+        float sum = std::accumulate(cluster_sizes.begin(), cluster_sizes.end(), 0.0f);
+        stats.mean = sum / cluster_sizes.size();
+
+        // Geometric mean
+        float log_sum = 0.0f;
+        size_t non_zero_count = 0;
+        for (size_t size : cluster_sizes) {
+            if (size > 0) {
+                log_sum += std::log(static_cast<float>(size));
+                non_zero_count++;
+            }
+        }
+        stats.geometric_mean = (non_zero_count > 0) ? std::exp(log_sum / non_zero_count) : 0.0f;
+
+
+        float sq_sum = std::inner_product(
+            cluster_sizes.begin(), cluster_sizes.end(),
+            cluster_sizes.begin(), 0.0f
+        );
+        stats.stdev = std::sqrt(sq_sum / cluster_sizes.size() - stats.mean * stats.mean);
+
+        // Coefficient of variation
+        stats.cv = stats.stdev / stats.mean;
+
+        auto minmax = std::minmax_element(cluster_sizes.begin(), cluster_sizes.end());
+        stats.min = *minmax.first;
+        stats.max = *minmax.second;
+
+        return stats;
+    }
 
   protected:
     /**
@@ -687,7 +746,7 @@ class SuperKMeans {
      * a large cluster to repopulate it. Selection is probabilistic based on
      * cluster sizes.
      */
-    void SplitClusters(const size_t n_samples, const size_t n_clusters) {
+    virtual void SplitClusters(const size_t n_samples, const size_t n_clusters) {
         _n_split = 0;
         std::mt19937 rng(_config.seed);
         auto _horizontal_centroids_p = _horizontal_centroids.data();

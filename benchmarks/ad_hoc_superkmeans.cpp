@@ -110,6 +110,13 @@ int main(int argc, char* argv[]) {
               << std::endl;
     std::cout << "Final objective: " << final_objective << std::endl;
 
+    // Compute assignments and cluster balance statistics
+    auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
+    auto balance_stats = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::GetClustersBalanceStats(
+        assignments.data(), n, n_clusters
+    );
+    balance_stats.print();
+
     // Compute recall if ground truth file exists
     std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
     std::ifstream gt_file(gt_filename);
@@ -124,8 +131,6 @@ int main(int argc, char* argv[]) {
         auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
-
-        auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
 
         auto results_knn_10 = bench_utils::compute_recall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
