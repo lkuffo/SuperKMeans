@@ -45,6 +45,9 @@ target_link_libraries(test_distance_computers.out PRIVATE ${TEST_COMMON_LIBS})
 add_executable(test_pdx_layout.out test_pdx_layout.cpp)
 target_link_libraries(test_pdx_layout.out PRIVATE ${TEST_COMMON_LIBS})
 
+add_executable(test_balanced_superkmeans.out test_balanced_superkmeans.cpp)
+target_link_libraries(test_balanced_superkmeans.out PRIVATE ${TEST_COMMON_LIBS})
+
 include(GoogleTest)
 gtest_discover_tests(test_rotation.out)
 gtest_discover_tests(test_assign.out)
@@ -52,6 +55,7 @@ gtest_discover_tests(test_superkmeans.out)
 gtest_discover_tests(test_wcss.out)
 gtest_discover_tests(test_distance_computers.out)
 gtest_discover_tests(test_pdx_layout.out)
+gtest_discover_tests(test_balanced_superkmeans.out)
 
 add_custom_target(tests
     DEPENDS
@@ -61,4 +65,5 @@ add_custom_target(tests
         test_wcss.out
         test_distance_computers.out
         test_pdx_layout.out
+        test_balanced_superkmeans.out
 )

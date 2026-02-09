@@ -393,7 +393,7 @@ TEST_F(RotationTest, SameSeedProducesIdenticalRotations) {
  * 1. Running SuperKMeans with default config (data_already_rotated = false, unrotate_centroids = false)
  *    → SuperKMeans rotates data internally, returns rotated centroids
  * 2. Manually rotating data with the same pruner config, then running SuperKMeans with
- *    (data_already_rotated = true, unrotate_centroids = false)
+ *    (data_already_rotated = true, unrotate_centroids = true -> will be forced to false by constructor)
  *    → SuperKMeans skips rotation, returns rotated centroids
  * Both should produce identical rotated centroids since everything is deterministic with seeds.
  */

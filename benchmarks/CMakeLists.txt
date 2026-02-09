@@ -78,6 +78,10 @@ target_link_libraries(sampling_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(pareto_superkmeans.out pareto/pareto_superkmeans.cpp)
 target_link_libraries(pareto_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
+# Pareto balanced superkmeans benchmark (grid search over balanced hyperparameters)
+add_executable(pareto_balanced_superkmeans.out pareto/pareto_balanced_superkmeans.cpp)
+target_link_libraries(pareto_balanced_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
 # Ad-hoc benchmark (verbose mode, no CSV output)
 add_executable(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp)
 target_link_libraries(ad_hoc_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
@@ -112,6 +116,7 @@ add_custom_target(benchmarks
         early_termination_faiss.out
         sampling_superkmeans.out
         pareto_superkmeans.out
+        pareto_balanced_superkmeans.out
         ad_hoc_superkmeans.out
         ad_hoc_balanced_superkmeans.out
         sweet_pruning_spot_superkmeans.out

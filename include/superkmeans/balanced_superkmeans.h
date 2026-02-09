@@ -46,6 +46,8 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         : SuperKMeans<q, alpha>(n_clusters, dimensionality, config), balanced_config(config) {
         SKMEANS_ENSURE_POSITIVE(config.iters_mesoclustering);
 
+        static_cast<SuperKMeansConfig&>(balanced_config) = this->_config;
+
         if (n_clusters <= 128) {
             std::cout << "WARNING: n_clusters <= 128 is not recommended for BalancedSuperKMeans. "
                          "Consider using at least 128 clusters."
@@ -261,37 +263,31 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         }
         timer_mesoclustering.Toc();
 
-        // Copy only the needed elements (not the entire oversized buffers)
-        // mesoclusters_sizes: only first n_mesoclusters elements (not all _n_clusters)
         {
             SKM_PROFILE_SCOPE("allocator");
             mesoclusters_sizes.assign(
                 this->_cluster_sizes.begin(),
                 this->_cluster_sizes.begin() + n_mesoclusters
             );
-            // mesoclusters_assignments: only first _n_samples elements (not all n)
             mesoclusters_assignments.assign(
                 this->_assignments.begin(),
                 this->_assignments.begin() + this->_n_samples
             );
         }
 
-        // Build partitioned index for efficient mesocluster compaction (O(n) once vs O(n × √k) total)
-        // Use flat preallocated array with offsets for cache efficiency
+        // Build partitioned index for efficient mesocluster compaction
         std::vector<size_t> mesocluster_indices_flat(this->_n_samples);
         std::vector<size_t> mesocluster_offsets(n_mesoclusters + 1);
         {
             SKM_PROFILE_SCOPE("compact_indices");
-            // Compute prefix sum to get offsets into flat array
             mesocluster_offsets[0] = 0;
             for (size_t k = 0; k < n_mesoclusters; ++k) {
                 mesocluster_offsets[k + 1] = mesocluster_offsets[k] + mesoclusters_sizes[k];
             }
-            // Partition indices using write positions (no dynamic allocation)
-            std::vector<size_t> write_positions = mesocluster_offsets;  // Copy as starting write positions
+            std::vector<size_t> next_to_write_index = mesocluster_offsets;
             for (size_t i = 0; i < this->_n_samples; ++i) {
                 size_t cluster_id = mesoclusters_assignments[i];
-                mesocluster_indices_flat[write_positions[cluster_id]++] = i;
+                mesocluster_indices_flat[next_to_write_index[cluster_id]++] = i;
             }
         }
 
@@ -330,9 +326,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             this->_partial_d = initial_partial_d;
 
             auto mesocluster_size = mesoclusters_sizes[k];
-            auto points_per_finecluster = static_cast<float>(mesocluster_size) / static_cast<float>(n_fineclusters);
-            std::cout << "Mesocluster size: " << mesocluster_size << std::endl;
-            std::cout << "Points per fine cluster: " << points_per_finecluster << std::endl;
+            // auto points_per_finecluster = static_cast<float>(mesocluster_size) / static_cast<float>(n_fineclusters);
+            // std::cout << "Mesocluster size: " << mesocluster_size << std::endl;
+            // std::cout << "Points per fine cluster: " << points_per_finecluster << std::endl;
             this->_n_samples = mesocluster_size;
             CompactMesoclusterToBuffer(
                 mesocluster_size,
@@ -439,8 +435,6 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 }
             }
 
-            // If we want to use PRUNING in the refinement iterations, I need this indirection to be
-            // resolved
             GetTrueAssignmentsFromIndirectionBuffer(
                 assignments_indirection_buffer.data(),
                 final_assignments.data(),
@@ -449,8 +443,6 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 fineclusters_offset
             );
             
-            // Copy centroids directly from _horizontal_centroids to final buffer
-            // (avoids intermediate copy from GetOutputCentroids)
             // We move the resulting centroids from this fineclustering to the final buffer of centroids
             {
                 SKM_PROFILE_SCOPE("copy_fine_centroids");
@@ -684,9 +676,8 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
     }
 
     /*
-     * Compact data assigned to a mesocluster in mesocluster_buffer
-     * Uses precomputed indices for O(mesocluster_size) instead of O(n_samples)
-     * They are already rotated, so we just have to copy
+     * Compact data assigned to a mesocluster in mesocluster_buffer using precomputed indices
+     * Data is already rotated, so we just have to copy
      * Additionally, we have to copy their norms in a sequential buffer to not recompute them
      */
     void CompactMesoclusterToBuffer(
@@ -697,7 +688,6 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         const size_t* SKM_RESTRICT mesocluster_indices
     ) {
         SKM_PROFILE_SCOPE("compact_mesocluster");
-        // Directly iterate over precomputed indices (no scanning!)
 #pragma omp parallel for if (this->_n_threads > 1) num_threads(this->_n_threads)
         for (size_t j = 0; j < mesocluster_size; ++j) {
             size_t i = mesocluster_indices[j];
