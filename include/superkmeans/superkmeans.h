@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Eigen/Eigen/Dense>
+#include <Eigen/Dense>
 #include <iomanip>
 #include <omp.h>
 #include <random>
@@ -49,6 +49,9 @@ struct SuperKMeansConfig {
     bool perform_assignments = false; // Whether to perform final assignment on Train()
     bool verbose = false;             // Whether to print progress information
     bool angular = false;             // Whether to use spherical k-means
+
+    // Data preprocessing
+    bool data_already_rotated = false; // Whether input data is already rotated (skip rotation)
 };
 
 /**
@@ -135,6 +138,11 @@ class SuperKMeans {
         g_n_threads = _n_threads;
         _pruner =
             std::make_unique<pruner_t>(dimensionality, PRUNER_INITIAL_THRESHOLD, _config.seed);
+
+        // If data is already rotated, we must not unrotate output centroids 
+        if (_config.data_already_rotated) {
+            _config.unrotate_centroids = false;
+        }
     }
 
     /**
@@ -213,21 +221,16 @@ class SuperKMeans {
             std::cout << "Trailing dimensions (d'') = " << _d - _vertical_d << std::endl;
         }
 
-        auto centroids_pdx_wrapper = GenerateCentroids(data_p, _n_samples, _n_clusters);
+        auto centroids_pdx_wrapper = GenerateCentroids(data_p, _n_samples, _n_clusters, !_config.data_already_rotated);
         if (_config.verbose) {
             std::cout << "Sampling data..." << std::endl;
         }
 
         std::vector<vector_value_t> data_samples_buffer;
-        SampleAndRotateVectors(data_p, data_samples_buffer, n, _n_samples, true);
+        SampleAndRotateVectors(data_p, data_samples_buffer, n, _n_samples, !_config.data_already_rotated);
         auto data_to_cluster = data_samples_buffer.data();
 
-        {
-            SKM_PROFILE_SCOPE("rotator");
-            if (_config.verbose)
-                std::cout << "Rotating..." << std::endl;
-            _pruner->Rotate(_horizontal_centroids.data(), _prev_centroids.data(), _n_clusters);
-        }
+        RotateOrCopy(_horizontal_centroids.data(), _prev_centroids.data(), _n_clusters, !_config.data_already_rotated);
 
         GetL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
         GetL2NormsRowMajor(_prev_centroids.data(), _n_clusters, _centroid_norms.data());
@@ -254,8 +257,7 @@ class SuperKMeans {
                     data_to_cluster, rotated_queries, _n_samples, n_queries, false
                 );
             } else {
-                SKM_PROFILE_SCOPE("rotator");
-                _pruner->Rotate(queries, rotated_queries.data(), n_queries);
+                RotateOrCopy(queries, rotated_queries.data(), n_queries, !_config.data_already_rotated);
             }
             _query_norms.resize(n_queries);
             GetL2NormsRowMajor(rotated_queries.data(), n_queries, _query_norms.data());
@@ -660,8 +662,7 @@ class SuperKMeans {
                 data_to_cluster, _prev_centroids.data(), tmp_distances_buf, n_samples, n_clusters
             );
         } else {
-            // TODO(@lkuffo, crit): (change to use n_samples rather than begin, end)
-            std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
+            std::fill(not_pruned_counts.data(), not_pruned_counts.data() + n_samples, 0);
             AssignAndUpdateCentroids(
                 data_to_cluster,
                 _prev_centroids.data(),
@@ -976,16 +977,7 @@ class SuperKMeans {
         }
         // We populate the _centroids buffer with the centroids in the PDX layout
         std::vector<centroid_value_t> rotated_centroids(n_clusters * _d);
-        if (rotate) {
-            SKM_PROFILE_SCOPE("rotator");
-            _pruner->Rotate(_horizontal_centroids.data(), rotated_centroids.data(), n_clusters);
-        } else {
-            memcpy(
-                static_cast<void*>(rotated_centroids.data()),
-                static_cast<void*>(_horizontal_centroids.data()),
-                sizeof(centroid_value_t) * n_clusters
-            );
-        }
+        RotateOrCopy(_horizontal_centroids.data(), rotated_centroids.data(), n_clusters, rotate);
         {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
             PDXLayout<q, alpha>::template PDXify<false>(
@@ -1029,6 +1021,34 @@ class SuperKMeans {
         Eigen::Map<const MatrixR> e_data(data, n, _d);
         Eigen::Map<VectorR> e_norms(out_norm, n);
         e_norms.noalias() = e_data.rowwise().squaredNorm();
+    }
+
+    /**
+     * @brief Rotates or copies vectors based on rotate parameter.
+     *
+     * If rotate is false, performs a simple memcpy. Otherwise, applies rotation.
+     *
+     * @param in Input buffer (potentially unrotated)
+     * @param out Output buffer (rotated or copied)
+     * @param n_vectors Number of vectors to process
+     * @param rotate Whether to rotate (true) or just copy (false)
+     */
+    void RotateOrCopy(
+        const centroid_value_t* SKM_RESTRICT in,
+        centroid_value_t* SKM_RESTRICT out,
+        const size_t n_vectors,
+        const bool rotate
+    ) {
+        SKM_PROFILE_SCOPE("rotator");
+        if (rotate) {
+            _pruner->Rotate(in, out, n_vectors);
+        } else {
+            memcpy(
+                static_cast<void*>(out),
+                static_cast<const void*>(in),
+                sizeof(centroid_value_t) * n_vectors * _d
+            );
+        }
     }
 
     /**
@@ -1264,17 +1284,7 @@ class SuperKMeans {
         if (_config.verbose)
             std::cout << "Using " << n_samples << " vectors" << std::endl;
 
-        // Rotate or copy into output buffer
-        SKM_PROFILE_SCOPE("rotator");
-        if (rotate) {
-            _pruner->Rotate(src_data, out_buffer.data(), n_samples);
-        } else {
-            memcpy(
-                static_cast<void*>(out_buffer.data()),
-                static_cast<const void*>(src_data),
-                sizeof(vector_value_t) * n_samples * _d
-            );
-        }
+        RotateOrCopy(src_data, out_buffer.data(), n_samples, rotate);
     }
 
     const size_t _d;

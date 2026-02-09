@@ -143,24 +143,19 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             std::cout << "\n=== PHASE 1: MESOCLUSTERING (k=" << n_mesoclusters << " clusters) ===" << std::endl;
         }
         auto centroids_pdx_wrapper =
-            this->GenerateCentroids(data_p, this->_n_samples, n_mesoclusters);
+            this->GenerateCentroids(data_p, this->_n_samples, n_mesoclusters, !this->balanced_config.data_already_rotated);
         if (this->balanced_config.verbose) {
             std::cout << "Sampling data..." << std::endl;
         }
         // Samples for mesoclustering and fineclustering
         std::vector<vector_value_t> data_samples_buffer; 
-        this->SampleAndRotateVectors(data_p, data_samples_buffer, n, this->_n_samples, true);
+        this->SampleAndRotateVectors(data_p, data_samples_buffer, n, this->_n_samples, !this->balanced_config.data_already_rotated);
         auto data_to_cluster = data_samples_buffer.data();
         auto initial_n_samples = this->_n_samples;
 
-        {
-            SKM_PROFILE_SCOPE("rotator");
-            if (this->balanced_config.verbose)
-                std::cout << "Rotating..." << std::endl;
-            this->_pruner->Rotate(
-                this->_horizontal_centroids.data(), this->_prev_centroids.data(), n_mesoclusters
-            );
-        }
+        this->RotateOrCopy(
+            this->_horizontal_centroids.data(), this->_prev_centroids.data(), n_mesoclusters, !this->balanced_config.data_already_rotated
+        );
 
         this->GetL2NormsRowMajor(data_to_cluster, this->_n_samples, this->_data_norms.data());
         this->GetL2NormsRowMajor(

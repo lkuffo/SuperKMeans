@@ -5,7 +5,7 @@
 #include <omp.h>
 #include <random>
 
-#include <Eigen/Eigen/Dense>
+#include <Eigen/Dense>
 #ifdef HAS_FFTW
 #include <fftw3.h>
 #endif
