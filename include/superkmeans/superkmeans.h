@@ -1099,7 +1099,7 @@ class SuperKMeans {
      * @param n Total number of vectors
      * @return Number of vectors to sample
      */
-    [[nodiscard]] size_t GetNVectorsToSample(const size_t n, size_t n_clusters) const {
+    [[nodiscard]] virtual size_t GetNVectorsToSample(const size_t n, size_t n_clusters) const {
         if (_config.sampling_fraction == 1.0) {
             return n;
         }
@@ -1262,7 +1262,7 @@ class SuperKMeans {
             }
         }
         if (_config.verbose)
-            std::cout << "Not sampling, using all " << n_samples << " vectors" << std::endl;
+            std::cout << "Using " << n_samples << " vectors" << std::endl;
 
         // Rotate or copy into output buffer
         SKM_PROFILE_SCOPE("rotator");
