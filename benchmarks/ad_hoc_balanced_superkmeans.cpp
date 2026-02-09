@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters = 10000;// bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = 4000;// bench_utils::get_default_n_clusters(n);
     int n_iters = bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
     std::string filename = bench_utils::get_data_path(dataset);
@@ -80,7 +80,7 @@ int main(int argc, char* argv[]) {
     config.unrotate_centroids = true;
     config.perform_assignments = false;
     config.early_termination = false;
-    config.sampling_fraction = 1.0;// sampling_fraction;
+    config.sampling_fraction = 0.3; // sampling_fraction;
     config.use_blas_only = false;
     config.tol = 1e-3f;
 
