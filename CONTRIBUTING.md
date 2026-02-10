@@ -36,9 +36,15 @@ git checkout -b my-feature
 All PRs must pass the full test suite in CI. Before submitting a PR, you should run tests locally:
 
 ```bash
+# C++ tests
 cmake . -DSKMEANS_COMPILE_TESTS=ON
 make -j$(nproc) tests
 ctest .
+
+# Python bindings tests
+source venv/bin/activate # If using a venv
+pip install .
+pytest python/tests/
 ```
 
 Tests are also prone to bugs. If that is the case, please open an Issue.

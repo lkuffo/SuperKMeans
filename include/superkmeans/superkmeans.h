@@ -50,7 +50,6 @@ struct SuperKMeansConfig {
     bool verbose = false;             // Whether to print progress information
     bool angular = false;             // Whether to use spherical k-means
 
-    // Data preprocessing
     bool data_already_rotated = false; // Whether input data is already rotated (skip rotation)
 };
 
