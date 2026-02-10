@@ -63,11 +63,11 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
     /**
      * @brief Run balanced k-means clustering to determine centroids
+     * We don't support Early Termination by Recall here. 
+     * queries and n_queries are ignored. But we keep the function signature for compatibility.
      *
      * @param data Pointer to the data matrix (row-major, n × d)
      * @param n Number of points (rows) in the data matrix
-     * @param queries Optional pointer to query vectors for recall computation
-     * @param n_queries Number of query vectors
      *
      * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
      */
@@ -77,23 +77,20 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         const vector_value_t* SKM_RESTRICT queries = nullptr,
         const size_t n_queries = 0
     ) {
-        // Presetup
         SKMEANS_ENSURE_POSITIVE(n);
         if (this->_trained) {
             throw std::runtime_error("The clustering has already been trained");
         }
-        n_mesoclusters = static_cast<size_t>(std::round(std::sqrt(this->_n_clusters)));
+        if (n_queries > 0){
+            std::cout << "WARNING: Early Termination by Recall is not supported in BalancedSuperKMeans" << std::endl;
+        }
+        n_mesoclusters = GetNMesoclusters(this->_n_clusters);
         balanced_iteration_stats.fineclustering_iteration_stats.clear();
         balanced_iteration_stats.mesoclustering_iteration_stats.clear();
         balanced_iteration_stats.refinement_iteration_stats.clear();
         if (n < this->_n_clusters) {
             throw std::runtime_error(
                 "The number of points should be at least as large as the number of clusters"
-            );
-        }
-        if (n_queries > 0 && queries == nullptr && !this->balanced_config.sample_queries) {
-            throw std::invalid_argument(
-                "Queries must be provided if n_queries > 0 and sample_queries is false"
             );
         }
         const vector_value_t* SKM_RESTRICT data_p = data;
@@ -106,10 +103,10 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         }
         {
             SKM_PROFILE_SCOPE("allocator");
-            // mesoclusters_assignments and mesoclusters_sizes are sized later via .assign()
+            // Buffers to concatenate each fineclustering assignments and centroids
             this->final_assignments.resize(this->_n_samples);
             this->final_centroids.resize(this->_n_clusters * this->_d);
-            // We use the same buffers for the mesocentroids
+            // These buffers are reused for all three phases
             this->_centroids.resize(this->_n_clusters * this->_d);
             this->_horizontal_centroids.resize(this->_n_clusters * this->_d);
             this->_prev_centroids.resize(this->_n_clusters * this->_d);
@@ -149,25 +146,18 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         if (this->balanced_config.verbose) {
             std::cout << "Sampling data..." << std::endl;
         }
-        // Samples for mesoclustering and fineclustering
+        // Samples for both mesoclustering and fineclustering
         std::vector<vector_value_t> data_samples_buffer; 
         this->SampleAndRotateVectors(data_p, data_samples_buffer, n, this->_n_samples, !this->balanced_config.data_already_rotated);
         auto data_to_cluster = data_samples_buffer.data();
         auto initial_n_samples = this->_n_samples;
-
         this->RotateOrCopy(
             this->_horizontal_centroids.data(), this->_prev_centroids.data(), n_mesoclusters, !this->balanced_config.data_already_rotated
         );
-
         this->GetL2NormsRowMajor(data_to_cluster, this->_n_samples, this->_data_norms.data());
         this->GetL2NormsRowMajor(
             this->_prev_centroids.data(), n_mesoclusters, this->_centroid_norms.data()
         );
-
-        // TODO(@lkuffo, crit) N_QUERIES LOGIC
-
-        if (this->balanced_config.verbose)
-            std::cout << "1st iteration..." << std::endl;
 
         size_t iter_idx = 0;
         float best_recall = 0.0f;
@@ -183,7 +173,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             centroids_pdx_wrapper,
             centroids_partial_norms,
             not_pruned_counts,
-            nullptr, // rotated_queries (TODO: implement query logic)
+            nullptr, // queries
             0,       // n_queries
             this->_n_samples,
             n_mesoclusters,
@@ -218,7 +208,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         centroids_pdx_wrapper,
                         centroids_partial_norms,
                         not_pruned_counts,
-                        nullptr, // rotated_queries
+                        nullptr, // queries
                         0,       // n_queries
                         this->_n_samples,
                         n_mesoclusters,
@@ -228,7 +218,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                     );
                     if (this->balanced_config.early_termination &&
                         this->ShouldStopEarly(
-                            n_queries > 0, best_recall, iters_without_improvement, iter_idx
+                            false, best_recall, iters_without_improvement, iter_idx
                         )) {
                         break;
                     }
@@ -244,7 +234,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         centroids_pdx_wrapper,
                         centroids_partial_norms,
                         not_pruned_counts,
-                        nullptr, // rotated_queries
+                        nullptr, // queries
                         0,       // n_queries
                         this->_n_samples,
                         n_mesoclusters,
@@ -254,7 +244,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                     );
                     if (this->balanced_config.early_termination &&
                         this->ShouldStopEarly(
-                            n_queries > 0, best_recall, iters_without_improvement, iter_idx
+                            false, best_recall, iters_without_improvement, iter_idx
                         )) {
                         break;
                     }
@@ -310,25 +300,19 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         TicToc timer_fineclustering;
         timer_fineclustering.Tic();
 
-        // max_mesocluster_size Should not take all cluster_sizes but only until n_mesoclusters
-        size_t max_mesocluster_size =
-            *std::max_element(this->_cluster_sizes.begin(), this->_cluster_sizes.begin() + n_mesoclusters);
+        size_t max_mesocluster_size = *std::max_element(this->_cluster_sizes.begin(), this->_cluster_sizes.begin() + n_mesoclusters);
         std::vector<vector_value_t> mesocluster_buffer(max_mesocluster_size * this->_d);
         std::vector<uint32_t> assignments_indirection_buffer(max_mesocluster_size);
         size_t fineclusters_offset = 0;
         for (size_t k = 0; k < n_mesoclusters; ++k) {
             size_t n_fineclusters = fine_clusters_nums[k];
-
-            // Skip empty mesoclusters
             if (n_fineclusters == 0) {
                 continue;
             }
             this->_partial_d = initial_partial_d;
 
             auto mesocluster_size = mesoclusters_sizes[k];
-            // auto points_per_finecluster = static_cast<float>(mesocluster_size) / static_cast<float>(n_fineclusters);
-            // std::cout << "Mesocluster size: " << mesocluster_size << std::endl;
-            // std::cout << "Points per fine cluster: " << points_per_finecluster << std::endl;
+            auto points_per_finecluster = static_cast<float>(mesocluster_size) / static_cast<float>(n_fineclusters);
             this->_n_samples = mesocluster_size;
             CompactMesoclusterToBuffer(
                 mesocluster_size,
@@ -355,7 +339,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 mesocluster_centroids_pdx_wrapper,
                 centroids_partial_norms,
                 not_pruned_counts,
-                nullptr, // rotated_queries (TODO: implement query logic)
+                nullptr, // queries
                 0,       // n_queries
                 this->_n_samples,
                 n_fineclusters,
@@ -383,7 +367,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                             mesocluster_centroids_pdx_wrapper,
                             centroids_partial_norms,
                             not_pruned_counts,
-                            nullptr, // rotated_queries
+                            nullptr, // queries
                             0,       // n_queries
                             this->_n_samples,
                             n_fineclusters,
@@ -392,7 +376,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                             this->balanced_iteration_stats.fineclustering_iteration_stats
                         );
                         if (this->balanced_config.early_termination && this->ShouldStopEarly(
-                                                                   n_queries > 0,
+                                                                   false,
                                                                    fine_best_recall,
                                                                    iters_without_improvement,
                                                                    fine_iter_idx
@@ -415,7 +399,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                             mesocluster_centroids_pdx_wrapper,
                             centroids_partial_norms,
                             not_pruned_counts,
-                            nullptr, // rotated_queries
+                            nullptr, // queries
                             0,       // n_queries
                             this->_n_samples,
                             n_fineclusters,
@@ -424,7 +408,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                             this->balanced_iteration_stats.fineclustering_iteration_stats
                         );
                         if (this->balanced_config.early_termination && this->ShouldStopEarly(
-                                                                   n_queries > 0,
+                                                                   false,
                                                                    fine_best_recall,
                                                                    iters_without_improvement,
                                                                    fine_iter_idx
@@ -471,6 +455,8 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
         // (RunIteration with is_first_iter=false will swap _horizontal_centroids and _prev_centroids)
         // Copy final_centroids to _prev_centroids so the swap in RunIteration works correctly
+        // We could avoid this copies by managing an offset on assignments and centroids 
+        // in the core functions of SuperKMeans. But this would just complicate the code.
         {
             SKM_PROFILE_SCOPE("dumb_cpy_final_centroids_and_assignments");
             memcpy(
@@ -484,17 +470,14 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 sizeof(uint32_t) * this->_n_samples
             );
         }
-
         this->GetL2NormsRowMajor(
             this->_prev_centroids.data(), this->_n_clusters, this->_centroid_norms.data()
         );
     
-
         TicToc timer_refinement;
         timer_refinement.Tic();
 
-        // RunIteration<false>
-        // 2 refinement iterations GEMM+PRUNING with data_to_sample and final_centroids
+        // 2 refinement iterations GEMM+PRUNING
         size_t refinement_iter_idx = 0;
         if (this->balanced_config.iters_refinement > 0) {
             //
@@ -510,7 +493,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         final_refinement_pdx_wrapper,
                         centroids_partial_norms,
                         not_pruned_counts,
-                        nullptr, // rotated_queries
+                        nullptr, // queries
                         0,       // n_queries
                         this->_n_samples,
                         this->_n_clusters,
@@ -520,9 +503,8 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                     );
                 }
             } else { // Rest of Iterations with GEMM+PRUNING
-                // TODO(@lkuffo, high): The only reason I need to do this (again) in the first time
-                //   is because we are
-                //   using the same this->_data_norms.data() buffer in the fineclustering, which
+                // TODO(@lkuffo, high): The only reason I need to compute the data norms (again) 
+                //   is because we are using the same this->_data_norms.data() buffer in the fineclustering, which
                 //   replaces the norms that I already calculated before and put in this buffer.
                 this->GetPartialL2NormsRowMajor(
                     data_to_cluster, this->_n_samples, this->_data_norms.data(), this->_partial_d
@@ -535,7 +517,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         final_refinement_pdx_wrapper,
                         centroids_partial_norms,
                         not_pruned_counts,
-                        nullptr, // rotated_queries
+                        nullptr, // queries
                         0,       // n_queries
                         this->_n_samples,
                         this->_n_clusters,
@@ -565,6 +547,16 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             Profiler::Get().PrintHierarchical();
         }
         return output_centroids;
+    }
+
+    /**
+     * @brief Calculate the number of mesoclusters for a given number of clusters
+     *
+     * @param n_clusters Total number of clusters
+     * @return Number of mesoclusters
+     */
+    static size_t GetNMesoclusters(const size_t n_clusters) {
+        return static_cast<size_t>(std::round(std::sqrt(n_clusters)));
     }
 
     /**
@@ -724,8 +716,6 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
         size_t n_clusters_remaining = n_clusters;
         size_t n_nonempty_mesoclusters_remaining = 0;
-
-        // Count non-empty mesoclusters
         for (size_t i = 0; i < n_mesoclusters; ++i) {
             if (mesocluster_sizes[i] > 0) {
                 n_nonempty_mesoclusters_remaining++;
@@ -733,7 +723,6 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         }
 
         size_t n_samples_remaining = n_samples;
-
         for (size_t i = 0; i < n_mesoclusters; ++i) {
             if (i < n_mesoclusters - 1) {
                 // Handle empty mesoclusters
@@ -741,23 +730,16 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                     fine_clusters_nums[i] = 0;
                 } else {
                     n_nonempty_mesoclusters_remaining--;
-
-                    // Proportional allocation: round to nearest integer
                     double proportion = static_cast<double>(n_clusters_remaining * mesocluster_sizes[i]) /
                                       static_cast<double>(n_samples_remaining);
                     size_t allocated = static_cast<size_t>(proportion + 0.5);
-
-                    // Ensure we don't allocate more than what's left minus other non-empty mesoclusters
                     allocated = std::min(allocated, n_clusters_remaining - n_nonempty_mesoclusters_remaining);
-
-                    // Ensure at least 1 cluster for non-empty mesoclusters
                     fine_clusters_nums[i] = std::max(allocated, size_t{1});
                 }
             } else {
                 // Last mesocluster gets all remaining clusters
                 fine_clusters_nums[i] = n_clusters_remaining;
             }
-
             n_clusters_remaining -= fine_clusters_nums[i];
             n_samples_remaining -= mesocluster_sizes[i];
         }
@@ -784,8 +766,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
     }
 
     /**
-     * @brief Setup centroids to be used for clustering
-     *
+     * @brief Setup centroids to be used for the refinement clustering phase
      *
      * @param centroids Centroids to setup
      * @param n_clusters Number of centroids to setupt

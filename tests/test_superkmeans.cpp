@@ -374,3 +374,36 @@ TEST_F(SuperKMeansTest, Sampling_ProvidesSpeedup) {
                             << "ms, "
                             << "Speedup: " << speedup << "x";
 }
+
+TEST_F(SuperKMeansTest, AngularMode_Normalizes) {
+    const size_t n = 5000;
+    const size_t d = 64;
+    const size_t n_clusters = 50;
+
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = 10;
+    config.angular = true;
+    config.verbose = false;
+
+    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        n_clusters, d, config
+    );
+    auto centroids = kmeans.Train(data.data(), n);
+
+    EXPECT_EQ(centroids.size(), n_clusters * d);
+
+    // Check that centroids are normalized (unit length)
+    for (size_t c = 0; c < n_clusters; ++c) {
+        float norm = 0.0f;
+        for (size_t j = 0; j < d; ++j) {
+            float val = centroids[c * d + j];
+            norm += val * val;
+        }
+        norm = std::sqrt(norm);
+
+        EXPECT_NEAR(norm, 1.0f, 1e-5f)
+            << "Centroid " << c << " should be normalized in angular mode (norm=" << norm << ")";
+    }
+}
