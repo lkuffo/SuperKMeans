@@ -39,6 +39,9 @@ target_link_libraries(test_wcss.out PRIVATE ${TEST_COMMON_LIBS})
 add_executable(generate_wcss_ground_truth.out generate_wcss_ground_truth.cpp)
 target_link_libraries(generate_wcss_ground_truth.out PRIVATE ${TEST_COMMON_LIBS})
 
+add_executable(generate_wcss_ground_truth_balanced.out generate_wcss_ground_truth_balanced.cpp)
+target_link_libraries(generate_wcss_ground_truth_balanced.out PRIVATE ${TEST_COMMON_LIBS})
+
 add_executable(test_distance_computers.out test_distance_computers.cpp)
 target_link_libraries(test_distance_computers.out PRIVATE ${TEST_COMMON_LIBS})
 

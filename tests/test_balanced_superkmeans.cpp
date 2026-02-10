@@ -1,6 +1,12 @@
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <fstream>
 #include <gtest/gtest.h>
+#include <map>
 #include <omp.h>
 #include <random>
+#include <tuple>
 #include <unordered_set>
 #include <vector>
 
@@ -552,7 +558,7 @@ TEST_F(BalancedSuperKMeansTest, AssignMethod_ProducesValidAssignments) {
     const size_t d = 128;
     const size_t n_clusters = 256;
 
-    std::vector<float> data = skmeans::MakeBlobs(n, d, 100);
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
     skmeans::BalancedSuperKMeansConfig config;
     config.iters_mesoclustering = 5;
@@ -616,3 +622,196 @@ TEST_F(BalancedSuperKMeansTest, AngularMode_Normalizes) {
             << "Centroid " << c << " should be normalized in angular mode (norm=" << norm << ")";
     }
 }
+
+// =============================================================================
+// WCSS Ground Truth Tests
+// =============================================================================
+
+namespace {
+
+// Regenerate with: ./generate_wcss_ground_truth_balanced.out
+// Generated with: N_SAMPLES=10000, MAX_D=768, N_TRUE_CENTERS=500,
+//   CLUSTER_STD=0.25, CENTER_SPREAD=5.0, SEED=42,
+//   ITERS_MESOCLUSTERING=5, ITERS_FINECLUSTERING=5, ITERS_REFINEMENT=2
+
+// clang-format off
+const std::map<std::pair<size_t, size_t>, float> BALANCED_GROUND_TRUTH = {
+    // k=10
+    {{10, 4}, 4.79045e+05f},
+    {{10, 16}, 3.06173e+06f},
+    {{10, 32}, 6.94446e+06f},
+    {{10, 64}, 1.49361e+07f},
+    {{10, 100}, 2.37082e+07f},
+    {{10, 128}, 3.05857e+07f},
+    {{10, 384}, 9.33238e+07f},
+    {{10, 512}, 1.24612e+08f},
+    {{10, 600}, 1.46480e+08f},
+    {{10, 768}, 1.87500e+08f},
+    // k=100
+    {{100, 4}, 1.47396e+05f},
+    {{100, 16}, 1.81658e+06f},
+    {{100, 32}, 4.78898e+06f},
+    {{100, 64}, 1.14144e+07f},
+    {{100, 100}, 1.85766e+07f},
+    {{100, 128}, 2.41966e+07f},
+    {{100, 384}, 7.50582e+07f},
+    {{100, 512}, 1.00480e+08f},
+    {{100, 600}, 1.18190e+08f},
+    {{100, 768}, 1.51392e+08f},
+    // k=250
+    {{250, 4}, 8.00637e+04f},
+    {{250, 16}, 1.05416e+06f},
+    {{250, 32}, 2.92549e+06f},
+    {{250, 64}, 6.98381e+06f},
+    {{250, 100}, 1.18317e+07f},
+    {{250, 128}, 1.58163e+07f},
+    {{250, 384}, 4.80848e+07f},
+    {{250, 512}, 6.41956e+07f},
+    {{250, 600}, 7.73289e+07f},
+    {{250, 768}, 9.82998e+07f},
+};
+// clang-format on
+
+class BalancedWCSSTest : public ::testing::TestWithParam<std::tuple<size_t, size_t>> {
+  protected:
+    void SetUp() override { omp_set_num_threads(1); }
+
+    static constexpr size_t N_SAMPLES = 10000;
+    static constexpr size_t MAX_D = 768;
+    static constexpr unsigned int SEED = 42;
+    static constexpr int ITERS_MESOCLUSTERING = 5;
+    static constexpr int ITERS_FINECLUSTERING = 5;
+    static constexpr int ITERS_REFINEMENT = 2;
+    static constexpr float TOLERANCE = 0.10f;
+
+    static std::vector<float> full_data_;
+    static void LoadTestData() {
+        if (!full_data_.empty()) return;
+        std::string data_file = CMAKE_SOURCE_DIR "/tests/test_data.bin";
+        std::ifstream in(data_file, std::ios::binary);
+        if (!in) {
+            throw std::runtime_error(
+                "Could not open test_data.bin. Run generate_wcss_ground_truth.out first."
+            );
+        }
+        full_data_.resize(N_SAMPLES * MAX_D);
+        in.read(reinterpret_cast<char*>(full_data_.data()), full_data_.size() * sizeof(float));
+        in.close();
+    }
+
+    static std::vector<float> ExtractSubdim(size_t d) {
+        LoadTestData();
+        std::vector<float> data(N_SAMPLES * d);
+        for (size_t i = 0; i < N_SAMPLES; ++i) {
+            std::memcpy(&data[i * d], &full_data_[i * MAX_D], d * sizeof(float));
+        }
+        return data;
+    }
+};
+
+std::vector<float> BalancedWCSSTest::full_data_;
+
+/**
+ * @brief Test that final WCSS from BalancedSuperKMeans matches the ground truth
+ * within tolerance, and that WCSS within each mesocluster's fineclustering phase
+ * decreases monotonically.
+ */
+TEST_P(BalancedWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
+    auto [n_clusters, d] = GetParam();
+
+    auto data = ExtractSubdim(d);
+    ASSERT_EQ(data.size(), N_SAMPLES * d) << "Data size mismatch";
+
+    // These values MUST match those in generate_wcss_ground_truth_balanced.cpp
+    skmeans::BalancedSuperKMeansConfig config;
+    config.iters_mesoclustering = ITERS_MESOCLUSTERING;
+    config.iters_fineclustering = ITERS_FINECLUSTERING;
+    config.iters_refinement = ITERS_REFINEMENT;
+    config.verbose = false;
+    config.seed = SEED;
+    config.early_termination = false;
+    config.sampling_fraction = 1.0f;
+    config.max_points_per_cluster = 99999;
+    config.min_not_pruned_pct = 0.03f;
+    config.max_not_pruned_pct = 0.05f;
+    config.adjustment_factor_for_partial_d = 0.20f;
+    config.angular = false;
+    config.n_threads = 1;
+
+    auto kmeans =
+        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            n_clusters, d, config
+        );
+    auto centroids = kmeans.Train(data.data(), N_SAMPLES);
+
+    const auto& balanced_stats = kmeans.balanced_iteration_stats;
+
+    // Final WCSS comes from last refinement iteration
+    ASSERT_FALSE(balanced_stats.refinement_iteration_stats.empty())
+        << "Expected refinement stats to be populated";
+    float final_wcss = balanced_stats.refinement_iteration_stats.back().objective;
+
+    // Compare against ground truth
+    auto key = std::make_pair(n_clusters, d);
+    auto it = BALANCED_GROUND_TRUTH.find(key);
+    ASSERT_NE(it, BALANCED_GROUND_TRUTH.end())
+        << "No ground truth for k=" << n_clusters << ", d=" << d;
+
+    float expected_wcss = it->second;
+    EXPECT_LE(final_wcss, expected_wcss * (1.0f + TOLERANCE))
+        << "WCSS too high (k=" << n_clusters << ", d=" << d << "): " << final_wcss
+        << " > " << expected_wcss * (1.0f + TOLERANCE) << " (expected ~" << expected_wcss << ")";
+    EXPECT_GE(final_wcss, expected_wcss * 0.5f)
+        << "WCSS suspiciously low (k=" << n_clusters << ", d=" << d << "): " << final_wcss
+        << " < " << expected_wcss * 0.5f << " (expected ~" << expected_wcss << ")";
+
+    // Refinement WCSS should decrease monotonically
+    const auto& ref_stats = balanced_stats.refinement_iteration_stats;
+    for (size_t i = 1; i < ref_stats.size(); ++i) {
+        float prev = ref_stats[i - 1].objective;
+        float curr = ref_stats[i].objective;
+        EXPECT_LE(curr, prev * (1.0f + 1e-2f))
+            << "Refinement WCSS increased at iteration " << (i + 1) << ": " << prev << " -> "
+            << curr << " (k=" << n_clusters << ", d=" << d << ")";
+    }
+
+    // Within each mesocluster's fineclustering block, WCSS should decrease
+    const auto& fine_stats = balanced_stats.fineclustering_iteration_stats;
+    const size_t n_mesoclusters =
+        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
+            GetNMesoclusters(n_clusters);
+    const size_t iters_fine = ITERS_FINECLUSTERING;
+    ASSERT_EQ(fine_stats.size(), n_mesoclusters * iters_fine)
+        << "Expected " << n_mesoclusters * iters_fine << " fineclustering iterations";
+    for (size_t m = 0; m < n_mesoclusters; ++m) {
+        for (size_t i = 1; i < iters_fine; ++i) {
+            size_t idx = m * iters_fine + i;
+            float prev = fine_stats[idx - 1].objective;
+            float curr = fine_stats[idx].objective;
+            EXPECT_LE(curr, prev * (1.0f + 1e-2f))
+                << "Fineclustering WCSS increased at mesocluster=" << m << " iter=" << (i + 1)
+                << ": " << prev << " -> " << curr << " (k=" << n_clusters << ", d=" << d << ")";
+        }
+    }
+
+    // Centroids should be finite
+    EXPECT_EQ(centroids.size(), n_clusters * d);
+    for (size_t i = 0; i < centroids.size(); ++i) {
+        EXPECT_TRUE(std::isfinite(centroids[i])) << "Centroid not finite at index " << i;
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BalancedWCSSParameterized,
+    BalancedWCSSTest,
+    ::testing::Combine(
+        ::testing::Values(10, 100, 250),
+        ::testing::Values(4, 16, 32, 64, 100, 128, 384, 512, 600, 768)
+    ),
+    [](const ::testing::TestParamInfo<BalancedWCSSTest::ParamType>& info) {
+        return "k" + std::to_string(std::get<0>(info.param)) + "_d" +
+               std::to_string(std::get<1>(info.param));
+    }
+);
+
+} // anonymous namespace

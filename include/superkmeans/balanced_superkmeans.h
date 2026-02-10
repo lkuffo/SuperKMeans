@@ -9,9 +9,9 @@ namespace skmeans {
  * @brief Configuration parameters for Balanced SuperKMeans clustering.
  */
 struct BalancedSuperKMeansConfig : SuperKMeansConfig {
-    uint32_t iters_mesoclustering = 10;
-    uint32_t iters_fineclustering = 10;
-    uint32_t iters_refinement = 2;
+    uint32_t iters_mesoclustering = 3;
+    uint32_t iters_fineclustering = 5;
+    uint32_t iters_refinement = 1;
 };
 
 /**
@@ -312,7 +312,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             this->_partial_d = initial_partial_d;
 
             auto mesocluster_size = mesoclusters_sizes[k];
-            auto points_per_finecluster = static_cast<float>(mesocluster_size) / static_cast<float>(n_fineclusters);
+            // auto points_per_finecluster = static_cast<float>(mesocluster_size) / static_cast<float>(n_fineclusters);
             this->_n_samples = mesocluster_size;
             CompactMesoclusterToBuffer(
                 mesocluster_size,

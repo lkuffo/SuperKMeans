@@ -588,7 +588,7 @@ class SuperKMeans {
             size_t c1 = (n_clusters * (rank + 1)) / nt;
             for (size_t i = 0; i < n_samples; i++) {
                 uint32_t ci = _assignments[i];
-                assert(ci > 0 && ci < n_clusters);
+                assert(ci < n_clusters);
                 if (ci >= c0 && ci < c1) {
                     auto vector_p = data + i * _d;
                     _cluster_sizes[ci] += 1;
@@ -922,8 +922,7 @@ class SuperKMeans {
                 // assignments for this query
                 bool found = false;
                 for (size_t t = 0; t < _centroids_to_explore; ++t) {
-                    // If a promising centroid is the same as the GT centroid assignment, then we
-                    // have a match
+                    // If a centroid is the same as the GT centroid assignment, then we have a match
                     if (_promising_centroids[i * _centroids_to_explore + t] == _assignments[gt]) {
                         found = true;
                         break;
@@ -1261,6 +1260,7 @@ class SuperKMeans {
             if (rotate) {
                 // Need intermediate buffer: sample first, then rotate
                 samples_tmp.resize(n_samples * _d);
+#pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
                 for (size_t i = 0; i < n_samples; ++i) {
                     memcpy(
                         static_cast<void*>(samples_tmp.data() + i * _d),
@@ -1271,6 +1271,7 @@ class SuperKMeans {
                 src_data = samples_tmp.data();
             } else {
                 // No rotation: copy directly into output buffer
+#pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
                 for (size_t i = 0; i < n_samples; ++i) {
                     memcpy(
                         static_cast<void*>(out_buffer.data() + i * _d),
