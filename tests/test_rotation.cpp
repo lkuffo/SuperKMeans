@@ -8,6 +8,7 @@
 #include "superkmeans/distance_computers/scalar_computers.h"
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/utils.h"
+#include "superkmeans/superkmeans.h"
 
 namespace {
 
@@ -383,6 +384,85 @@ TEST_F(RotationTest, SameSeedProducesIdenticalRotations) {
         EXPECT_FLOAT_EQ(rotated1[i], rotated2[i])
             << "Same seed should produce identical rotations at index " << i;
     }
+}
+
+/**
+ * @brief Test that SuperKMeans produces identical results with data_already_rotated flag
+ *
+ * This test verifies that:
+ * 1. Running SuperKMeans with default config (data_already_rotated = false, unrotate_centroids =
+ * false) → SuperKMeans rotates data internally, returns rotated centroids
+ * 2. Manually rotating data with the same pruner config, then running SuperKMeans with
+ *    (data_already_rotated = true, unrotate_centroids = true -> will be forced to false by
+ * constructor) → SuperKMeans skips rotation, returns rotated centroids Both should produce
+ * identical rotated centroids since everything is deterministic with seeds.
+ */
+TEST_F(RotationTest, SuperKMeansWithPreRotatedDataProducesIdenticalResults) {
+    const size_t n = 10000;
+    const size_t d = 256;
+    const size_t k = 100;
+    const uint32_t seed = 42;
+
+    auto data = skmeans::MakeBlobs(n, d, k, false, 1.0f, 10.0f, seed);
+
+    // Test 1: Run SuperKMeans with default config (data will be rotated internally)
+    skmeans::SuperKMeansConfig config1;
+    config1.iters = 10;
+    config1.seed = seed;
+    config1.verbose = false;
+    config1.data_already_rotated = false; // Default: data needs rotation
+    config1.unrotate_centroids = false;
+    config1.sampling_fraction = 1.0f;
+
+    auto kmeans1 = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        k, d, config1
+    );
+    auto centroids1 = kmeans1.Train(data.data(), n);
+
+    skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 1.5f, seed);
+    std::vector<float> rotated_data(n * d);
+    pruner.Rotate(data.data(), rotated_data.data(), n);
+
+    skmeans::SuperKMeansConfig config2;
+    config2.iters = 10;
+    config2.seed = seed;
+    config2.verbose = false;
+    config2.data_already_rotated = true; // Data is pre-rotated
+    config2.unrotate_centroids = true;   // Try to set true - will be forced to false by constructor
+    config2.sampling_fraction = 1.0f;
+
+    auto kmeans2 = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        k, d, config2
+    );
+
+    auto centroids2 = kmeans2.Train(rotated_data.data(), n);
+
+    ASSERT_EQ(centroids1.size(), centroids2.size()) << "Centroid vectors should have the same size";
+    ASSERT_EQ(centroids1.size(), k * d) << "Centroid size mismatch";
+
+    size_t mismatches = 0;
+    float max_abs_error = 0.0f;
+    float sum_abs_error = 0.0f;
+    for (size_t i = 0; i < k * d; ++i) {
+        float abs_error = std::abs(centroids1[i] - centroids2[i]);
+        max_abs_error = std::max(max_abs_error, abs_error);
+        sum_abs_error += abs_error;
+        if (abs_error > 1e-4f) {
+            mismatches++;
+        }
+    }
+    float avg_abs_error = sum_abs_error / (k * d);
+
+    EXPECT_EQ(mismatches, 0) << "Centroids should match exactly (within numerical precision). "
+                             << "Mismatches: " << mismatches << "/" << (k * d)
+                             << ", Max error: " << max_abs_error
+                             << ", Avg error: " << avg_abs_error;
+
+    EXPECT_LT(max_abs_error, 1e-3f)
+        << "Maximum absolute error between centroids should be very small. Got: " << max_abs_error;
+
+    EXPECT_LT(avg_abs_error, 1e-5f)
+        << "Average absolute error between centroids should be very small. Got: " << avg_abs_error;
 }
 
 } // anonymous namespace

@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from superkmeans import SuperKMeans, SuperKMeansIterationStats
+from superkmeans import SuperKMeans, SuperKMeansIterationStats, HierarchicalSuperKMeansIterationStats
 
 
 class TestSuperKMeans:
@@ -158,10 +158,10 @@ class TestSuperKMeans:
     def test_non_contiguous_arrays(self):
         np.random.seed(42)
         n = 100
-        d = 512
+        d = 256
         k = 10
-        data = np.random.randn(n, d).astype(np.float32)
-        data_nc = data[:, ::2]
+        data = np.random.randn(n, d * 2).astype(np.float32)
+        data_nc = data[:, ::2]  # This creates non-contiguous array with d=256
 
         kmeans = SuperKMeans(n_clusters=k, dimensionality=d)
         centroids = kmeans.train(data_nc)
@@ -186,7 +186,7 @@ class TestSuperKMeans:
         k = 100
         seed = 123
         iters = 5
-        
+
         data = np.random.randn(n, d).astype(np.float32)
         kmeans1 = SuperKMeans(n_clusters=k, dimensionality=d, iters=iters, seed=seed)
         centroids1 = kmeans1.train(data)
@@ -195,6 +195,198 @@ class TestSuperKMeans:
         centroids2 = kmeans2.train(data)
 
         np.testing.assert_array_equal(centroids1, centroids2)
+
+    def test_hierarchical_explicit_true(self):
+        """Test explicit hierarchical=True mode."""
+        np.random.seed(42)
+        n = 10000
+        d = 512
+        k = 100
+
+        data = np.random.randn(n, d).astype(np.float32)
+
+        kmeans = SuperKMeans(
+            n_clusters=k,
+            dimensionality=d,
+            hierarchical=True,
+            iters_mesoclustering=5,
+            iters_fineclustering=5,
+            iters_refinement=2,
+            verbose=False
+        )
+        centroids = kmeans.train(data)
+
+        assert centroids.shape == (k, d)
+        assert centroids.dtype == np.float32
+        assert kmeans.is_trained_
+        assert kmeans.hierarchical_ is True
+        assert kmeans.hierarchical_iteration_stats is not None
+
+    def test_hierarchical_explicit_false(self):
+        """Test explicit hierarchical=False mode."""
+        np.random.seed(42)
+        n = 10000
+        d = 512
+        k = 100
+
+        data = np.random.randn(n, d).astype(np.float32)
+
+        kmeans = SuperKMeans(
+            n_clusters=k,
+            dimensionality=d,
+            hierarchical=False,
+            iters=5,
+            verbose=False
+        )
+        centroids = kmeans.train(data)
+
+        assert centroids.shape == (k, d)
+        assert kmeans.hierarchical_ is False
+        assert kmeans.hierarchical_iteration_stats is None
+
+    def test_hierarchical_auto_small_dataset(self):
+        """Test automatic hierarchical mode selection for small dataset (n <= 100,000)."""
+        np.random.seed(42)
+        n = 50000  # Small dataset
+        d = 512
+        k = 100
+
+        data = np.random.randn(n, d).astype(np.float32)
+
+        kmeans = SuperKMeans(n_clusters=k, dimensionality=d, iters=5, verbose=False)
+        centroids = kmeans.train(data)
+
+        assert centroids.shape == (k, d)
+        assert kmeans.hierarchical_ is False  # Should automatically use non-hierarchical
+
+    def test_hierarchical_auto_large_dataset(self):
+        """Test automatic hierarchical mode selection for large dataset (n > 100,000)."""
+        np.random.seed(42)
+        n = 150000
+        d = 128
+        k = 256
+
+        data = np.random.randn(n, d).astype(np.float32)
+
+        kmeans = SuperKMeans(
+            n_clusters=k,
+            dimensionality=d,
+            iters_mesoclustering=3,
+            iters_fineclustering=3,
+            iters_refinement=1,
+            verbose=False
+        )
+        centroids = kmeans.train(data)
+
+        assert centroids.shape == (k, d)
+        assert kmeans.hierarchical_ is True  # Should automatically use hierarchical
+        assert kmeans.hierarchical_iteration_stats is not None
+
+    def test_hierarchical_assign(self):
+        """Test assign method in hierarchical mode."""
+        np.random.seed(42)
+        n = 10000
+        d = 512
+        k = 100
+
+        data = np.random.randn(n, d).astype(np.float32)
+
+        kmeans = SuperKMeans(
+            n_clusters=k,
+            dimensionality=d,
+            hierarchical=True,
+            iters_mesoclustering=3,
+            iters_fineclustering=3,
+            iters_refinement=1
+        )
+        centroids = kmeans.train(data)
+        assignments = kmeans.assign(data, centroids)
+
+        assert assignments.shape == (n,)
+        assert assignments.dtype == np.uint32
+        assert np.all(assignments >= 0)
+        assert np.all(assignments < k)
+
+    def test_hierarchical_iteration_stats(self):
+        """Test that hierarchical iteration stats are populated in hierarchical mode."""
+        np.random.seed(42)
+        n = 10000
+        d = 512
+        k = 100
+
+        data = np.random.randn(n, d).astype(np.float32)
+
+        kmeans = SuperKMeans(
+            n_clusters=k,
+            dimensionality=d,
+            hierarchical=True,
+            iters_mesoclustering=3,
+            iters_fineclustering=3,
+            iters_refinement=2,
+            verbose=True
+        )
+        kmeans.train(data)
+
+        hierarchical_stats = kmeans.hierarchical_iteration_stats
+        assert hierarchical_stats is not None
+        assert isinstance(hierarchical_stats, HierarchicalSuperKMeansIterationStats)
+        assert len(hierarchical_stats.mesoclustering_iteration_stats) == 3
+        assert len(hierarchical_stats.fineclustering_iteration_stats) > 0
+        assert len(hierarchical_stats.fineclustering_iteration_stats) <= 10 * 3  # At most 10 mesoclusters * 3 iters
+        assert len(hierarchical_stats.refinement_iteration_stats) == 2
+
+    def test_hierarchical_reproducibility(self):
+        """Test reproducibility in hierarchical mode."""
+        np.random.seed(42)
+        n = 10000
+        d = 512
+        k = 100
+        seed = 123
+
+        data = np.random.randn(n, d).astype(np.float32)
+
+        kmeans1 = SuperKMeans(
+            n_clusters=k,
+            dimensionality=d,
+            hierarchical=True,
+            iters_mesoclustering=3,
+            iters_fineclustering=3,
+            iters_refinement=1,
+            seed=seed
+        )
+        centroids1 = kmeans1.train(data)
+
+        kmeans2 = SuperKMeans(
+            n_clusters=k,
+            dimensionality=d,
+            hierarchical=True,
+            iters_mesoclustering=3,
+            iters_fineclustering=3,
+            iters_refinement=1,
+            seed=seed
+        )
+        centroids2 = kmeans2.train(data)
+
+        np.testing.assert_array_equal(centroids1, centroids2)
+
+    def test_hierarchical_repr(self):
+        """Test string representation with hierarchical mode."""
+        k = 100
+        d = 512
+
+        kmeans = SuperKMeans(n_clusters=k, dimensionality=d, hierarchical=True)
+        repr_str = repr(kmeans)
+
+        assert "SuperKMeans" in repr_str
+        assert f"n_clusters={k}" in repr_str
+        assert f"dimensionality={d}" in repr_str
+        assert "trained=False" in repr_str
+
+        np.random.seed(42)
+        data = np.random.randn(1000, d).astype(np.float32)
+        kmeans.train(data)
+        repr_str_trained = repr(kmeans)
+        assert "hierarchical=True" in repr_str_trained
 
 
 if __name__ == "__main__":

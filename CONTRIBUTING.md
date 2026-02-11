@@ -6,8 +6,8 @@ These are our current priorities:
 
 **Features**:
 - Support `uint64_t` for the `assignments`. Right now, we are limited to ~4 billion vectors.
-- Hierarchical K-Means 
 - Support for different datatypes: 64-bit `double`, 16-bit `half`, 8-bit `uint8` (experimental).
+- Faster `.Assign()`
 - Support for out-of-core capabilities
 
 **Improvements**:
@@ -36,9 +36,15 @@ git checkout -b my-feature
 All PRs must pass the full test suite in CI. Before submitting a PR, you should run tests locally:
 
 ```bash
+# C++ tests
 cmake . -DSKMEANS_COMPILE_TESTS=ON
 make -j$(nproc) tests
 ctest .
+
+# Python bindings tests
+source venv/bin/activate # If using a venv
+pip install .
+pytest python/tests/
 ```
 
 Tests are also prone to bugs. If that is the case, please open an Issue.

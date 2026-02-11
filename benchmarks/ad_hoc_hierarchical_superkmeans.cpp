@@ -10,13 +10,13 @@
 
 #include "bench_utils.h"
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/utils.h"
-#include "superkmeans/superkmeans.h"
 
 int main(int argc, char* argv[]) {
-    const std::string algorithm = "superkmeans";
+    const std::string algorithm = "hierarchical_superkmeans";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
     std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
 
@@ -29,7 +29,6 @@ int main(int argc, char* argv[]) {
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
     const size_t n_clusters = bench_utils::get_default_n_clusters(n);
-    int n_iters = bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
@@ -38,8 +37,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "=== Running algorithm: " << algorithm << " ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
-    std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters
-              << " sampling_fraction=" << sampling_fraction << "\n";
+    std::cout << "n_clusters=" << n_clusters << " sampling_fraction=" << sampling_fraction << "\n";
     std::cout << "Eigen # threads: " << Eigen::nbThreads()
               << " (note: it will always be 1 if BLAS is enabled)" << std::endl;
 
@@ -70,8 +68,9 @@ int main(int argc, char* argv[]) {
     file_queries.read(reinterpret_cast<char*>(queries.data()), queries.size() * sizeof(float));
     file_queries.close();
 
-    skmeans::SuperKMeansConfig config;
-    config.iters = n_iters;
+    skmeans::HierarchicalSuperKMeansConfig config;
+    // Base SuperKMeans config parameters
+    config.iters = 10;
     config.verbose = true;
     config.n_threads = THREADS;
     config.objective_k = 100;
@@ -79,9 +78,14 @@ int main(int argc, char* argv[]) {
     config.unrotate_centroids = true;
     config.perform_assignments = false;
     config.early_termination = false;
-    config.sampling_fraction = sampling_fraction;
+    config.sampling_fraction = 0.3; // sampling_fraction;
     config.use_blas_only = false;
     config.tol = 1e-3f;
+
+    // Hierarchical SuperKMeans specific parameters
+    config.iters_mesoclustering = 3;
+    config.iters_fineclustering = 5;
+    config.iters_refinement = 1;
 
     auto is_angular = std::find(
         bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
@@ -92,7 +96,7 @@ int main(int argc, char* argv[]) {
     }
 
     auto kmeans_state =
-        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     bench_utils::TicToc timer;
@@ -102,19 +106,20 @@ int main(int argc, char* argv[]) {
     );
     timer.Toc();
     double construction_time_ms = timer.GetMilliseconds();
-    int actual_iterations = static_cast<int>(kmeans_state.iteration_stats.size());
-    double final_objective = kmeans_state.iteration_stats.back().objective;
+    double final_objective =
+        0; // kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back().objective;
 
     std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
-    std::cout << "Actual iterations: " << actual_iterations << " (requested: " << n_iters << ")"
-              << std::endl;
+    std::cout << "Iteration config: meso=" << config.iters_mesoclustering
+              << ", fine=" << config.iters_fineclustering << ", refine=" << config.iters_refinement
+              << "\n";
     std::cout << "Final objective: " << final_objective << std::endl;
 
     // Compute assignments and cluster balance statistics
     auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
-    auto balance_stats =
-        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-            GetClustersBalanceStats(assignments.data(), n, n_clusters);
+    auto balance_stats = skmeans::HierarchicalSuperKMeans<
+        skmeans::Quantization::f32,
+        skmeans::DistanceFunction::l2>::GetClustersBalanceStats(assignments.data(), n, n_clusters);
     balance_stats.print();
 
     // Compute recall if ground truth file exists

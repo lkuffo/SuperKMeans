@@ -140,6 +140,12 @@ int main(int argc, char* argv[]) {
                 auto assignments =
                     kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
 
+                // Compute cluster balance statistics
+                auto balance_stats = skmeans::
+                    SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
+                        GetClustersBalanceStats(assignments.data(), n, n_clusters);
+                balance_stats.print();
+
                 auto results_knn_10 = bench_utils::compute_recall(
                     gt_map,
                     assignments,
@@ -193,7 +199,8 @@ int main(int argc, char* argv[]) {
                     final_objective,
                     config_map,
                     results_knn_10,
-                    results_knn_100
+                    results_knn_100,
+                    balance_stats.to_json()
                 );
             } else {
                 if (!gt_file.good()) {

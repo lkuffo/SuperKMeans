@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Eigen/Eigen/Dense>
+#include <Eigen/Dense>
 #include <iomanip>
 #include <omp.h>
 #include <random>
@@ -49,6 +49,8 @@ struct SuperKMeansConfig {
     bool perform_assignments = false; // Whether to perform final assignment on Train()
     bool verbose = false;             // Whether to print progress information
     bool angular = false;             // Whether to use spherical k-means
+
+    bool data_already_rotated = false; // Whether input data is already rotated (skip rotation)
 };
 
 /**
@@ -68,8 +70,35 @@ struct SuperKMeansIterationStats {
     bool is_gemm_only = false;
 };
 
+/**
+ * @brief Statistics about cluster size balance.
+ */
+struct ClusterBalanceStats {
+    float mean = 0.0f;
+    float geometric_mean = 0.0f;
+    float stdev = 0.0f;
+    float cv = 0.0f;
+    size_t min = 0;
+    size_t max = 0;
+
+    std::string to_json() const {
+        std::ostringstream oss;
+        oss << "{\"mean\":" << mean << ",\"geometric_mean\":" << geometric_mean
+            << ",\"stdev\":" << stdev << ",\"cv\":" << cv << ",\"min\":" << min
+            << ",\"max\":" << max << "}";
+        return oss.str();
+    }
+
+    void print() const {
+        std::cout << "Cluster size stats: "
+                  << "mean=" << mean << ", gmean=" << geometric_mean << ", std=" << stdev
+                  << ", CV=" << cv << ", min=" << min << ", max=" << max << std::endl;
+    }
+};
+
 template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
 class SuperKMeans {
+  protected:
     using centroid_value_t = skmeans_centroid_value_t<q>;
     using vector_value_t = skmeans_value_t<q>;
     using pruner_t = ADSamplingPruner<q>;
@@ -100,6 +129,11 @@ class SuperKMeans {
         g_n_threads = _n_threads;
         _pruner =
             std::make_unique<pruner_t>(dimensionality, PRUNER_INITIAL_THRESHOLD, _config.seed);
+
+        // If data is already rotated, we must not unrotate output centroids
+        if (_config.data_already_rotated) {
+            _config.unrotate_centroids = false;
+        }
     }
 
     /**
@@ -162,6 +196,8 @@ class SuperKMeans {
             _data_norms.resize(_n_samples);
             _centroid_norms.resize(_n_clusters);
         }
+        std::vector<vector_value_t> centroids_partial_norms(_n_clusters);
+        std::vector<size_t> not_pruned_counts(_n_samples);
         std::vector<distance_t> tmp_distances_buf(X_BATCH_SIZE * Y_BATCH_SIZE);
         _vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(_d).vertical_d;
         _partial_horizontal_centroids.resize(_n_clusters * _vertical_d);
@@ -176,21 +212,24 @@ class SuperKMeans {
             std::cout << "Trailing dimensions (d'') = " << _d - _vertical_d << std::endl;
         }
 
-        auto centroids_pdx_wrapper = GenerateCentroids(data_p);
+        auto centroids_pdx_wrapper =
+            GenerateCentroids(data_p, _n_samples, _n_clusters, !_config.data_already_rotated);
         if (_config.verbose) {
             std::cout << "Sampling data..." << std::endl;
         }
 
         std::vector<vector_value_t> data_samples_buffer;
-        SampleAndRotateVectors(data_p, data_samples_buffer, n, _n_samples, true);
+        SampleAndRotateVectors(
+            data_p, data_samples_buffer, n, _n_samples, !_config.data_already_rotated
+        );
         auto data_to_cluster = data_samples_buffer.data();
 
-        {
-            SKM_PROFILE_SCOPE("rotator");
-            if (_config.verbose)
-                std::cout << "Rotating..." << std::endl;
-            _pruner->Rotate(_horizontal_centroids.data(), _prev_centroids.data(), _n_clusters);
-        }
+        RotateOrCopy(
+            _horizontal_centroids.data(),
+            _prev_centroids.data(),
+            _n_clusters,
+            !_config.data_already_rotated
+        );
 
         GetL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
         GetL2NormsRowMajor(_prev_centroids.data(), _n_clusters, _centroid_norms.data());
@@ -217,8 +256,9 @@ class SuperKMeans {
                     data_to_cluster, rotated_queries, _n_samples, n_queries, false
                 );
             } else {
-                SKM_PROFILE_SCOPE("rotator");
-                _pruner->Rotate(queries, rotated_queries.data(), n_queries);
+                RotateOrCopy(
+                    queries, rotated_queries.data(), n_queries, !_config.data_already_rotated
+                );
             }
             _query_norms.resize(n_queries);
             GetL2NormsRowMajor(rotated_queries.data(), n_queries, _query_norms.data());
@@ -230,32 +270,25 @@ class SuperKMeans {
         //
         if (_config.verbose)
             std::cout << "1st iteration..." << std::endl;
-        FirstAssignAndUpdateCentroids(
-            data_to_cluster, _prev_centroids.data(), tmp_distances_buf.data()
+        size_t iter_idx = 0;
+        float best_recall = 0.0f;
+        size_t iters_without_improvement = 0;
+        RunIteration<true>(
+            data_to_cluster,
+            tmp_distances_buf.data(),
+            centroids_pdx_wrapper,
+            centroids_partial_norms,
+            not_pruned_counts,
+            rotated_queries.data(),
+            n_queries,
+            _n_samples,
+            _n_clusters,
+            iter_idx,
+            true, // is_first_iter
+            iteration_stats
         );
-        ConsolidateCentroids();
-        ComputeCost();
-        ComputeShift();
-        if (n_queries) {
-            _recall = ComputeRecall(rotated_queries.data(), n_queries);
-        }
-        size_t iter_idx = 1;
-        {
-            SuperKMeansIterationStats stats;
-            stats.iteration = 1;
-            stats.objective = _cost;
-            stats.shift = _shift;
-            stats.split = _n_split;
-            stats.recall = _recall;
-            stats.is_gemm_only = false;
-            iteration_stats.push_back(stats);
-        }
-        if (_config.verbose)
-            std::cout << "Iteration 1" << "/" << _config.iters << " | Objective: " << _cost
-                      << " | Shift: " << _shift << " | Split: " << _n_split
-                      << " | Recall: " << _recall << std::endl
-                      << std::endl;
-
+        iter_idx = 1;
+        best_recall = _recall;
         if (_config.iters <= 1) {
             auto output_centroids = GetOutputCentroids(_config.unrotate_centroids);
             if (_config.perform_assignments) {
@@ -267,46 +300,26 @@ class SuperKMeans {
             return output_centroids;
         }
 
-        float best_recall = _recall;
-        size_t iters_without_improvement = 0;
-
         //
         // FULL GEMM on low-dimensional data or too few clusters
         //
         if (_d < DIMENSION_THRESHOLD_FOR_PRUNING || _config.use_blas_only ||
             _n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
             for (; iter_idx < _config.iters; ++iter_idx) {
-                std::swap(_horizontal_centroids, _prev_centroids);
-                GetL2NormsRowMajor(_prev_centroids.data(), _n_clusters, _centroid_norms.data());
-                FirstAssignAndUpdateCentroids(
-                    data_to_cluster, _prev_centroids.data(), tmp_distances_buf.data()
+                RunIteration<true>(
+                    data_to_cluster,
+                    tmp_distances_buf.data(),
+                    centroids_pdx_wrapper,
+                    centroids_partial_norms,
+                    not_pruned_counts,
+                    rotated_queries.data(),
+                    n_queries,
+                    _n_samples,
+                    _n_clusters,
+                    iter_idx,
+                    false, // is_first_iter
+                    iteration_stats
                 );
-                ConsolidateCentroids();
-                ComputeCost();
-                ComputeShift();
-                if (n_queries) {
-                    GetL2NormsRowMajor(
-                        _horizontal_centroids.data(), _n_clusters, _centroid_norms.data()
-                    );
-                    _recall = ComputeRecall(rotated_queries.data(), n_queries);
-                }
-                {
-                    SuperKMeansIterationStats stats;
-                    stats.iteration = iter_idx + 1;
-                    stats.objective = _cost;
-                    stats.shift = _shift;
-                    stats.split = _n_split;
-                    stats.recall = _recall;
-                    stats.is_gemm_only = true;
-                    iteration_stats.push_back(stats);
-                }
-                if (_config.verbose)
-                    std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
-                              << " | Objective: " << _cost
-                              << " | Objective improvement: " << 1 - (_cost / _prev_cost)
-                              << " | Shift: " << _shift << " | Split: " << _n_split
-                              << " | Recall: " << _recall << " [BLAS-only]" << std::endl
-                              << std::endl;
                 if (_config.early_termination &&
                     ShouldStopEarly(
                         n_queries > 0, best_recall, iters_without_improvement, iter_idx
@@ -326,73 +339,32 @@ class SuperKMeans {
         }
 
         //
-        // Rest of iterations
+        // Rest of iterations with GEMM+PRUNING
         //
-        std::vector<vector_value_t> centroids_partial_norms(_n_clusters);
-        std::vector<size_t> not_pruned_counts(_n_samples);
         GetPartialL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data(), _partial_d);
         for (; iter_idx < _config.iters; ++iter_idx) {
-            std::swap(_horizontal_centroids, _prev_centroids);
-            GetPartialL2NormsRowMajor(
-                _prev_centroids.data(), _n_clusters, centroids_partial_norms.data(), _partial_d
-            );
-            std::fill(not_pruned_counts.begin(), not_pruned_counts.end(), 0);
-            AssignAndUpdateCentroids(
+            RunIteration<false>(
                 data_to_cluster,
-                _prev_centroids.data(),
-                centroids_partial_norms.data(),
                 tmp_distances_buf.data(),
                 centroids_pdx_wrapper,
-                not_pruned_counts.data()
+                centroids_partial_norms,
+                not_pruned_counts,
+                rotated_queries.data(),
+                n_queries,
+                _n_samples,
+                _n_clusters,
+                iter_idx,
+                false, // is_first_iter
+                iteration_stats
             );
-
-            auto old_partial_d = _partial_d;
-            bool partial_d_changed = false;
-            // TODO(@lkuffo, medium): I believe if this number starts at > 20%,
-            // we should abort PRUNING and do FULL GEMM in the next iterations.
-            float avg_not_pruned_pct =
-                TunePartialD(not_pruned_counts.data(), _n_samples, _n_clusters, partial_d_changed);
-            if (partial_d_changed) {
-                GetPartialL2NormsRowMajor(
-                    data_to_cluster, _n_samples, _data_norms.data(), _partial_d
-                );
-            }
-            ConsolidateCentroids();
-            ComputeCost();
-            ComputeShift();
-            if (n_queries) {
-                GetL2NormsRowMajor(
-                    _horizontal_centroids.data(), _n_clusters, _centroid_norms.data()
-                );
-                _recall = ComputeRecall(rotated_queries.data(), n_queries);
-            }
-            {
-                SuperKMeansIterationStats stats;
-                stats.iteration = iter_idx + 1;
-                stats.objective = _cost;
-                stats.shift = _shift;
-                stats.split = _n_split;
-                stats.recall = _recall;
-                stats.not_pruned_pct = avg_not_pruned_pct;
-                stats.partial_d = old_partial_d;
-                stats.is_gemm_only = false;
-                iteration_stats.push_back(stats);
-            }
-            if (_config.verbose)
-                std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
-                          << " | Objective: " << _cost
-                          << " | Objective improvement: " << 1 - (_cost / _prev_cost)
-                          << " | Shift: " << _shift << " | Split: " << _n_split
-                          << " | Recall: " << _recall
-                          << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
-                          << " | d': " << old_partial_d << " -> " << _partial_d << std::endl
-                          << std::endl;
             if (_config.early_termination &&
                 ShouldStopEarly(n_queries > 0, best_recall, iters_without_improvement, iter_idx)) {
                 break;
             }
         }
+
         _trained = true;
+
         auto output_centroids = GetOutputCentroids(_config.unrotate_centroids);
         if (_config.perform_assignments) {
             _assignments = Assign(data, output_centroids.data(), n, _n_clusters);
@@ -460,6 +432,54 @@ class SuperKMeans {
     /** @brief Returns whether the model has been trained. */
     [[nodiscard]] inline bool IsTrained() const noexcept { return _trained; }
 
+    /**
+     * @brief Calculate cluster balance statistics from assignments
+     *
+     * @param assignments Array of cluster assignments [n_samples]
+     * @param n_samples Number of samples
+     * @param n_clusters Number of clusters
+     * @return ClusterBalanceStats containing mean, stdev, CV, min, max
+     */
+    [[nodiscard]] static ClusterBalanceStats GetClustersBalanceStats(
+        const uint32_t* assignments,
+        size_t n_samples,
+        size_t n_clusters
+    ) {
+        ClusterBalanceStats stats;
+        std::vector<size_t> cluster_sizes(n_clusters, 0);
+        for (size_t i = 0; i < n_samples; ++i) {
+            cluster_sizes[assignments[i]]++;
+        }
+
+        float sum = std::accumulate(cluster_sizes.begin(), cluster_sizes.end(), 0.0f);
+        stats.mean = sum / cluster_sizes.size();
+
+        // Geometric mean
+        float log_sum = 0.0f;
+        size_t non_zero_count = 0;
+        for (size_t size : cluster_sizes) {
+            if (size > 0) {
+                log_sum += std::log(static_cast<float>(size));
+                non_zero_count++;
+            }
+        }
+        stats.geometric_mean = (non_zero_count > 0) ? std::exp(log_sum / non_zero_count) : 0.0f;
+
+        float sq_sum = std::inner_product(
+            cluster_sizes.begin(), cluster_sizes.end(), cluster_sizes.begin(), 0.0f
+        );
+        stats.stdev = std::sqrt(sq_sum / cluster_sizes.size() - stats.mean * stats.mean);
+
+        // Coefficient of variation
+        stats.cv = stats.stdev / stats.mean;
+
+        auto minmax = std::minmax_element(cluster_sizes.begin(), cluster_sizes.end());
+        stats.min = *minmax.first;
+        stats.max = *minmax.second;
+
+        return stats;
+    }
+
   protected:
     /**
      * @brief Performs first assignment and centroid update using FULL GEMM.
@@ -471,17 +491,21 @@ class SuperKMeans {
      * @param data Data matrix (row-major, _n_samples × _d)
      * @param rotated_initial_centroids Initial centroids (row-major, _n_clusters × _d)
      * @param tmp_distances_buf Workspace buffer for distance computations
+     * @param n_samples Number of vectors in the data
+     * @param n_clusters Number of centroids
      */
     void FirstAssignAndUpdateCentroids(
         const vector_value_t* SKM_RESTRICT data,
         const vector_value_t* SKM_RESTRICT rotated_initial_centroids,
-        distance_t* SKM_RESTRICT tmp_distances_buf
+        distance_t* SKM_RESTRICT tmp_distances_buf,
+        const size_t n_samples,
+        const size_t n_clusters
     ) {
         batch_computer::FindNearestNeighbor(
             data,
             rotated_initial_centroids,
-            _n_samples,
-            _n_clusters,
+            n_samples,
+            n_clusters,
             _d,
             _data_norms.data(),
             _centroid_norms.data(),
@@ -489,9 +513,10 @@ class SuperKMeans {
             _distances.data(),
             tmp_distances_buf
         );
-        std::fill(_horizontal_centroids.begin(), _horizontal_centroids.end(), 0.0);
-        std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
-        UpdateCentroids(data);
+        std::fill(
+            _horizontal_centroids.data(), _horizontal_centroids.data() + (n_clusters * _d), 0.0
+        );
+        std::fill(_cluster_sizes.data(), _cluster_sizes.data() + n_clusters, 0);
     }
 
     /**
@@ -513,13 +538,15 @@ class SuperKMeans {
         const vector_value_t* SKM_RESTRICT partial_centroid_norms,
         distance_t* SKM_RESTRICT tmp_distances_buf,
         const layout_t& pdx_centroids,
-        size_t* out_not_pruned_counts
+        size_t* out_not_pruned_counts,
+        const size_t n_samples,
+        const size_t n_clusters
     ) {
         batch_computer::FindNearestNeighborWithPruning(
             data,
             centroids,
-            _n_samples,
-            _n_clusters,
+            n_samples,
+            n_clusters,
             _d,
             _data_norms.data(),
             partial_centroid_norms,
@@ -530,9 +557,10 @@ class SuperKMeans {
             _partial_d,
             out_not_pruned_counts
         );
-        std::fill(_horizontal_centroids.begin(), _horizontal_centroids.end(), 0.0);
-        std::fill(_cluster_sizes.begin(), _cluster_sizes.end(), 0);
-        UpdateCentroids(data);
+        std::fill(
+            _horizontal_centroids.data(), _horizontal_centroids.data() + (n_clusters * _d), 0.0
+        );
+        std::fill(_cluster_sizes.data(), _cluster_sizes.data() + n_clusters, 0);
     }
 
     /**
@@ -542,19 +570,25 @@ class SuperKMeans {
      * ConsolidateCentroids() must be called to normalize by cluster sizes.
      *
      * @param data Data matrix (row-major, _n_samples × _d)
+     * @param n_samples
+     * @param n_clusters
      */
-    void UpdateCentroids(const vector_value_t* SKM_RESTRICT data) {
+    void UpdateCentroids(
+        const vector_value_t* SKM_RESTRICT data,
+        const size_t n_samples,
+        const size_t n_clusters
+    ) {
         SKM_PROFILE_SCOPE("update_centroids");
 #pragma omp parallel if (_n_threads > 1) num_threads(_n_threads)
         {
             uint32_t nt = _n_threads;
             uint32_t rank = omp_get_thread_num();
             // This thread is taking care of centroids c0:c1
-            size_t c0 = (_n_clusters * rank) / nt;
-            size_t c1 = (_n_clusters * (rank + 1)) / nt;
-            for (size_t i = 0; i < _n_samples; i++) {
+            size_t c0 = (n_clusters * rank) / nt;
+            size_t c1 = (n_clusters * (rank + 1)) / nt;
+            for (size_t i = 0; i < n_samples; i++) {
                 uint32_t ci = _assignments[i];
-                assert(ci >= 0 && ci < _n_clusters);
+                assert(ci < n_clusters);
                 if (ci >= c0 && ci < c1) {
                     auto vector_p = data + i * _d;
                     _cluster_sizes[ci] += 1;
@@ -578,6 +612,123 @@ class SuperKMeans {
     }
 
     /**
+     * @brief Runs a single K-Means iteration with either GEMM-only or GEMM+PRUNING strategy.
+     *
+     *
+     * @tparam GEMM_ONLY If true, uses full GEMM (FirstAssignAndUpdateCentroids).
+     *                   If false, uses GEMM+PRUNING (AssignAndUpdateCentroids with TunePartialD).
+     *
+     * @param data_to_cluster Training data (rotated, row-major)
+     * @param tmp_distances_buf Workspace buffer for distance computations
+     * @param centroids_pdx_wrapper PDX-layout centroids (only used when !GEMM_ONLY)
+     * @param centroids_partial_norms Partial norms buffer (only used when !GEMM_ONLY)
+     * @param not_pruned_counts Pruning statistics buffer (only used when !GEMM_ONLY)
+     * @param rotated_queries Query vectors for recall computation (nullptr if n_queries==0)
+     * @param n_queries Number of query vectors
+     * @param n_samples Number of training samples
+     * @param n_clusters Number of clusters
+     * @param iter_idx Current iteration index (0-based)
+     * @param is_first_iter Whether this is the first iteration (skips centroid swap)
+     */
+    template <bool GEMM_ONLY>
+    void RunIteration(
+        const vector_value_t* SKM_RESTRICT data_to_cluster,
+        distance_t* SKM_RESTRICT tmp_distances_buf,
+        const layout_t& centroids_pdx_wrapper,
+        std::vector<vector_value_t>& centroids_partial_norms,
+        std::vector<size_t>& not_pruned_counts,
+        const vector_value_t* SKM_RESTRICT rotated_queries,
+        const size_t n_queries,
+        const size_t n_samples,
+        const size_t n_clusters,
+        size_t& iter_idx,
+        const bool is_first_iter,
+        std::vector<SuperKMeansIterationStats>& target_stats
+    ) {
+        if (!is_first_iter) {
+            std::swap(_horizontal_centroids, _prev_centroids);
+        }
+
+        if constexpr (GEMM_ONLY) {
+            GetL2NormsRowMajor(_prev_centroids.data(), n_clusters, _centroid_norms.data());
+        } else {
+            GetPartialL2NormsRowMajor(
+                _prev_centroids.data(), n_clusters, centroids_partial_norms.data(), _partial_d
+            );
+        }
+
+        if constexpr (GEMM_ONLY) {
+            FirstAssignAndUpdateCentroids(
+                data_to_cluster, _prev_centroids.data(), tmp_distances_buf, n_samples, n_clusters
+            );
+        } else {
+            std::fill(not_pruned_counts.data(), not_pruned_counts.data() + n_samples, 0);
+            AssignAndUpdateCentroids(
+                data_to_cluster,
+                _prev_centroids.data(),
+                centroids_partial_norms.data(),
+                tmp_distances_buf,
+                centroids_pdx_wrapper,
+                not_pruned_counts.data(),
+                n_samples,
+                n_clusters
+            );
+        }
+
+        UpdateCentroids(data_to_cluster, n_samples, n_clusters);
+
+        float avg_not_pruned_pct = -1.0f;
+        uint32_t old_partial_d = _partial_d;
+        if constexpr (!GEMM_ONLY) {
+            bool partial_d_changed = false;
+            avg_not_pruned_pct =
+                TunePartialD(not_pruned_counts.data(), n_samples, n_clusters, partial_d_changed);
+            if (partial_d_changed) {
+                GetPartialL2NormsRowMajor(
+                    data_to_cluster, n_samples, _data_norms.data(), _partial_d
+                );
+            }
+        }
+
+        ConsolidateCentroids(n_samples, n_clusters);
+
+        ComputeCost(n_samples);
+        ComputeShift(n_clusters);
+
+        if (n_queries) {
+            GetL2NormsRowMajor(_horizontal_centroids.data(), n_clusters, _centroid_norms.data());
+            _recall = ComputeRecall(rotated_queries, n_queries);
+        }
+
+        SuperKMeansIterationStats stats;
+        stats.iteration = iter_idx + 1;
+        stats.objective = _cost;
+        stats.shift = _shift;
+        stats.split = _n_split;
+        stats.recall = _recall;
+        stats.is_gemm_only = GEMM_ONLY;
+        if constexpr (!GEMM_ONLY) {
+            stats.not_pruned_pct = avg_not_pruned_pct;
+            stats.partial_d = old_partial_d;
+        }
+        target_stats.push_back(stats);
+
+        if (_config.verbose) {
+            std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
+                      << " | Objective: " << _cost << " | Objective improvement: "
+                      << (iter_idx > 0 ? 1 - (_cost / _prev_cost) : 0.0f) << " | Shift: " << _shift
+                      << " | Split: " << _n_split << " | Recall: " << _recall;
+            if constexpr (GEMM_ONLY) {
+                std::cout << " [BLAS-only]";
+            } else {
+                std::cout << " | Not Pruned %: " << avg_not_pruned_pct * 100.0f
+                          << " | d': " << old_partial_d << " -> " << _partial_d;
+            }
+            std::cout << std::endl << std::endl;
+        }
+    }
+
+    /**
      * @brief Handles empty clusters by splitting large clusters.
      * Taken from FAISS implementation:
      * https://github.com/facebookresearch/faiss/blob/main/faiss/Clustering.cpp
@@ -586,16 +737,16 @@ class SuperKMeans {
      * a large cluster to repopulate it. Selection is probabilistic based on
      * cluster sizes.
      */
-    void SplitClusters() {
+    virtual void SplitClusters(const size_t n_samples, const size_t n_clusters) {
         _n_split = 0;
         std::mt19937 rng(_config.seed);
         auto _horizontal_centroids_p = _horizontal_centroids.data();
-        for (size_t ci = 0; ci < _n_clusters; ci++) {
+        for (size_t ci = 0; ci < n_clusters; ci++) {
             if (_cluster_sizes[ci] == 0) {
                 size_t cj;
-                for (cj = 0; true; cj = (cj + 1) % _n_clusters) {
+                for (cj = 0; true; cj = (cj + 1) % n_clusters) {
                     // Probability to pick this cluster for split
-                    float p = (_cluster_sizes[cj] - 1.0) / (float) (_n_samples - _n_clusters);
+                    float p = (_cluster_sizes[cj] - 1.0) / (float) (n_samples - n_clusters);
                     float r = std::uniform_real_distribution<float>(0, 1)(rng);
                     if (r < p) {
                         break; // Found our cluster to be split
@@ -632,12 +783,12 @@ class SuperKMeans {
      * Divides accumulated sums by cluster sizes to get mean centroids,
      * handles empty clusters via splitting, and converts to PDX layout.
      */
-    void ConsolidateCentroids() {
+    void ConsolidateCentroids(const size_t n_samples, const size_t n_clusters) {
         SKM_PROFILE_SCOPE("consolidate");
         {
             SKM_PROFILE_SCOPE("consolidate/splitting");
 #pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
-            for (size_t i = 0; i < _n_clusters; ++i) {
+            for (size_t i = 0; i < n_clusters; ++i) {
                 auto _horizontal_centroids_p = _horizontal_centroids.data() + i * _d;
                 if (_cluster_sizes[i] == 0) {
                     continue;
@@ -648,32 +799,32 @@ class SuperKMeans {
                     _horizontal_centroids_p[j] *= mult_factor;
                 }
             }
-            SplitClusters();
+            SplitClusters(n_samples, n_clusters);
         }
         {
             SKM_PROFILE_SCOPE("consolidate/normalize");
             if (_config.angular) {
-                PostprocessCentroids();
+                PostprocessCentroids(n_clusters);
             }
         }
         {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
             //! This updates the object within the pdx_layout wrapper
             PDXLayout<q, alpha>::template PDXify<false>(
-                _horizontal_centroids.data(), _centroids.data(), _n_clusters, _d
+                _horizontal_centroids.data(), _centroids.data(), n_clusters, _d
             );
-            CentroidsToAuxiliaryHorizontal();
+            CentroidsToAuxiliaryHorizontal(n_clusters);
         }
     }
 
     /**
      * @brief Computes Within-Cluster Sum of Squares (WCSS).
      */
-    void ComputeCost() {
+    void ComputeCost(const size_t n_samples) {
         _prev_cost = _cost;
         _cost = 0.0f;
 #pragma clang loop vectorize(enable)
-        for (size_t i = 0; i < _n_samples; ++i) {
+        for (size_t i = 0; i < n_samples; ++i) {
             _cost += _distances[i];
         }
     }
@@ -683,13 +834,13 @@ class SuperKMeans {
      *
      * Used for convergence detection - small shift indicates centroids have stabilized.
      */
-    void ComputeShift() {
+    void ComputeShift(const size_t n_clusters) {
         SKM_PROFILE_SCOPE("shift");
-        Eigen::Map<const MatrixR> new_mat(_horizontal_centroids.data(), _n_clusters, _d);
-        Eigen::Map<const MatrixR> prev_mat(_prev_centroids.data(), _n_clusters, _d);
+        Eigen::Map<const MatrixR> new_mat(_horizontal_centroids.data(), n_clusters, _d);
+        Eigen::Map<const MatrixR> prev_mat(_prev_centroids.data(), n_clusters, _d);
         float shift = 0.0f;
 #pragma omp parallel for reduction(+ : shift) if (_n_threads > 1) num_threads(_n_threads)
-        for (size_t i = 0; i < _n_clusters; ++i) {
+        for (size_t i = 0; i < n_clusters; ++i) {
             shift += (new_mat.row(i) - prev_mat.row(i)).squaredNorm();
         }
         _shift = shift;
@@ -772,8 +923,7 @@ class SuperKMeans {
                 // assignments for this query
                 bool found = false;
                 for (size_t t = 0; t < _centroids_to_explore; ++t) {
-                    // If a promising centroid is the same as the GT centroid assignment, then we
-                    // have a match
+                    // If a centroid is the same as the GT centroid assignment, then we have a match
                     if (_promising_centroids[i * _centroids_to_explore + t] == _assignments[gt]) {
                         found = true;
                         break;
@@ -796,21 +946,27 @@ class SuperKMeans {
      * rotates them, PDXifies them, and wraps them in a PDXLayout wrapper.
      *
      * @param data Data matrix
-     * @param n Number of data points
+     * @param n_clusters Number of centroids to generate
+     * @param rotate Wheter to rotate the sampled centroids
      * @return PDXLayout wrapper for the centroids
      */
-    PDXLayout<q, alpha> GenerateCentroids(const vector_value_t* SKM_RESTRICT data) {
+    PDXLayout<q, alpha> GenerateCentroids(
+        const vector_value_t* SKM_RESTRICT data,
+        const size_t n_points,
+        const size_t n_clusters,
+        const bool rotate = true
+    ) {
         {
             SKM_PROFILE_SCOPE("sampling");
             auto tmp_centroids_p = _horizontal_centroids.data();
 
             std::mt19937 rng(_config.seed);
-            std::vector<size_t> indices(_n_samples);
-            for (size_t i = 0; i < _n_samples; ++i) {
+            std::vector<size_t> indices(n_points);
+            for (size_t i = 0; i < n_points; ++i) {
                 indices[i] = i;
             }
             std::shuffle(indices.begin(), indices.end(), rng);
-            for (size_t i = 0; i < _n_clusters; i += 1) {
+            for (size_t i = 0; i < n_clusters; i += 1) {
                 memcpy(
                     (void*) tmp_centroids_p,
                     (void*) (data + (indices[i] * _d)),
@@ -820,21 +976,20 @@ class SuperKMeans {
             }
         }
         // We populate the _centroids buffer with the centroids in the PDX layout
-        std::vector<centroid_value_t> rotated_centroids(_n_clusters * _d);
-        {
-            SKM_PROFILE_SCOPE("rotator");
-            _pruner->Rotate(_horizontal_centroids.data(), rotated_centroids.data(), _n_clusters);
-        }
+        std::vector<centroid_value_t> rotated_centroids(n_clusters * _d);
+        RotateOrCopy(_horizontal_centroids.data(), rotated_centroids.data(), n_clusters, rotate);
         {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
             PDXLayout<q, alpha>::template PDXify<false>(
-                rotated_centroids.data(), _centroids.data(), _n_clusters, _d
+                rotated_centroids.data(), _centroids.data(), n_clusters, _d
             );
         }
         //! We wrap _centroids and _partial_horizontal_centroids in the PDXLayout wrapper
         //! Any updates to these objects is reflected in the PDXLayout
+        //! _partial_horizontal_centroids are not filled until ConsolidateCentroids is called()
+        // after the first iteration
         auto pdx_centroids = PDXLayout<q, alpha>(
-            _centroids.data(), *_pruner, _n_clusters, _d, _partial_horizontal_centroids.data()
+            _centroids.data(), *_pruner, n_clusters, _d, _partial_horizontal_centroids.data()
         );
         return pdx_centroids;
     }
@@ -869,14 +1024,42 @@ class SuperKMeans {
     }
 
     /**
+     * @brief Rotates or copies vectors based on rotate parameter.
+     *
+     * If rotate is false, performs a simple memcpy. Otherwise, applies rotation.
+     *
+     * @param in Input buffer (potentially unrotated)
+     * @param out Output buffer (rotated or copied)
+     * @param n_vectors Number of vectors to process
+     * @param rotate Whether to rotate (true) or just copy (false)
+     */
+    void RotateOrCopy(
+        const centroid_value_t* SKM_RESTRICT in,
+        centroid_value_t* SKM_RESTRICT out,
+        const size_t n_vectors,
+        const bool rotate
+    ) {
+        SKM_PROFILE_SCOPE("rotator");
+        if (rotate) {
+            _pruner->Rotate(in, out, n_vectors);
+        } else {
+            memcpy(
+                static_cast<void*>(out),
+                static_cast<const void*>(in),
+                sizeof(centroid_value_t) * n_vectors * _d
+            );
+        }
+    }
+
+    /**
      * @brief Copies the first _vertical_d dimensions of centroids for efficient PRUNING
      * TODO(@lkuffo, high): We can avoid this by using the full horizontal
      * centroids in PRUNING
      */
-    void CentroidsToAuxiliaryHorizontal() {
-        Eigen::Map<MatrixR> hor_centroids(_horizontal_centroids.data(), _n_clusters, _d);
+    void CentroidsToAuxiliaryHorizontal(const size_t n_clusters) {
+        Eigen::Map<MatrixR> hor_centroids(_horizontal_centroids.data(), n_clusters, _d);
         Eigen::Map<MatrixR> out_aux_centroids(
-            _partial_horizontal_centroids.data(), _n_clusters, _vertical_d
+            _partial_horizontal_centroids.data(), n_clusters, _vertical_d
         );
         out_aux_centroids.noalias() = hor_centroids.leftCols(_vertical_d);
     }
@@ -913,13 +1096,13 @@ class SuperKMeans {
         if (avg_not_pruned_pct > _config.max_not_pruned_pct) {
             // Too many vectors not pruned (< max_not_pruned_pct pruned), need more GEMM dimensions
             // Increase _partial_d by adjustment_factor_for_partial_d * 2
-            uint32_t increase =
+            auto increase =
                 static_cast<uint32_t>(_partial_d * _config.adjustment_factor_for_partial_d * 2);
             _partial_d = std::min(_partial_d + std::max(increase, 1u), _vertical_d);
         } else if (avg_not_pruned_pct < _config.min_not_pruned_pct) {
             // Too few vectors not pruned (> min_not_pruned_pct pruned), can reduce GEMM dimensions
             // Decrease _partial_d by adjustment_factor_for_partial_d
-            uint32_t decrease =
+            auto decrease =
                 static_cast<uint32_t>(_partial_d * _config.adjustment_factor_for_partial_d);
             _partial_d = std::max(_partial_d - std::max(decrease, 1u), MIN_PARTIAL_D);
         }
@@ -936,7 +1119,7 @@ class SuperKMeans {
      * @param n Total number of vectors
      * @return Number of vectors to sample
      */
-    size_t GetNVectorsToSample(const size_t n, size_t n_clusters) const {
+    [[nodiscard]] virtual size_t GetNVectorsToSample(const size_t n, size_t n_clusters) const {
         if (_config.sampling_fraction == 1.0) {
             return n;
         }
@@ -961,10 +1144,10 @@ class SuperKMeans {
      * @return true if training should stop, false otherwise
      */
     bool ShouldStopEarly(
-        bool tracking_recall,
+        const bool tracking_recall,
         float& best_recall,
         size_t& iters_without_improvement,
-        size_t iter_idx
+        const size_t iter_idx
     ) {
         if (_shift < _config.tol) {
             if (_config.verbose)
@@ -1021,10 +1204,10 @@ class SuperKMeans {
      * @brief Normalizes centroids to unit length for inner product distance.
      *
      */
-    void PostprocessCentroids() {
+    void PostprocessCentroids(const size_t n_clusters) {
         auto horizontal_centroids_p = _horizontal_centroids.data();
 #pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
-        for (size_t i = 0; i < _n_clusters; ++i) {
+        for (size_t i = 0; i < n_clusters; ++i) {
             auto horizontal_centroids_p_i = horizontal_centroids_p + i * _d;
             float sum = 0.0f;
             for (size_t j = 0; j < _d; ++j) {
@@ -1078,20 +1261,22 @@ class SuperKMeans {
             if (rotate) {
                 // Need intermediate buffer: sample first, then rotate
                 samples_tmp.resize(n_samples * _d);
+#pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
                 for (size_t i = 0; i < n_samples; ++i) {
                     memcpy(
-                        (void*) (samples_tmp.data() + i * _d),
-                        (void*) (data + indices[i] * _d),
+                        static_cast<void*>(samples_tmp.data() + i * _d),
+                        static_cast<const void*>(data + indices[i] * _d),
                         sizeof(vector_value_t) * _d
                     );
                 }
                 src_data = samples_tmp.data();
             } else {
                 // No rotation: copy directly into output buffer
+#pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
                 for (size_t i = 0; i < n_samples; ++i) {
                     memcpy(
-                        (void*) (out_buffer.data() + i * _d),
-                        (void*) (data + indices[i] * _d),
+                        static_cast<void*>(out_buffer.data() + i * _d),
+                        static_cast<const void*>(data + indices[i] * _d),
                         sizeof(vector_value_t) * _d
                     );
                 }
@@ -1099,17 +1284,9 @@ class SuperKMeans {
             }
         }
         if (_config.verbose)
-            std::cout << "Not sampling, using all " << n_samples << " vectors" << std::endl;
+            std::cout << "Using " << n_samples << " vectors" << std::endl;
 
-        // Rotate or copy into output buffer
-        SKM_PROFILE_SCOPE("rotator");
-        if (rotate) {
-            _pruner->Rotate(src_data, out_buffer.data(), n_samples);
-        } else {
-            memcpy(
-                (void*) out_buffer.data(), (void*) src_data, sizeof(vector_value_t) * n_samples * _d
-            );
-        }
+        RotateOrCopy(src_data, out_buffer.data(), n_samples, rotate);
     }
 
     const size_t _d;

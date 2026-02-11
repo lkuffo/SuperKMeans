@@ -63,6 +63,9 @@ target_link_libraries(varying_k_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(varying_k_faiss.out varying_k/varying_k_faiss.cpp)
 target_link_libraries(varying_k_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
 
+add_executable(varying_k_hierarchical_superkmeans.out varying_k/varying_k_hierarchical_superkmeans.cpp)
+target_link_libraries(varying_k_hierarchical_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
 # Early termination benchmarks
 add_executable(early_termination_superkmeans.out early_termination/early_termination_superkmeans.cpp)
 target_link_libraries(early_termination_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
@@ -74,13 +77,24 @@ target_link_libraries(early_termination_faiss.out PRIVATE ${FAISS_COMMON_LIBS} $
 add_executable(sampling_superkmeans.out sampling/sampling_superkmeans.cpp)
 target_link_libraries(sampling_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
+add_executable(sampling_hierarchical_superkmeans.out sampling/sampling_hierarchical_superkmeans.cpp)
+target_link_libraries(sampling_hierarchical_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
 # Pareto benchmark (grid search)
 add_executable(pareto_superkmeans.out pareto/pareto_superkmeans.cpp)
 target_link_libraries(pareto_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
+# Pareto hierarchical superkmeans benchmark (grid search over hierarchical hyperparameters)
+add_executable(pareto_hierarchical_superkmeans.out pareto/pareto_hierarchical_superkmeans.cpp)
+target_link_libraries(pareto_hierarchical_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
 # Ad-hoc benchmark (verbose mode, no CSV output)
 add_executable(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp)
 target_link_libraries(ad_hoc_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
+# Ad-hoc hierarchical superkmeans benchmark
+add_executable(ad_hoc_hierarchical_superkmeans.out ad_hoc_hierarchical_superkmeans.cpp)
+target_link_libraries(ad_hoc_hierarchical_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
 # Sweet pruning spot benchmark (grid search over pruning parameters)
 add_executable(sweet_pruning_spot_superkmeans.out sweet_pruning_spot_superkmeans.cpp)
@@ -104,11 +118,15 @@ add_custom_target(benchmarks
         end_to_end_faiss.out
         varying_k_superkmeans.out
         varying_k_faiss.out
+        varying_k_hierarchical_superkmeans.out
         early_termination_superkmeans.out
         early_termination_faiss.out
         sampling_superkmeans.out
+        sampling_hierarchical_superkmeans.out
         pareto_superkmeans.out
+        pareto_hierarchical_superkmeans.out
         ad_hoc_superkmeans.out
+        ad_hoc_hierarchical_superkmeans.out
         sweet_pruning_spot_superkmeans.out
         microbenchmark_init_positions_array.out
         microbenchmark_flip_sign.out

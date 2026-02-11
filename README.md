@@ -7,7 +7,7 @@
 <!-- </div> -->
 </h1>
 <h3 align="center">
-  A super fast clustering library for high-dimensional vector embeddings
+  A super-fast clustering library for high-dimensional vector embeddings
 </h3>
 
 <p align="center">
@@ -24,12 +24,12 @@ High number of clusters? No problem! SuperKMeans scales like charm:
 
 > [!IMPORTANT]
 > **VLDB'26 reviewers**: For reproducibility of our results, check [BENCHMARKING.md](./BENCHMARKING.md).
-> **For other people**: This library is already usable! But, if you stumble upon this repository, contact lxkr@cwi.nl for more information! **Important:** We will soon move this repository to https://github.com/cwida/SuperKMeans.
 
 ## Why Super K-Means?
 - Up to **10x faster clustering** than FAISS of large-scale high-dimensional vector embeddings (Cohere, OpenAI, Contriever, MXBAI, CLIP, MiniLM, GIST).
 - Faster **without compromising clustering quality**.
 - Efficient in **CPUs** (ARM and x86) and **GPUs**.
+- Up to **30x faster clustering** without quality tradeoffs with Hierarchical K-Means
 
 ## Our secret sauce
 - Reliable and efficient **pruning of dimensions**.
@@ -66,13 +66,18 @@ Then, you can use the `centroids` to create an IVF index for Vector Search, for 
 #include <vector>
 #include <cstddef>
 #include "superkmeans/superkmeans.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 
 int main(int argc, char* argv[]) {
     std::vector<float> data; // Fill
-    size_t k = 1000;
-    size_t d = 768;
     size_t n = 1000000;
+    size_t k = 10000;
+    size_t d = 768;
+
     auto kmeans = skmeans::SuperKMeans(k, d);
+
+    // Or Hierarchical Super K-Means for extreme performance:
+    // auto kmeans = skmeans::HierarchicalSuperKMeans(k, d);
     
     // Run the clustering
     std::vector<float> centroids = kmeans.Train(data.data(), n);
@@ -83,9 +88,9 @@ int main(int argc, char* argv[]) {
 
 ```
 
-Check our [examples](./examples/) for a fully working C++ example.
-
 </details>
+
+Check our [examples](./examples/) for fully working examples in Python and C++.
 
 ## Installation
 We provide Python bindings for ease of use. 
@@ -106,7 +111,7 @@ pip install .
 python ./examples/simple_clustering.py
 
 # Set a value for n, d and k
-python ./examples/simple_clustering.py 100000 1536 1000
+python ./examples/simple_clustering.py 200000 1536 1000
 ```
 
 <details>

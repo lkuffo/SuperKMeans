@@ -39,11 +39,17 @@ target_link_libraries(test_wcss.out PRIVATE ${TEST_COMMON_LIBS})
 add_executable(generate_wcss_ground_truth.out generate_wcss_ground_truth.cpp)
 target_link_libraries(generate_wcss_ground_truth.out PRIVATE ${TEST_COMMON_LIBS})
 
+add_executable(generate_wcss_ground_truth_hierarchical.out generate_wcss_ground_truth_hierarchical.cpp)
+target_link_libraries(generate_wcss_ground_truth_hierarchical.out PRIVATE ${TEST_COMMON_LIBS})
+
 add_executable(test_distance_computers.out test_distance_computers.cpp)
 target_link_libraries(test_distance_computers.out PRIVATE ${TEST_COMMON_LIBS})
 
 add_executable(test_pdx_layout.out test_pdx_layout.cpp)
 target_link_libraries(test_pdx_layout.out PRIVATE ${TEST_COMMON_LIBS})
+
+add_executable(test_hierarchical_superkmeans.out test_hierarchical_superkmeans.cpp)
+target_link_libraries(test_hierarchical_superkmeans.out PRIVATE ${TEST_COMMON_LIBS})
 
 include(GoogleTest)
 gtest_discover_tests(test_rotation.out)
@@ -52,6 +58,7 @@ gtest_discover_tests(test_superkmeans.out)
 gtest_discover_tests(test_wcss.out)
 gtest_discover_tests(test_distance_computers.out)
 gtest_discover_tests(test_pdx_layout.out)
+gtest_discover_tests(test_hierarchical_superkmeans.out)
 
 add_custom_target(tests
     DEPENDS
@@ -61,4 +68,5 @@ add_custom_target(tests
         test_wcss.out
         test_distance_computers.out
         test_pdx_layout.out
+        test_hierarchical_superkmeans.out
 )

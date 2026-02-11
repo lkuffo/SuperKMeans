@@ -70,7 +70,7 @@ else()
 endif()
 
 add_compile_definitions(CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-include_directories(include extern)
+include_directories(include extern/Eigen)
 
 if(SKMEANS_COMPILE_TESTS)
     enable_testing()
@@ -111,7 +111,7 @@ if(Python_FOUND AND pybind11_FOUND)
 
     target_include_directories(_superkmeans PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/extern
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/Eigen
     )
 
     if(MKL_FOUND)

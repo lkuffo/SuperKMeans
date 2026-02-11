@@ -12,6 +12,9 @@ from ._superkmeans import (
     SuperKMeans as _SuperKMeansCpp,
     SuperKMeansConfig as _SuperKMeansConfigCpp,
     SuperKMeansIterationStats,
+    HierarchicalSuperKMeans as _HierarchicalSuperKMeansCpp,
+    HierarchicalSuperKMeansConfig as _HierarchicalSuperKMeansConfigCpp,
+    HierarchicalSuperKMeansIterationStats,
 )
 
 
@@ -25,8 +28,17 @@ class SuperKMeans:
         Number of clusters to create.
     dimensionality : int
         Number of dimensions in the data.
+    hierarchical : bool, optional (default=None)
+        Whether to use hierarchical clustering. If None, automatically
+        uses hierarchical=True for datasets with n > 100,000, otherwise False.
     iters : int, optional (default=10)
-        Number of k-means iterations.
+        Number of k-means iterations (only for non-hierarchical mode).
+    iters_mesoclustering : int, optional (default=3)
+        Number of mesoclustering iterations (only for hierarchical mode).
+    iters_fineclustering : int, optional (default=5)
+        Number of fineclustering iterations (only for hierarchical mode).
+    iters_refinement : int, optional (default=1)
+        Number of refinement iterations (only for hierarchical mode).
     sampling_fraction : float, optional (default=0.3)
         Fraction of data to sample, must be in (0.0, 1.0].
     max_points_per_cluster : int, optional (default=256)
@@ -58,16 +70,22 @@ class SuperKMeans:
         Number of clusters (read-only).
     is_trained_ : bool
         Whether the model has been trained (read-only).
-    iteration_stats : List[SuperKMeansIterationStats]
+    iteration_stats : List[SuperKMeansIterationStats] or HierarchicalSuperKMeansIterationStats
         Statistics for each iteration (available after training).
+    hierarchical_ : bool
+        Whether hierarchical mode is being used (read-only).
     """
 
     def __init__(
         self,
         n_clusters: int,
         dimensionality: int,
+        hierarchical: Optional[bool] = None,
         # Training parameters
         iters: int = 10,
+        iters_mesoclustering: int = 3,
+        iters_fineclustering: int = 5,
+        iters_refinement: int = 1,
         sampling_fraction: float = 0.3,
         max_points_per_cluster: int = 256,
         n_threads: int = 0,
@@ -90,24 +108,31 @@ class SuperKMeans:
         if not 0.0 < sampling_fraction <= 1.0:
             raise ValueError("sampling_fraction must be in (0.0, 1.0]")
 
-        config = _SuperKMeansConfigCpp()
-        config.iters = iters
-        config.sampling_fraction = sampling_fraction
-        config.max_points_per_cluster = max_points_per_cluster
-        config.n_threads = n_threads
-        config.seed = seed
-        config.use_blas_only = use_blas_only
-        config.tol = tol
-        config.recall_tol = recall_tol
-        config.early_termination = early_termination
-        config.sample_queries = sample_queries
-        config.objective_k = objective_k
-        config.verbose = verbose
-        config.angular = angular
-
-        self._cpp_skmeans_obj = _SuperKMeansCpp(n_clusters, dimensionality, config)
         self._n_clusters = n_clusters
         self._dimensionality = dimensionality
+
+        # We defer the class resolution to the train method
+        self._hierarchical_param = hierarchical
+        self._hierarchical = None
+        self._cpp_skmeans_obj = None
+        self._config_params = {
+            'iters': iters,
+            'iters_mesoclustering': iters_mesoclustering,
+            'iters_fineclustering': iters_fineclustering,
+            'iters_refinement': iters_refinement,
+            'sampling_fraction': sampling_fraction,
+            'max_points_per_cluster': max_points_per_cluster,
+            'n_threads': n_threads,
+            'seed': seed,
+            'use_blas_only': use_blas_only,
+            'tol': tol,
+            'recall_tol': recall_tol,
+            'early_termination': early_termination,
+            'sample_queries': sample_queries,
+            'objective_k': objective_k,
+            'verbose': verbose,
+            'angular': angular,
+        }
 
     @staticmethod
     def validate_numpy_array(
@@ -160,6 +185,45 @@ class SuperKMeans:
             If the model has already been trained.
         """
         data = self.validate_numpy_array(data, "data", self._dimensionality)
+        n_samples = data.shape[0]
+
+        # Determine hierarchical mode if not explicitly set
+        if self._hierarchical_param is None:
+            self._hierarchical = n_samples > 100_000
+        else:
+            self._hierarchical = self._hierarchical_param
+
+        if self._cpp_skmeans_obj is None:
+            if self._hierarchical:
+                config = _HierarchicalSuperKMeansConfigCpp()
+                config.iters_mesoclustering = self._config_params['iters_mesoclustering']
+                config.iters_fineclustering = self._config_params['iters_fineclustering']
+                config.iters_refinement = self._config_params['iters_refinement']
+            else:
+                config = _SuperKMeansConfigCpp()
+                config.iters = self._config_params['iters']
+
+            config.sampling_fraction = self._config_params['sampling_fraction']
+            config.max_points_per_cluster = self._config_params['max_points_per_cluster']
+            config.n_threads = self._config_params['n_threads']
+            config.seed = self._config_params['seed']
+            config.use_blas_only = self._config_params['use_blas_only']
+            config.tol = self._config_params['tol']
+            config.recall_tol = self._config_params['recall_tol']
+            config.early_termination = self._config_params['early_termination']
+            config.sample_queries = self._config_params['sample_queries']
+            config.objective_k = self._config_params['objective_k']
+            config.verbose = self._config_params['verbose']
+            config.angular = self._config_params['angular']
+
+            if self._hierarchical:
+                self._cpp_skmeans_obj = _HierarchicalSuperKMeansCpp(
+                    self._n_clusters, self._dimensionality, config
+                )
+            else:
+                self._cpp_skmeans_obj = _SuperKMeansCpp(
+                    self._n_clusters, self._dimensionality, config
+                )
 
         n_queries = 0
         if queries is not None:
@@ -210,24 +274,45 @@ class SuperKMeans:
     @property
     def n_clusters_(self) -> int:
         """Number of clusters (read-only)."""
+        if self._cpp_skmeans_obj is None:
+            return self._n_clusters
         return self._cpp_skmeans_obj.get_n_clusters()
 
     @property
     def is_trained_(self) -> bool:
         """Whether the model has been trained (read-only)."""
+        if self._cpp_skmeans_obj is None:
+            return False
         return self._cpp_skmeans_obj.is_trained()
 
     @property
-    def iteration_stats(self) -> List[SuperKMeansIterationStats]:
+    def hierarchical_(self) -> Optional[bool]:
+        """Whether hierarchical mode is being used (read-only)."""
+        return self._hierarchical
+
+    @property
+    def iteration_stats(self):
         """Statistics for each iteration (available after training if verbose=True)."""
+        if self._cpp_skmeans_obj is None:
+            return []
         return self._cpp_skmeans_obj.iteration_stats
+
+    @property
+    def hierarchical_iteration_stats(self):
+        """Hierarchical iteration statistics (only for hierarchical mode)."""
+        if self._cpp_skmeans_obj is None or not self._hierarchical:
+            return None
+        if hasattr(self._cpp_skmeans_obj, 'hierarchical_iteration_stats'):
+            return self._cpp_skmeans_obj.hierarchical_iteration_stats
+        return None
 
     def __repr__(self) -> str:
         """String representation of the SuperKMeans object."""
+        hierarchical_str = f", hierarchical={self._hierarchical}" if self._hierarchical is not None else ""
         return (
             f"SuperKMeans(n_clusters={self._n_clusters}, "
             f"dimensionality={self._dimensionality}, "
-            f"trained={self.is_trained_})"
+            f"trained={self.is_trained_}{hierarchical_str})"
         )
 
 
@@ -235,4 +320,5 @@ __all__ = [
     "__version__",
     "SuperKMeans",
     "SuperKMeansIterationStats",
+    "HierarchicalSuperKMeansIterationStats",
 ]

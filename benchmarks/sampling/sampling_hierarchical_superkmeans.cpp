@@ -6,14 +6,14 @@
 
 #include "bench_utils.h"
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/utils.h"
-#include "superkmeans/superkmeans.h"
 
 int main(int argc, char* argv[]) {
-    const std::string experiment_name = "sampling";
-    const std::string algorithm = "superkmeans";
+    const std::string experiment_name = "sampling_hierarchical";
+    const std::string algorithm = "hierarchical_superkmeans";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("clip");
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -25,7 +25,9 @@ int main(int argc, char* argv[]) {
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
     const size_t n_clusters = bench_utils::get_default_n_clusters(n);
-    int n_iters = bench_utils::MAX_ITERS;
+    const int iters_meso = bench_utils::HIERARCHICAL_SAMPLING_MESOCLUSTERING_ITERS;
+    const int iters_fine = bench_utils::HIERARCHICAL_SAMPLING_FINECLUSTERING_ITERS;
+    const int iters_refine = bench_utils::HIERARCHICAL_SAMPLING_REFINEMENT_ITERS;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
     const size_t THREADS = omp_get_max_threads();
@@ -33,7 +35,9 @@ int main(int argc, char* argv[]) {
 
     std::cout << "=== Running algorithm: " << algorithm << " ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
-    std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters << "\n";
+    std::cout << "n_clusters=" << n_clusters << "\n";
+    std::cout << "Iteration config: meso=" << iters_meso << ", fine=" << iters_fine
+              << ", refine=" << iters_refine << "\n";
     std::cout << "Eigen # threads: " << Eigen::nbThreads()
               << " (note: it will always be 1 if BLAS is enabled)" << std::endl;
 
@@ -65,7 +69,15 @@ int main(int argc, char* argv[]) {
     file_queries.close();
 
     std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+
     for (float sampling_fraction : bench_utils::SAMPLING_FRACTION_VALUES) {
+        // Skip sampling fractions smaller than 5%
+        if (sampling_fraction < 0.05f) {
+            std::cout << "\nSkipping sampling_fraction = " << sampling_fraction << " (< 0.05)"
+                      << std::endl;
+            continue;
+        }
+
         std::cout << "\n========================================" << std::endl;
         std::cout << "Running with sampling_fraction = " << sampling_fraction << std::endl;
         std::cout << "========================================" << std::endl;
@@ -77,8 +89,8 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        skmeans::SuperKMeansConfig config;
-        config.iters = n_iters;
+        skmeans::HierarchicalSuperKMeansConfig config;
+        // Base SuperKMeans config parameters
         config.verbose = false;
         config.n_threads = THREADS;
         config.objective_k = 100;
@@ -88,6 +100,12 @@ int main(int argc, char* argv[]) {
         config.early_termination = false;
         config.sampling_fraction = sampling_fraction;
         config.use_blas_only = false;
+
+        // Hierarchical SuperKMeans specific parameters
+        config.iters_mesoclustering = iters_meso;
+        config.iters_fineclustering = iters_fine;
+        config.iters_refinement = iters_refine;
+
         auto is_angular = std::find(
             bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
         );
@@ -95,10 +113,9 @@ int main(int argc, char* argv[]) {
             config.angular = true;
         }
 
-        auto kmeans_state =
-            skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                n_clusters, d, config
-            );
+        auto kmeans_state = skmeans::HierarchicalSuperKMeans<
+            skmeans::Quantization::f32,
+            skmeans::DistanceFunction::l2>(n_clusters, d, config);
 
         bench_utils::TicToc timer;
         timer.Tic();
@@ -106,12 +123,30 @@ int main(int argc, char* argv[]) {
         timer.Toc();
 
         double construction_time_ms = timer.GetMilliseconds();
-        int actual_iterations = static_cast<int>(kmeans_state.iteration_stats.size());
-        double final_objective = kmeans_state.iteration_stats.back().objective;
+
+        // For hierarchical superkmeans, total iterations = sum of all three phases
+        int actual_iterations = iters_meso + iters_fine + iters_refine;
+
+        // Compute final objective (get last refinement objective if available)
+        double final_objective = 0.0;
+        if (!kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.empty()) {
+            final_objective =
+                kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back()
+                    .objective;
+        } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats
+                        .empty()) {
+            final_objective =
+                kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.back()
+                    .objective;
+        } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats
+                        .empty()) {
+            final_objective =
+                kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.back()
+                    .objective;
+        }
 
         std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
-        std::cout << "Actual iterations: " << actual_iterations << " (requested: " << n_iters << ")"
-                  << std::endl;
+        std::cout << "Total iterations: " << actual_iterations << std::endl;
         std::cout << "Final objective: " << final_objective << std::endl;
 
         std::ifstream gt_file(gt_filename);
@@ -126,12 +161,11 @@ int main(int argc, char* argv[]) {
             auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
             std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                       << " from ground truth)" << std::endl;
-
             auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
 
             // Compute cluster balance statistics
-            auto balance_stats =
-                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
+            auto balance_stats = skmeans::
+                HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
                     GetClustersBalanceStats(assignments.data(), n, n_clusters);
             balance_stats.print();
 
@@ -145,7 +179,9 @@ int main(int argc, char* argv[]) {
             bench_utils::print_recall_results(results_knn_100, 100);
 
             std::unordered_map<std::string, std::string> config_map;
-            config_map["iters"] = std::to_string(config.iters);
+            config_map["iters_mesoclustering"] = std::to_string(config.iters_mesoclustering);
+            config_map["iters_fineclustering"] = std::to_string(config.iters_fineclustering);
+            config_map["iters_refinement"] = std::to_string(config.iters_refinement);
             config_map["sampling_fraction"] = std::to_string(config.sampling_fraction);
             config_map["n_threads"] = std::to_string(config.n_threads);
             config_map["seed"] = std::to_string(config.seed);
@@ -164,8 +200,8 @@ int main(int argc, char* argv[]) {
                 experiment_name,
                 algorithm,
                 dataset,
-                n_iters,
-                actual_iterations,
+                actual_iterations, // Total iterations
+                actual_iterations, // Actual = requested for hierarchical
                 static_cast<int>(d),
                 n,
                 static_cast<int>(n_clusters),

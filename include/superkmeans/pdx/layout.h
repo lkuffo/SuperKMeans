@@ -3,7 +3,7 @@
 #include "superkmeans/common.h"
 #include "superkmeans/pdx/pdx_ivf.h"
 #include "superkmeans/pdx/pdxearch.h"
-#include <Eigen/Eigen/Dense>
+#include <Eigen/Dense>
 #include <cassert>
 #include <memory>
 #include <string>

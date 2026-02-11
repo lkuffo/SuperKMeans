@@ -8,7 +8,7 @@
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/profiler.h"
-#include <Eigen/Eigen/Dense>
+#include <Eigen/Dense>
 
 // Eigen already declares sgemm_, so we don't need to redeclare it
 // TODO(lkuffo, low): However, I would like to have more control over this

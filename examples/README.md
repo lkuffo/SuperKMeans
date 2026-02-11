@@ -1,12 +1,24 @@
 # Super K-Means examples
 
-These examples are a demonstration of how to use our clustering library.
+These examples demonstrate how to use our clustering library.
 
 ## C++: Simple example
 
 **File:** [`simple_clustering.cpp`](./simple_clustering.cpp)   
 **Compile:** `make simple_clustering.out`   
 **Run (assuming `pwd` is `./examples`):** `./simple_clustering.out <n> <d> <k>`   
+**Parameters**:   
+- [Optional] `n`: Number of vectors to cluster 
+- [Optional] `d`: Dimensionality of vectors
+- [Optional] `k`: Number of clusters to create
+
+## C++: Hierarchical Clustering example
+
+Absurdly faster while preserving quality. Recommended when n > 100K.
+
+**File:** [`hierarchical_clustering.cpp`](./simple_clustering.cpp)   
+**Compile:** `make hierarchical_clustering.out`   
+**Run (assuming `pwd` is `./examples`):** `./hierarchical_clustering.out <n> <d> <k>`   
 **Parameters**:   
 - [Optional] `n`: Number of vectors to cluster 
 - [Optional] `d`: Dimensionality of vectors

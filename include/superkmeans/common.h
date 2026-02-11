@@ -65,7 +65,7 @@ static inline constexpr uint32_t MIN_PARTIAL_D = 16;
 
 // Thresholds below which GEMM-only (no pruning) is used
 static inline constexpr size_t DIMENSION_THRESHOLD_FOR_PRUNING = 128;
-static inline constexpr size_t N_CLUSTERS_THRESHOLD_FOR_PRUNING = 128;
+static inline constexpr size_t N_CLUSTERS_THRESHOLD_FOR_PRUNING = 512;
 
 #if defined(__APPLE__)
 // AMX (used with Apple Accelerate) benefits from larger batch sizes
@@ -83,9 +83,7 @@ static inline constexpr size_t RECALL_CONVERGENCE_PATIENCE = 2;
 static inline constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 // Epsilon parameter of ADSampling (Reference: https://dl.acm.org/doi/abs/10.1145/3589282)
 static inline constexpr float PRUNER_INITIAL_THRESHOLD = 1.5f;
-
-static constexpr uint32_t DIMENSIONS_FETCHING_SIZES[19] =
-    {16, 16, 32, 32, 32, 32, 64, 64, 64, 64, 128, 128, 128, 128, 256, 256, 512, 1024, 2048};
+static inline constexpr float HIERARCHICAL_PRUNER_INITIAL_THRESHOLD = 1.1f;
 
 // Global thread count for OpenMP parallel regions
 // This is set by SuperKMeans constructor. Not ideal but needed for
