@@ -12,6 +12,18 @@ These examples are a demonstration of how to use our clustering library.
 - [Optional] `d`: Dimensionality of vectors
 - [Optional] `k`: Number of clusters to create
 
+## C++: Hierarchical Clustering example
+
+Much faster while preserving quality. Recommended when n > 100K.
+
+**File:** [`hierarchical_clustering.cpp`](./simple_clustering.cpp)   
+**Compile:** `make hierarchical_clustering.out`   
+**Run (assuming `pwd` is `./examples`):** `./hierarchical_clustering.out <n> <d> <k>`   
+**Parameters**:   
+- [Optional] `n`: Number of vectors to cluster 
+- [Optional] `d`: Dimensionality of vectors
+- [Optional] `k`: Number of clusters to create
+
 ## Python: Simple example
 
 **File:** [`simple_clustering.py`](./simple_clustering.py)    
