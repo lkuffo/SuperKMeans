@@ -10,20 +10,20 @@
 #include <unordered_set>
 #include <vector>
 
-#include "superkmeans/balanced_superkmeans.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/common.h"
 #include "superkmeans/pdx/utils.h"
 
-class BalancedSuperKMeansTest : public ::testing::Test {
+class HierarchicalSuperKMeansTest : public ::testing::Test {
   protected:
     void SetUp() override { omp_set_num_threads(omp_get_max_threads()); }
 };
 
-TEST_F(BalancedSuperKMeansTest, ConfigSynchronizationWithParent) {
+TEST_F(HierarchicalSuperKMeansTest, ConfigSynchronizationWithParent) {
     const size_t n_clusters = 256;
     const size_t d = 128;
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.data_already_rotated = true;
     config.unrotate_centroids = true;
     config.iters_mesoclustering = 7;
@@ -32,42 +32,42 @@ TEST_F(BalancedSuperKMeansTest, ConfigSynchronizationWithParent) {
     config.seed = 123;
     config.sampling_fraction = 0.5f;
 
-    auto kmeans = skmeans::BalancedSuperKMeans<
+    auto kmeans = skmeans::HierarchicalSuperKMeans<
         skmeans::Quantization::f32,
         skmeans::DistanceFunction::l2
     >(n_clusters, d, config);
 
-    EXPECT_FALSE(kmeans.balanced_config.unrotate_centroids)
+    EXPECT_FALSE(kmeans.hierarchical_config.unrotate_centroids)
         << "unrotate_centroids should be forced to false when data_already_rotated=true";
 
-    EXPECT_EQ(kmeans.balanced_config.iters_mesoclustering, 7)
+    EXPECT_EQ(kmeans.hierarchical_config.iters_mesoclustering, 7)
         << "iters_mesoclustering should not be modified";
-    EXPECT_EQ(kmeans.balanced_config.iters_fineclustering, 9)
+    EXPECT_EQ(kmeans.hierarchical_config.iters_fineclustering, 9)
         << "iters_fineclustering should not be modified";
-    EXPECT_EQ(kmeans.balanced_config.iters_refinement, 3)
+    EXPECT_EQ(kmeans.hierarchical_config.iters_refinement, 3)
         << "iters_refinement should not be modified";
 
-    EXPECT_EQ(kmeans.balanced_config.seed, 123)
+    EXPECT_EQ(kmeans.hierarchical_config.seed, 123)
         << "Other base config fields should be preserved";
-    EXPECT_EQ(kmeans.balanced_config.sampling_fraction, 0.5f)
+    EXPECT_EQ(kmeans.hierarchical_config.sampling_fraction, 0.5f)
         << "Other base config fields should be preserved";
 }
 
-TEST_F(BalancedSuperKMeansTest, BasicTraining_SmallDataset) {
+TEST_F(HierarchicalSuperKMeansTest, BasicTraining_SmallDataset) {
     const size_t n = 50000;
     const size_t d = 32;
     const size_t n_clusters = 100;
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 5;
     config.iters_fineclustering = 5;
     config.iters_refinement = 2;
     config.verbose = false;
 
     auto kmeans =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
 
@@ -80,14 +80,14 @@ TEST_F(BalancedSuperKMeansTest, BasicTraining_SmallDataset) {
     EXPECT_EQ(kmeans.GetNClusters(), n_clusters);
 }
 
-TEST_F(BalancedSuperKMeansTest, AllClustersUsed) {
+TEST_F(HierarchicalSuperKMeansTest, AllClustersUsed) {
     const size_t n = 50000;
     const size_t d = 128;
     const size_t n_clusters = 256;
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 10;
     config.iters_fineclustering = 10;
     config.iters_refinement = 2;
@@ -95,7 +95,7 @@ TEST_F(BalancedSuperKMeansTest, AllClustersUsed) {
     config.perform_assignments = true;
 
     auto kmeans =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     auto centroids = kmeans.Train(data.data(), n);
@@ -108,14 +108,14 @@ TEST_F(BalancedSuperKMeansTest, AllClustersUsed) {
         << used_clusters.size() << " were assigned.";
 }
 
-TEST_F(BalancedSuperKMeansTest, PerformAssignments_PopulatesAssignments) {
+TEST_F(HierarchicalSuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     const size_t n = 50000;
     const size_t d = 64;
     const size_t n_clusters = 128;
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 5;
     config.iters_fineclustering = 5;
     config.iters_refinement = 2;
@@ -123,7 +123,7 @@ TEST_F(BalancedSuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     config.perform_assignments = true;
 
     auto kmeans =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     auto centroids = kmeans.Train(data.data(), n);
@@ -137,7 +137,7 @@ TEST_F(BalancedSuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     }
 }
 
-TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
+TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     const size_t n = 10000;
     const size_t d = 64;
     const size_t n_clusters = 256;
@@ -147,7 +147,7 @@ TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // More clusters than data points
     EXPECT_THROW(
         ([&]() {
-            auto kmeans = skmeans::BalancedSuperKMeans<
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
                 skmeans::Quantization::f32,
                 skmeans::DistanceFunction::l2>(n + 10, d);
             kmeans.Train(data.data(), n);
@@ -158,7 +158,7 @@ TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // Zero n_clusters
     EXPECT_THROW(
         ([&]() {
-            auto kmeans = skmeans::BalancedSuperKMeans<
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
                 skmeans::Quantization::f32,
                 skmeans::DistanceFunction::l2>(0, d);
         }()),
@@ -168,7 +168,7 @@ TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // Zero dimensionality
     EXPECT_THROW(
         ([&]() {
-            auto kmeans = skmeans::BalancedSuperKMeans<
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
                 skmeans::Quantization::f32,
                 skmeans::DistanceFunction::l2>(n_clusters, 0);
         }()),
@@ -178,9 +178,9 @@ TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // Zero mesoclustering iterations in config
     EXPECT_THROW(
         ([&]() {
-            skmeans::BalancedSuperKMeansConfig config;
+            skmeans::HierarchicalSuperKMeansConfig config;
             config.iters_mesoclustering = 0;
-            auto kmeans = skmeans::BalancedSuperKMeans<
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
                 skmeans::Quantization::f32,
                 skmeans::DistanceFunction::l2>(n_clusters, d, config);
         }()),
@@ -190,9 +190,9 @@ TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // Zero sampling_fraction
     EXPECT_THROW(
         ([&]() {
-            skmeans::BalancedSuperKMeansConfig config;
+            skmeans::HierarchicalSuperKMeansConfig config;
             config.sampling_fraction = 0.0f;
-            auto kmeans = skmeans::BalancedSuperKMeans<
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
                 skmeans::Quantization::f32,
                 skmeans::DistanceFunction::l2>(n_clusters, d, config);
         }()),
@@ -202,9 +202,9 @@ TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // Negative sampling_fraction
     EXPECT_THROW(
         ([&]() {
-            skmeans::BalancedSuperKMeansConfig config;
+            skmeans::HierarchicalSuperKMeansConfig config;
             config.sampling_fraction = -0.5f;
-            auto kmeans = skmeans::BalancedSuperKMeans<
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
                 skmeans::Quantization::f32,
                 skmeans::DistanceFunction::l2>(n_clusters, d, config);
         }()),
@@ -214,9 +214,9 @@ TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // sampling_fraction > 1.0
     EXPECT_THROW(
         ([&]() {
-            skmeans::BalancedSuperKMeansConfig config;
+            skmeans::HierarchicalSuperKMeansConfig config;
             config.sampling_fraction = 1.5f;
-            auto kmeans = skmeans::BalancedSuperKMeans<
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
                 skmeans::Quantization::f32,
                 skmeans::DistanceFunction::l2>(n_clusters, d, config);
         }()),
@@ -226,7 +226,7 @@ TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // Training twice
     EXPECT_THROW(
         ([&]() {
-            auto kmeans = skmeans::BalancedSuperKMeans<
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
                 skmeans::Quantization::f32,
                 skmeans::DistanceFunction::l2>(n_clusters, d);
             kmeans.Train(data.data(), n);
@@ -236,14 +236,14 @@ TEST_F(BalancedSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     );
 }
 
-TEST_F(BalancedSuperKMeansTest, IterationStats_Populated) {
+TEST_F(HierarchicalSuperKMeansTest, IterationStats_Populated) {
     const size_t n = 50000;
     const size_t d = 64;
     const size_t n_clusters = 256;
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 5;
     config.iters_fineclustering = 7;
     config.iters_refinement = 3;
@@ -251,17 +251,17 @@ TEST_F(BalancedSuperKMeansTest, IterationStats_Populated) {
     config.early_termination = false;
 
     auto kmeans =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     auto centroids = kmeans.Train(data.data(), n);
 
-    const auto& balanced_stats = kmeans.balanced_iteration_stats;
+    const auto& hierarchical_stats = kmeans.hierarchical_iteration_stats;
 
     // Mesoclustering stats
-    EXPECT_EQ(balanced_stats.mesoclustering_iteration_stats.size(), 5)
+    EXPECT_EQ(hierarchical_stats.mesoclustering_iteration_stats.size(), 5)
         << "Expected 5 mesoclustering iterations";
-    for (const auto& stat : balanced_stats.mesoclustering_iteration_stats) {
+    for (const auto& stat : hierarchical_stats.mesoclustering_iteration_stats) {
         EXPECT_GT(stat.objective, 0.0f) << "Objective should be positive";
         EXPECT_TRUE(std::isfinite(stat.objective)) << "Objective should be finite";
         EXPECT_GE(stat.shift, 0.0f) << "Shift should be non-negative";
@@ -270,37 +270,37 @@ TEST_F(BalancedSuperKMeansTest, IterationStats_Populated) {
     // Fineclustering stats
     // With early_termination=false, we expect exactly n_mesoclusters * iters_fineclustering iterations
     size_t n_mesoclusters =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
             GetNMesoclusters(n_clusters);
     size_t expected_fineclustering_iters = n_mesoclusters * config.iters_fineclustering;
-    EXPECT_EQ(balanced_stats.fineclustering_iteration_stats.size(), expected_fineclustering_iters)
+    EXPECT_EQ(hierarchical_stats.fineclustering_iteration_stats.size(), expected_fineclustering_iters)
         << "Expected " << expected_fineclustering_iters << " fineclustering iterations ("
         << n_mesoclusters << " mesoclusters * " << config.iters_fineclustering << " iters)";
 
-    for (const auto& stat : balanced_stats.fineclustering_iteration_stats) {
+    for (const auto& stat : hierarchical_stats.fineclustering_iteration_stats) {
         EXPECT_GT(stat.objective, 0.0f) << "Objective should be positive";
         EXPECT_TRUE(std::isfinite(stat.objective)) << "Objective should be finite";
         EXPECT_GE(stat.shift, 0.0f) << "Shift should be non-negative";
     }
 
     // Refinement stats
-    EXPECT_EQ(balanced_stats.refinement_iteration_stats.size(), 3)
+    EXPECT_EQ(hierarchical_stats.refinement_iteration_stats.size(), 3)
         << "Expected 3 refinement iterations";
-    for (const auto& stat : balanced_stats.refinement_iteration_stats) {
+    for (const auto& stat : hierarchical_stats.refinement_iteration_stats) {
         EXPECT_GT(stat.objective, 0.0f) << "Objective should be positive";
         EXPECT_TRUE(std::isfinite(stat.objective)) << "Objective should be finite";
         EXPECT_GE(stat.shift, 0.0f) << "Shift should be non-negative";
     }
 }
 
-TEST_F(BalancedSuperKMeansTest, Objective_MonotonicallyDecreases) {
+TEST_F(HierarchicalSuperKMeansTest, Objective_MonotonicallyDecreases) {
     const size_t n = 10000;
     const size_t d = 128;
     const size_t n_clusters = 256;
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 10;
     config.iters_fineclustering = 10;
     config.iters_refinement = 5;
@@ -309,14 +309,14 @@ TEST_F(BalancedSuperKMeansTest, Objective_MonotonicallyDecreases) {
     config.sampling_fraction = 1.0f;
 
     auto kmeans =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     auto centroids = kmeans.Train(data.data(), n);
 
-    const auto& balanced_stats = kmeans.balanced_iteration_stats;
+    const auto& hierarchical_stats = kmeans.hierarchical_iteration_stats;
 
-    const auto& meso_stats = balanced_stats.mesoclustering_iteration_stats;
+    const auto& meso_stats = hierarchical_stats.mesoclustering_iteration_stats;
     for (size_t i = 1; i < meso_stats.size(); ++i) {
         float prev_obj = meso_stats[i - 1].objective;
         float curr_obj = meso_stats[i].objective;
@@ -326,7 +326,7 @@ TEST_F(BalancedSuperKMeansTest, Objective_MonotonicallyDecreases) {
             << " -> " << curr_obj;
     }
 
-    const auto& fine_stats = balanced_stats.fineclustering_iteration_stats;
+    const auto& fine_stats = hierarchical_stats.fineclustering_iteration_stats;
     const size_t iters_fine = config.iters_fineclustering;
     for (size_t i = iters_fine; i < fine_stats.size(); i += iters_fine) {
         float prev_mesocluster_final_obj = fine_stats[i - iters_fine].objective;
@@ -337,7 +337,7 @@ TEST_F(BalancedSuperKMeansTest, Objective_MonotonicallyDecreases) {
             << ": " << prev_mesocluster_final_obj << " -> " << curr_mesocluster_final_obj;
     }
 
-    const auto& refine_stats = balanced_stats.refinement_iteration_stats;
+    const auto& refine_stats = hierarchical_stats.refinement_iteration_stats;
     for (size_t i = 1; i < refine_stats.size(); ++i) {
         float prev_obj = refine_stats[i - 1].objective;
         float curr_obj = refine_stats[i].objective;
@@ -354,7 +354,7 @@ TEST_F(BalancedSuperKMeansTest, Objective_MonotonicallyDecreases) {
     }
 }
 
-TEST_F(BalancedSuperKMeansTest, EarlyTermination_Mesoclustering) {
+TEST_F(HierarchicalSuperKMeansTest, EarlyTermination_Mesoclustering) {
     const size_t n = 10000;
     const size_t d = 64;
     const size_t n_clusters = 256;
@@ -378,7 +378,7 @@ TEST_F(BalancedSuperKMeansTest, EarlyTermination_Mesoclustering) {
     }
 
     // Test WITH early termination
-    skmeans::BalancedSuperKMeansConfig config_early;
+    skmeans::HierarchicalSuperKMeansConfig config_early;
     config_early.iters_mesoclustering = max_iters;
     config_early.iters_fineclustering = 5;
     config_early.iters_refinement = 2;
@@ -389,15 +389,15 @@ TEST_F(BalancedSuperKMeansTest, EarlyTermination_Mesoclustering) {
     config_early.sampling_fraction = 1.0f;
 
     auto kmeans_early =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config_early
         );
     kmeans_early.Train(data.data(), n);
-    const auto& stats_early = kmeans_early.balanced_iteration_stats.mesoclustering_iteration_stats;
+    const auto& stats_early = kmeans_early.hierarchical_iteration_stats.mesoclustering_iteration_stats;
     size_t iters_with_early = stats_early.size();
 
     // Test WITHOUT early termination
-    skmeans::BalancedSuperKMeansConfig config_no_early;
+    skmeans::HierarchicalSuperKMeansConfig config_no_early;
     config_no_early.iters_mesoclustering = max_iters;
     config_no_early.iters_fineclustering = 5;
     config_no_early.iters_refinement = 2;
@@ -407,12 +407,12 @@ TEST_F(BalancedSuperKMeansTest, EarlyTermination_Mesoclustering) {
     config_no_early.sampling_fraction = 1.0f;
 
     auto kmeans_no_early =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config_no_early
         );
     kmeans_no_early.Train(data.data(), n);
     const auto& stats_no_early =
-        kmeans_no_early.balanced_iteration_stats.mesoclustering_iteration_stats;
+        kmeans_no_early.hierarchical_iteration_stats.mesoclustering_iteration_stats;
     size_t iters_without_early = stats_no_early.size();
 
     // With early termination, should stop before max_iters
@@ -430,7 +430,7 @@ TEST_F(BalancedSuperKMeansTest, EarlyTermination_Mesoclustering) {
         << "than no early termination (" << iters_without_early << " iters)";
 }
 
-TEST_F(BalancedSuperKMeansTest, Sampling_AffectsSpeed) {
+TEST_F(HierarchicalSuperKMeansTest, Sampling_AffectsSpeed) {
     const size_t n = 100000;
     const size_t d = 512;
     const size_t n_clusters = 512;
@@ -438,7 +438,7 @@ TEST_F(BalancedSuperKMeansTest, Sampling_AffectsSpeed) {
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig base_config;
+    skmeans::HierarchicalSuperKMeansConfig base_config;
     base_config.iters_mesoclustering = 10;
     base_config.iters_fineclustering = 10;
     base_config.iters_refinement = 2;
@@ -448,12 +448,12 @@ TEST_F(BalancedSuperKMeansTest, Sampling_AffectsSpeed) {
     // Full sampling
     skmeans::TicToc timer_full;
     for (size_t i = 0; i < n_runs; ++i) {
-        skmeans::BalancedSuperKMeansConfig config = base_config;
+        skmeans::HierarchicalSuperKMeansConfig config = base_config;
         config.sampling_fraction = 1.0f;
         config.seed = static_cast<uint32_t>(42 + i);
 
         auto kmeans =
-            skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
                 n_clusters, d, config
             );
 
@@ -465,12 +465,12 @@ TEST_F(BalancedSuperKMeansTest, Sampling_AffectsSpeed) {
     // 30% sampling
     skmeans::TicToc timer_sampled;
     for (size_t i = 0; i < n_runs; ++i) {
-        skmeans::BalancedSuperKMeansConfig config = base_config;
+        skmeans::HierarchicalSuperKMeansConfig config = base_config;
         config.sampling_fraction = 0.3f;
         config.seed = static_cast<uint32_t>(42 + i);
 
         auto kmeans =
-            skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
                 n_clusters, d, config
             );
 
@@ -490,7 +490,7 @@ TEST_F(BalancedSuperKMeansTest, Sampling_AffectsSpeed) {
         << "Speedup: " << speedup << "x";
 }
 
-TEST_F(BalancedSuperKMeansTest, Reproducibility_SameSeed) {
+TEST_F(HierarchicalSuperKMeansTest, Reproducibility_SameSeed) {
     const size_t n = 10000;
     const size_t d = 128;
     const size_t n_clusters = 256;
@@ -498,7 +498,7 @@ TEST_F(BalancedSuperKMeansTest, Reproducibility_SameSeed) {
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 10;
     config.iters_fineclustering = 10;
     config.iters_refinement = 2;
@@ -508,14 +508,14 @@ TEST_F(BalancedSuperKMeansTest, Reproducibility_SameSeed) {
 
     // First run
     auto kmeans1 =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     auto centroids1 = kmeans1.Train(data.data(), n);
 
     // Second run with same seed
     auto kmeans2 =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     auto centroids2 = kmeans2.Train(data.data(), n);
@@ -528,14 +528,14 @@ TEST_F(BalancedSuperKMeansTest, Reproducibility_SameSeed) {
     }
 }
 
-TEST_F(BalancedSuperKMeansTest, SmallClusters_PrintsWarning) {
+TEST_F(HierarchicalSuperKMeansTest, SmallClusters_PrintsWarning) {
     const size_t n = 10000;
     const size_t d = 64;
     const size_t n_clusters = 64; // < 128, should warn
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 5;
     config.iters_fineclustering = 5;
     config.iters_refinement = 2;
@@ -544,7 +544,7 @@ TEST_F(BalancedSuperKMeansTest, SmallClusters_PrintsWarning) {
     // Should print warning for n_clusters < 128
     testing::internal::CaptureStdout();
     auto kmeans =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     std::string output = testing::internal::GetCapturedStdout();
@@ -553,14 +553,14 @@ TEST_F(BalancedSuperKMeansTest, SmallClusters_PrintsWarning) {
         << "Should warn for n_clusters < 128";
 }
 
-TEST_F(BalancedSuperKMeansTest, AssignMethod_ProducesValidAssignments) {
+TEST_F(HierarchicalSuperKMeansTest, AssignMethod_ProducesValidAssignments) {
     const size_t n = 100000;
     const size_t d = 128;
     const size_t n_clusters = 256;
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 5;
     config.iters_fineclustering = 5;
     config.iters_refinement = 2;
@@ -568,7 +568,7 @@ TEST_F(BalancedSuperKMeansTest, AssignMethod_ProducesValidAssignments) {
     config.verbose = false;
 
     auto kmeans =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     auto centroids = kmeans.Train(data.data(), n);
@@ -588,14 +588,14 @@ TEST_F(BalancedSuperKMeansTest, AssignMethod_ProducesValidAssignments) {
         << "Not all clusters were used in assignments";
 }
 
-TEST_F(BalancedSuperKMeansTest, AngularMode_Normalizes) {
+TEST_F(HierarchicalSuperKMeansTest, AngularMode_Normalizes) {
     const size_t n = 5000;
     const size_t d = 64;
     const size_t n_clusters = 256;
 
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
 
-    skmeans::BalancedSuperKMeansConfig config;
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 5;
     config.iters_fineclustering = 5;
     config.iters_refinement = 2;
@@ -603,7 +603,7 @@ TEST_F(BalancedSuperKMeansTest, AngularMode_Normalizes) {
     config.verbose = false;
 
     auto kmeans =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     auto centroids = kmeans.Train(data.data(), n);
@@ -629,13 +629,13 @@ TEST_F(BalancedSuperKMeansTest, AngularMode_Normalizes) {
 
 namespace {
 
-// Regenerate with: ./generate_wcss_ground_truth_balanced.out
+// Regenerate with: ./generate_wcss_ground_truth_hierarchical.out
 // Generated with: N_SAMPLES=10000, MAX_D=768, N_TRUE_CENTERS=500,
 //   CLUSTER_STD=0.25, CENTER_SPREAD=5.0, SEED=42,
 //   ITERS_MESOCLUSTERING=5, ITERS_FINECLUSTERING=5, ITERS_REFINEMENT=2
 
 // clang-format off
-const std::map<std::pair<size_t, size_t>, float> BALANCED_GROUND_TRUTH = {
+const std::map<std::pair<size_t, size_t>, float> HIERARCHICAL_GROUND_TRUTH = {
     // k=10
     {{10, 4}, 4.79045e+05f},
     {{10, 16}, 3.06173e+06f},
@@ -672,7 +672,7 @@ const std::map<std::pair<size_t, size_t>, float> BALANCED_GROUND_TRUTH = {
 };
 // clang-format on
 
-class BalancedWCSSTest : public ::testing::TestWithParam<std::tuple<size_t, size_t>> {
+class HierarchicalWCSSTest : public ::testing::TestWithParam<std::tuple<size_t, size_t>> {
   protected:
     void SetUp() override { omp_set_num_threads(1); }
 
@@ -709,21 +709,21 @@ class BalancedWCSSTest : public ::testing::TestWithParam<std::tuple<size_t, size
     }
 };
 
-std::vector<float> BalancedWCSSTest::full_data_;
+std::vector<float> HierarchicalWCSSTest::full_data_;
 
 /**
- * @brief Test that final WCSS from BalancedSuperKMeans matches the ground truth
+ * @brief Test that final WCSS from HierarchicalSuperKMeans matches the ground truth
  * within tolerance, and that WCSS within each mesocluster's fineclustering phase
  * decreases monotonically.
  */
-TEST_P(BalancedWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
+TEST_P(HierarchicalWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
     auto [n_clusters, d] = GetParam();
 
     auto data = ExtractSubdim(d);
     ASSERT_EQ(data.size(), N_SAMPLES * d) << "Data size mismatch";
 
-    // These values MUST match those in generate_wcss_ground_truth_balanced.cpp
-    skmeans::BalancedSuperKMeansConfig config;
+    // These values MUST match those in generate_wcss_ground_truth_hierarchical.cpp
+    skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = ITERS_MESOCLUSTERING;
     config.iters_fineclustering = ITERS_FINECLUSTERING;
     config.iters_refinement = ITERS_REFINEMENT;
@@ -739,22 +739,22 @@ TEST_P(BalancedWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
     config.n_threads = 1;
 
     auto kmeans =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
             n_clusters, d, config
         );
     auto centroids = kmeans.Train(data.data(), N_SAMPLES);
 
-    const auto& balanced_stats = kmeans.balanced_iteration_stats;
+    const auto& hierarchical_stats = kmeans.hierarchical_iteration_stats;
 
     // Final WCSS comes from last refinement iteration
-    ASSERT_FALSE(balanced_stats.refinement_iteration_stats.empty())
+    ASSERT_FALSE(hierarchical_stats.refinement_iteration_stats.empty())
         << "Expected refinement stats to be populated";
-    float final_wcss = balanced_stats.refinement_iteration_stats.back().objective;
+    float final_wcss = hierarchical_stats.refinement_iteration_stats.back().objective;
 
     // Compare against ground truth
     auto key = std::make_pair(n_clusters, d);
-    auto it = BALANCED_GROUND_TRUTH.find(key);
-    ASSERT_NE(it, BALANCED_GROUND_TRUTH.end())
+    auto it = HIERARCHICAL_GROUND_TRUTH.find(key);
+    ASSERT_NE(it, HIERARCHICAL_GROUND_TRUTH.end())
         << "No ground truth for k=" << n_clusters << ", d=" << d;
 
     float expected_wcss = it->second;
@@ -766,7 +766,7 @@ TEST_P(BalancedWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
         << " < " << expected_wcss * 0.5f << " (expected ~" << expected_wcss << ")";
 
     // Refinement WCSS should decrease monotonically
-    const auto& ref_stats = balanced_stats.refinement_iteration_stats;
+    const auto& ref_stats = hierarchical_stats.refinement_iteration_stats;
     for (size_t i = 1; i < ref_stats.size(); ++i) {
         float prev = ref_stats[i - 1].objective;
         float curr = ref_stats[i].objective;
@@ -776,9 +776,9 @@ TEST_P(BalancedWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
     }
 
     // Within each mesocluster's fineclustering block, WCSS should decrease
-    const auto& fine_stats = balanced_stats.fineclustering_iteration_stats;
+    const auto& fine_stats = hierarchical_stats.fineclustering_iteration_stats;
     const size_t n_mesoclusters =
-        skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
             GetNMesoclusters(n_clusters);
     const size_t iters_fine = ITERS_FINECLUSTERING;
     ASSERT_EQ(fine_stats.size(), n_mesoclusters * iters_fine)
@@ -802,13 +802,13 @@ TEST_P(BalancedWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    BalancedWCSSParameterized,
-    BalancedWCSSTest,
+    HierarchicalWCSSParameterized,
+    HierarchicalWCSSTest,
     ::testing::Combine(
         ::testing::Values(10, 100, 250),
         ::testing::Values(4, 16, 32, 64, 100, 128, 384, 512, 600, 768)
     ),
-    [](const ::testing::TestParamInfo<BalancedWCSSTest::ParamType>& info) {
+    [](const ::testing::TestParamInfo<HierarchicalWCSSTest::ParamType>& info) {
         return "k" + std::to_string(std::get<0>(info.param)) + "_d" +
                std::to_string(std::get<1>(info.param));
     }

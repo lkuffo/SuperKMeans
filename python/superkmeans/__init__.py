@@ -12,9 +12,9 @@ from ._superkmeans import (
     SuperKMeans as _SuperKMeansCpp,
     SuperKMeansConfig as _SuperKMeansConfigCpp,
     SuperKMeansIterationStats,
-    BalancedSuperKMeans as _BalancedSuperKMeansCpp,
-    BalancedSuperKMeansConfig as _BalancedSuperKMeansConfigCpp,
-    BalancedSuperKMeansIterationStats,
+    HierarchicalSuperKMeans as _HierarchicalSuperKMeansCpp,
+    HierarchicalSuperKMeansConfig as _HierarchicalSuperKMeansConfigCpp,
+    HierarchicalSuperKMeansIterationStats,
 )
 
 
@@ -29,7 +29,7 @@ class SuperKMeans:
     dimensionality : int
         Number of dimensions in the data.
     hierarchical : bool, optional (default=None)
-        Whether to use hierarchical (balanced) clustering. If None, automatically
+        Whether to use hierarchical clustering. If None, automatically
         uses hierarchical=True for datasets with n > 100,000, otherwise False.
     iters : int, optional (default=10)
         Number of k-means iterations (only for non-hierarchical mode).
@@ -70,7 +70,7 @@ class SuperKMeans:
         Number of clusters (read-only).
     is_trained_ : bool
         Whether the model has been trained (read-only).
-    iteration_stats : List[SuperKMeansIterationStats] or BalancedSuperKMeansIterationStats
+    iteration_stats : List[SuperKMeansIterationStats] or HierarchicalSuperKMeansIterationStats
         Statistics for each iteration (available after training).
     hierarchical_ : bool
         Whether hierarchical mode is being used (read-only).
@@ -195,7 +195,7 @@ class SuperKMeans:
 
         if self._cpp_skmeans_obj is None:
             if self._hierarchical:
-                config = _BalancedSuperKMeansConfigCpp()
+                config = _HierarchicalSuperKMeansConfigCpp()
                 config.iters_mesoclustering = self._config_params['iters_mesoclustering']
                 config.iters_fineclustering = self._config_params['iters_fineclustering']
                 config.iters_refinement = self._config_params['iters_refinement']
@@ -217,7 +217,7 @@ class SuperKMeans:
             config.angular = self._config_params['angular']
 
             if self._hierarchical:
-                self._cpp_skmeans_obj = _BalancedSuperKMeansCpp(
+                self._cpp_skmeans_obj = _HierarchicalSuperKMeansCpp(
                     self._n_clusters, self._dimensionality, config
                 )
             else:
@@ -298,12 +298,12 @@ class SuperKMeans:
         return self._cpp_skmeans_obj.iteration_stats
 
     @property
-    def balanced_iteration_stats(self):
-        """Balanced iteration statistics (only for hierarchical mode)."""
+    def hierarchical_iteration_stats(self):
+        """Hierarchical iteration statistics (only for hierarchical mode)."""
         if self._cpp_skmeans_obj is None or not self._hierarchical:
             return None
-        if hasattr(self._cpp_skmeans_obj, 'balanced_iteration_stats'):
-            return self._cpp_skmeans_obj.balanced_iteration_stats
+        if hasattr(self._cpp_skmeans_obj, 'hierarchical_iteration_stats'):
+            return self._cpp_skmeans_obj.hierarchical_iteration_stats
         return None
 
     def __repr__(self) -> str:
@@ -320,5 +320,5 @@ __all__ = [
     "__version__",
     "SuperKMeans",
     "SuperKMeansIterationStats",
-    "BalancedSuperKMeansIterationStats",
+    "HierarchicalSuperKMeansIterationStats",
 ]

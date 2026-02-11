@@ -7,7 +7,7 @@
 #include <omp.h>
 #include <vector>
 
-#include "superkmeans/balanced_superkmeans.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/common.h"
 #include "superkmeans/pdx/utils.h"
 
@@ -49,7 +49,7 @@ int main() {
     };
 
     std::cout << std::scientific << std::setprecision(5);
-    std::cout << "// Ground truth WCSS values for test_balanced_superkmeans.cpp\n";
+    std::cout << "// Ground truth WCSS values for test_hierarchical_superkmeans.cpp\n";
     std::cout << "// Generated with: N_SAMPLES=" << N_SAMPLES << ", MAX_D=" << MAX_D
               << ", N_TRUE_CENTERS=" << N_TRUE_CENTERS << ", CLUSTER_STD=" << CLUSTER_STD
               << ", CENTER_SPREAD=" << CENTER_SPREAD << ", SEED=" << SEED
@@ -64,8 +64,8 @@ int main() {
         for (size_t d : d_values) {
             auto data = extract_subdim(d);
 
-            // These config values MUST match those in test_balanced_superkmeans.cpp
-            skmeans::BalancedSuperKMeansConfig config;
+            // These config values MUST match those in test_hierarchical_superkmeans.cpp
+            skmeans::HierarchicalSuperKMeansConfig config;
             config.iters_mesoclustering = ITERS_MESOCLUSTERING;
             config.iters_fineclustering = ITERS_FINECLUSTERING;
             config.iters_refinement = ITERS_REFINEMENT;
@@ -81,18 +81,18 @@ int main() {
             config.n_threads = 1;
 
             auto kmeans =
-                skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
                     k, d, config
                 );
             kmeans.Train(data.data(), N_SAMPLES);
 
             // Final WCSS: refinement stats if available, otherwise last fineclustering stat
             float wcss;
-            const auto& balanced_stats = kmeans.balanced_iteration_stats;
-            if (!balanced_stats.refinement_iteration_stats.empty()) {
-                wcss = balanced_stats.refinement_iteration_stats.back().objective;
+            const auto& hierarchical_stats = kmeans.hierarchical_iteration_stats;
+            if (!hierarchical_stats.refinement_iteration_stats.empty()) {
+                wcss = hierarchical_stats.refinement_iteration_stats.back().objective;
             } else {
-                wcss = balanced_stats.fineclustering_iteration_stats.back().objective;
+                wcss = hierarchical_stats.fineclustering_iteration_stats.back().objective;
             }
             std::cout << "    {{" << k << ", " << d << "}, " << wcss << "f},\n";
         }

@@ -9,11 +9,11 @@
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/utils.h"
-#include "superkmeans/balanced_superkmeans.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 
 int main(int argc, char* argv[]) {
-    const std::string experiment_name = "pareto_balanced";
-    const std::string algorithm = "balanced_superkmeans";
+    const std::string experiment_name = "pareto_hierarchical";
+    const std::string algorithm = "hierarchical_superkmeans";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("openai");
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -66,24 +66,24 @@ int main(int argc, char* argv[]) {
     std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
 
     // Triple nested loop for hyperparameter grid search
-    for (int iters_meso : bench_utils::BALANCED_PARETO_MESOCLUSTERING_ITERS) {
+    for (int iters_meso : bench_utils::HIERARCHICAL_PARETO_MESOCLUSTERING_ITERS) {
         std::cout << "\n#################################################" << std::endl;
         std::cout << "# Mesoclustering iterations = " << iters_meso << std::endl;
         std::cout << "#################################################" << std::endl;
 
-        for (int iters_fine : bench_utils::BALANCED_PARETO_FINECLUSTERING_ITERS) {
+        for (int iters_fine : bench_utils::HIERARCHICAL_PARETO_FINECLUSTERING_ITERS) {
             std::cout << "\n============================================" << std::endl;
             std::cout << "## Fineclustering iterations = " << iters_fine << std::endl;
             std::cout << "============================================" << std::endl;
 
-            for (int iters_refine : bench_utils::BALANCED_PARETO_REFINEMENT_ITERS) {
+            for (int iters_refine : bench_utils::HIERARCHICAL_PARETO_REFINEMENT_ITERS) {
                 std::cout << "\n========================================" << std::endl;
                 std::cout << "Running with iters_meso=" << iters_meso
                           << ", iters_fine=" << iters_fine
                           << ", iters_refine=" << iters_refine << std::endl;
                 std::cout << "========================================" << std::endl;
 
-                skmeans::BalancedSuperKMeansConfig config;
+                skmeans::HierarchicalSuperKMeansConfig config;
                 // Base SuperKMeans config parameters
                 config.verbose = false;
                 config.n_threads = THREADS;
@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
                 config.sampling_fraction = 1.0f;
                 config.use_blas_only = false;
 
-                // Balanced SuperKMeans specific parameters
+                // Hierarchical SuperKMeans specific parameters
                 config.iters_mesoclustering = iters_meso;
                 config.iters_fineclustering = iters_fine;
                 config.iters_refinement = iters_refine;
@@ -108,7 +108,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 auto kmeans_state =
-                    skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                    skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
                         n_clusters, d, config
                     );
 
@@ -119,17 +119,17 @@ int main(int argc, char* argv[]) {
 
                 double construction_time_ms = timer.GetMilliseconds();
 
-                // For balanced superkmeans, total iterations = sum of all three phases
+                // For hierarchical superkmeans, total iterations = sum of all three phases
                 int actual_iterations = iters_meso + iters_fine + iters_refine;
 
                 // Compute final objective (get last refinement objective if available)
                 double final_objective = 0.0;
-                if (!kmeans_state.balanced_iteration_stats.refinement_iteration_stats.empty()) {
-                    final_objective = kmeans_state.balanced_iteration_stats.refinement_iteration_stats.back().objective;
-                } else if (!kmeans_state.balanced_iteration_stats.fineclustering_iteration_stats.empty()) {
-                    final_objective = kmeans_state.balanced_iteration_stats.fineclustering_iteration_stats.back().objective;
-                } else if (!kmeans_state.balanced_iteration_stats.mesoclustering_iteration_stats.empty()) {
-                    final_objective = kmeans_state.balanced_iteration_stats.mesoclustering_iteration_stats.back().objective;
+                if (!kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.empty()) {
+                    final_objective = kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back().objective;
+                } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.empty()) {
+                    final_objective = kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.back().objective;
+                } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.empty()) {
+                    final_objective = kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.back().objective;
                 }
 
                 std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
@@ -152,7 +152,7 @@ int main(int argc, char* argv[]) {
                         kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
 
                     // Compute cluster balance statistics
-                    auto balance_stats = skmeans::BalancedSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::GetClustersBalanceStats(
+                    auto balance_stats = skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::GetClustersBalanceStats(
                         assignments.data(), n, n_clusters
                     );
                     balance_stats.print();
@@ -203,7 +203,7 @@ int main(int argc, char* argv[]) {
                         algorithm,
                         dataset,
                         actual_iterations,  // Total iterations
-                        actual_iterations,  // Actual = requested for balanced
+                        actual_iterations,  // Actual = requested for hierarchical
                         static_cast<int>(d),
                         n,
                         static_cast<int>(n_clusters),

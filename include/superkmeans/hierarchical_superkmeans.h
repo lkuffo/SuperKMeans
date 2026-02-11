@@ -6,25 +6,25 @@
 namespace skmeans {
 
 /**
- * @brief Configuration parameters for Balanced SuperKMeans clustering.
+ * @brief Configuration parameters for Hierarchical SuperKMeans clustering.
  */
-struct BalancedSuperKMeansConfig : SuperKMeansConfig {
+struct HierarchicalSuperKMeansConfig : SuperKMeansConfig {
     uint32_t iters_mesoclustering = 3;
     uint32_t iters_fineclustering = 5;
     uint32_t iters_refinement = 1;
 };
 
 /**
- * @brief Statistics for BalancedSuperKMeans clustering.
+ * @brief Statistics for HierarchicalSuperKMeans clustering.
  */
-struct BalancedSuperKMeansIterationStats {
+struct HierarchicalSuperKMeansIterationStats {
     std::vector<SuperKMeansIterationStats> mesoclustering_iteration_stats;
     std::vector<SuperKMeansIterationStats> refinement_iteration_stats;
     std::vector<SuperKMeansIterationStats> fineclustering_iteration_stats;
 };
 
 template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
-class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
+class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
     using typename SuperKMeans<q, alpha>::centroid_value_t;
     using typename SuperKMeans<q, alpha>::vector_value_t;
     using typename SuperKMeans<q, alpha>::distance_t;
@@ -38,18 +38,18 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
     /**
      * @brief Constructor with custom configuration
      */
-    BalancedSuperKMeans(
+    HierarchicalSuperKMeans(
         size_t n_clusters,
         size_t dimensionality,
-        const BalancedSuperKMeansConfig& config
+        const HierarchicalSuperKMeansConfig& config
     )
-        : SuperKMeans<q, alpha>(n_clusters, dimensionality, config), balanced_config(config) {
+        : SuperKMeans<q, alpha>(n_clusters, dimensionality, config), hierarchical_config(config) {
         SKMEANS_ENSURE_POSITIVE(config.iters_mesoclustering);
 
-        static_cast<SuperKMeansConfig&>(balanced_config) = this->_config;
+        static_cast<SuperKMeansConfig&>(hierarchical_config) = this->_config;
 
         if (n_clusters <= 128) {
-            std::cout << "WARNING: n_clusters <= 128 is not recommended for BalancedSuperKMeans. "
+            std::cout << "WARNING: n_clusters <= 128 is not recommended for HierarchicalSuperKMeans. "
                          "Consider using at least 128 clusters."
                       << std::endl;
         }
@@ -58,11 +58,11 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
     /**
      * @brief Default constructor
      */
-    BalancedSuperKMeans(size_t n_clusters, size_t dimensionality)
-        : BalancedSuperKMeans(n_clusters, dimensionality, BalancedSuperKMeansConfig{}) {}
+    HierarchicalSuperKMeans(size_t n_clusters, size_t dimensionality)
+        : HierarchicalSuperKMeans(n_clusters, dimensionality, HierarchicalSuperKMeansConfig{}) {}
 
     /**
-     * @brief Run balanced k-means clustering to determine centroids
+     * @brief Run hierarchical k-means clustering to determine centroids
      * We don't support Early Termination by Recall here. 
      * queries and n_queries are ignored. But we keep the function signature for compatibility.
      *
@@ -82,12 +82,12 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             throw std::runtime_error("The clustering has already been trained");
         }
         if (n_queries > 0){
-            std::cout << "WARNING: Early Termination by Recall is not supported in BalancedSuperKMeans" << std::endl;
+            std::cout << "WARNING: Early Termination by Recall is not supported in HierarchicalSuperKMeans" << std::endl;
         }
         n_mesoclusters = GetNMesoclusters(this->_n_clusters);
-        balanced_iteration_stats.fineclustering_iteration_stats.clear();
-        balanced_iteration_stats.mesoclustering_iteration_stats.clear();
-        balanced_iteration_stats.refinement_iteration_stats.clear();
+        hierarchical_iteration_stats.fineclustering_iteration_stats.clear();
+        hierarchical_iteration_stats.mesoclustering_iteration_stats.clear();
+        hierarchical_iteration_stats.refinement_iteration_stats.clear();
         if (n < this->_n_clusters) {
             throw std::runtime_error(
                 "The number of points should be at least as large as the number of clusters"
@@ -125,7 +125,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         if (this->_partial_d > this->_vertical_d) {
             this->_partial_d = this->_vertical_d;
         }
-        if (this->balanced_config.verbose) {
+        if (this->hierarchical_config.verbose) {
             std::cout << "Front dimensions (d') = " << this->_partial_d << std::endl;
             std::cout << "Trailing dimensions (d'') = " << this->_d - this->_vertical_d
                       << std::endl;
@@ -138,21 +138,21 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         //
         TicToc timer_mesoclustering;
         timer_mesoclustering.Tic();
-        if (this->balanced_config.verbose) {
+        if (this->hierarchical_config.verbose) {
             std::cout << "\n=== PHASE 1: MESOCLUSTERING (k=" << n_mesoclusters << " clusters) ===" << std::endl;
         }
         auto centroids_pdx_wrapper =
-            this->GenerateCentroids(data_p, this->_n_samples, n_mesoclusters, !this->balanced_config.data_already_rotated);
-        if (this->balanced_config.verbose) {
+            this->GenerateCentroids(data_p, this->_n_samples, n_mesoclusters, !this->hierarchical_config.data_already_rotated);
+        if (this->hierarchical_config.verbose) {
             std::cout << "Sampling data..." << std::endl;
         }
         // Samples for both mesoclustering and fineclustering
         std::vector<vector_value_t> data_samples_buffer; 
-        this->SampleAndRotateVectors(data_p, data_samples_buffer, n, this->_n_samples, !this->balanced_config.data_already_rotated);
+        this->SampleAndRotateVectors(data_p, data_samples_buffer, n, this->_n_samples, !this->hierarchical_config.data_already_rotated);
         auto data_to_cluster = data_samples_buffer.data();
         auto initial_n_samples = this->_n_samples;
         this->RotateOrCopy(
-            this->_horizontal_centroids.data(), this->_prev_centroids.data(), n_mesoclusters, !this->balanced_config.data_already_rotated
+            this->_horizontal_centroids.data(), this->_prev_centroids.data(), n_mesoclusters, !this->hierarchical_config.data_already_rotated
         );
         this->GetL2NormsRowMajor(data_to_cluster, this->_n_samples, this->_data_norms.data());
         this->GetL2NormsRowMajor(
@@ -179,7 +179,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
             n_mesoclusters,
             iter_idx,
             true, // is_first_iter
-            this->balanced_iteration_stats.mesoclustering_iteration_stats
+            this->hierarchical_iteration_stats.mesoclustering_iteration_stats
         );
 
         iter_idx = 1;
@@ -195,13 +195,13 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         // My theory is that for Mesoclusters SuperKMeans is not going to work as well,
         // Depending on how many clusters we have
         // But for fineclusters, since the ratio is around 1:100, then it should work.
-        if (this->balanced_config.iters_mesoclustering > 1) {
+        if (this->hierarchical_config.iters_mesoclustering > 1) {
             //
             // FULL GEMM on low-dimensional data or too few clusters
             //
             if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
                 n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-                for (; iter_idx < this->balanced_config.iters_mesoclustering; ++iter_idx) {
+                for (; iter_idx < this->hierarchical_config.iters_mesoclustering; ++iter_idx) {
                     this->template RunIteration<true>(
                         data_to_cluster,
                         tmp_distances_buf.data(),
@@ -214,9 +214,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         n_mesoclusters,
                         iter_idx,
                         false, // is_first_iter
-                        this->balanced_iteration_stats.mesoclustering_iteration_stats
+                        this->hierarchical_iteration_stats.mesoclustering_iteration_stats
                     );
-                    if (this->balanced_config.early_termination &&
+                    if (this->hierarchical_config.early_termination &&
                         this->ShouldStopEarly(
                             false, best_recall, iters_without_improvement, iter_idx
                         )) {
@@ -227,7 +227,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 this->GetPartialL2NormsRowMajor(
                     data_to_cluster, this->_n_samples, this->_data_norms.data(), this->_partial_d
                 );
-                for (; iter_idx < this->balanced_config.iters_mesoclustering; ++iter_idx) {
+                for (; iter_idx < this->hierarchical_config.iters_mesoclustering; ++iter_idx) {
                     this->template RunIteration<false>(
                         data_to_cluster,
                         tmp_distances_buf.data(),
@@ -240,9 +240,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         n_mesoclusters,
                         iter_idx,
                         false, // is_first_iter
-                        this->balanced_iteration_stats.mesoclustering_iteration_stats
+                        this->hierarchical_iteration_stats.mesoclustering_iteration_stats
                     );
-                    if (this->balanced_config.early_termination &&
+                    if (this->hierarchical_config.early_termination &&
                         this->ShouldStopEarly(
                             false, best_recall, iters_without_improvement, iter_idx
                         )) {
@@ -285,7 +285,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
         // FINE-CLUSTERING
         // Each mesocluster is re-clustered sequentially
         //
-        if (this->balanced_config.verbose) {
+        if (this->hierarchical_config.verbose) {
             std::cout << "\n=== PHASE 2: FINE-CLUSTERING (subdividing " << n_mesoclusters
                       << " mesoclusters into total " << this->_n_clusters << " clusters) ===" << std::endl;
         }
@@ -345,13 +345,13 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 n_fineclusters,
                 fine_iter_idx,
                 true, // is_first_iter
-                this->balanced_iteration_stats.fineclustering_iteration_stats
+                this->hierarchical_iteration_stats.fineclustering_iteration_stats
             );
 
             fine_iter_idx = 1;
             fine_best_recall = this->_recall;
 
-            if (this->balanced_config.iters_fineclustering > 1) {
+            if (this->hierarchical_config.iters_fineclustering > 1) {
                 //
                 // FULL GEMM on low-dimensional data or too few clusters
                 //
@@ -359,7 +359,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                     n_fineclusters <= 500 //|| N_CLUSTERS_THRESHOLD_FOR_PRUNING
                     //points_per_finecluster > 2000.0f
                 ) {
-                    for (; fine_iter_idx < this->balanced_config.iters_fineclustering;
+                    for (; fine_iter_idx < this->hierarchical_config.iters_fineclustering;
                          ++fine_iter_idx) {
                         this->template RunIteration<true>(
                             mesocluster_data_to_cluster,
@@ -373,9 +373,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                             n_fineclusters,
                             fine_iter_idx,
                             false, // is_first_iter
-                            this->balanced_iteration_stats.fineclustering_iteration_stats
+                            this->hierarchical_iteration_stats.fineclustering_iteration_stats
                         );
-                        if (this->balanced_config.early_termination && this->ShouldStopEarly(
+                        if (this->hierarchical_config.early_termination && this->ShouldStopEarly(
                                                                    false,
                                                                    fine_best_recall,
                                                                    iters_without_improvement,
@@ -391,7 +391,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         this->_data_norms.data(),
                         this->_partial_d
                     );
-                    for (; fine_iter_idx < this->balanced_config.iters_fineclustering;
+                    for (; fine_iter_idx < this->hierarchical_config.iters_fineclustering;
                          ++fine_iter_idx) {
                         this->template RunIteration<false>(
                             mesocluster_data_to_cluster,
@@ -405,9 +405,9 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                             n_fineclusters,
                             fine_iter_idx,
                             false, // is_first_iter
-                            this->balanced_iteration_stats.fineclustering_iteration_stats
+                            this->hierarchical_iteration_stats.fineclustering_iteration_stats
                         );
-                        if (this->balanced_config.early_termination && this->ShouldStopEarly(
+                        if (this->hierarchical_config.early_termination && this->ShouldStopEarly(
                                                                    false,
                                                                    fine_best_recall,
                                                                    iters_without_improvement,
@@ -442,7 +442,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
         // Now we move to the last refinement phase in which we perform clustering with all
         // _n_clusters. Recall our initial buffers for centroids have enough space for _n_clusters.
-        if (this->balanced_config.verbose) {
+        if (this->hierarchical_config.verbose) {
             std::cout << "\n=== PHASE 3: REFINEMENT (fine-tuning all " << this->_n_clusters
                       << " clusters) ===" << std::endl;
         }
@@ -479,13 +479,13 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
         // 2 refinement iterations GEMM+PRUNING
         size_t refinement_iter_idx = 0;
-        if (this->balanced_config.iters_refinement > 0) {
+        if (this->hierarchical_config.iters_refinement > 0) {
             //
             // FULL GEMM on low-dimensional data or too few clusters
             //
             if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
                 this->_n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-                for (; refinement_iter_idx < this->balanced_config.iters_refinement;
+                for (; refinement_iter_idx < this->hierarchical_config.iters_refinement;
                      ++refinement_iter_idx) {
                     this->template RunIteration<true>(
                         data_to_cluster,
@@ -499,7 +499,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         this->_n_clusters,
                         refinement_iter_idx,
                         false, // is_first_iter
-                        this->balanced_iteration_stats.refinement_iteration_stats
+                        this->hierarchical_iteration_stats.refinement_iteration_stats
                     );
                 }
             } else { // Rest of Iterations with GEMM+PRUNING
@@ -509,7 +509,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                 this->GetPartialL2NormsRowMajor(
                     data_to_cluster, this->_n_samples, this->_data_norms.data(), this->_partial_d
                 );
-                for (; refinement_iter_idx < this->balanced_config.iters_refinement;
+                for (; refinement_iter_idx < this->hierarchical_config.iters_refinement;
                      ++refinement_iter_idx) {
                     this->template RunIteration<false>(
                         data_to_cluster,
@@ -523,7 +523,7 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
                         this->_n_clusters,
                         refinement_iter_idx,
                         false, // is_first_iter
-                        this->balanced_iteration_stats.refinement_iteration_stats
+                        this->hierarchical_iteration_stats.refinement_iteration_stats
                     );
                 }
             }
@@ -538,12 +538,12 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
 
         // TODO(@lkuffo, high): If unrotate_centroids is false, this computes incorrect assignments 
         //   because it's using unrotated data with rotated output_centroids
-        auto output_centroids = this->GetOutputCentroids(this->balanced_config.unrotate_centroids);
-        if (this->balanced_config.perform_assignments) {
+        auto output_centroids = this->GetOutputCentroids(this->hierarchical_config.unrotate_centroids);
+        if (this->hierarchical_config.perform_assignments) {
             // TODO(@lkuffo, high: Need a fast assign, for now we use the iter_idx-1 assignments)
             this->_assignments = this->Assign(data, output_centroids.data(), n, this->_n_clusters);
         }
-        if (this->balanced_config.verbose) {
+        if (this->hierarchical_config.verbose) {
             Profiler::Get().PrintHierarchical();
         }
         return output_centroids;
@@ -566,10 +566,10 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
      * @return Number of vectors to sample
      */
     [[nodiscard]] size_t GetNVectorsToSample(const size_t n, size_t n_clusters) const override {
-        if (this->balanced_config.sampling_fraction == 1.0) {
+        if (this->hierarchical_config.sampling_fraction == 1.0) {
             return n;
         }
-        auto samples_by_n = static_cast<size_t>(std::floor(n * this->balanced_config.sampling_fraction));
+        auto samples_by_n = static_cast<size_t>(std::floor(n * this->hierarchical_config.sampling_fraction));
         return samples_by_n;
     }    
 
@@ -808,8 +808,8 @@ class BalancedSuperKMeans : public SuperKMeans<q, alpha> {
     std::vector<uint32_t> final_assignments;
     std::vector<vector_value_t> immutable_data_norms;
     std::vector<centroid_value_t> final_centroids;
-    BalancedSuperKMeansConfig balanced_config;
-    BalancedSuperKMeansIterationStats balanced_iteration_stats;
+    HierarchicalSuperKMeansConfig hierarchical_config;
+    HierarchicalSuperKMeansIterationStats hierarchical_iteration_stats;
 };
 
 } // namespace skmeans

@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from superkmeans import SuperKMeans, SuperKMeansIterationStats, BalancedSuperKMeansIterationStats
+from superkmeans import SuperKMeans, SuperKMeansIterationStats, HierarchicalSuperKMeansIterationStats
 
 
 class TestSuperKMeans:
@@ -220,7 +220,7 @@ class TestSuperKMeans:
         assert centroids.dtype == np.float32
         assert kmeans.is_trained_
         assert kmeans.hierarchical_ is True
-        assert kmeans.balanced_iteration_stats is not None
+        assert kmeans.hierarchical_iteration_stats is not None
 
     def test_hierarchical_explicit_false(self):
         """Test explicit hierarchical=False mode."""
@@ -242,7 +242,7 @@ class TestSuperKMeans:
 
         assert centroids.shape == (k, d)
         assert kmeans.hierarchical_ is False
-        assert kmeans.balanced_iteration_stats is None
+        assert kmeans.hierarchical_iteration_stats is None
 
     def test_hierarchical_auto_small_dataset(self):
         """Test automatic hierarchical mode selection for small dataset (n <= 100,000)."""
@@ -280,7 +280,7 @@ class TestSuperKMeans:
 
         assert centroids.shape == (k, d)
         assert kmeans.hierarchical_ is True  # Should automatically use hierarchical
-        assert kmeans.balanced_iteration_stats is not None
+        assert kmeans.hierarchical_iteration_stats is not None
 
     def test_hierarchical_assign(self):
         """Test assign method in hierarchical mode."""
@@ -308,7 +308,7 @@ class TestSuperKMeans:
         assert np.all(assignments < k)
 
     def test_hierarchical_iteration_stats(self):
-        """Test that balanced iteration stats are populated in hierarchical mode."""
+        """Test that hierarchical iteration stats are populated in hierarchical mode."""
         np.random.seed(42)
         n = 10000
         d = 512
@@ -327,13 +327,13 @@ class TestSuperKMeans:
         )
         kmeans.train(data)
 
-        balanced_stats = kmeans.balanced_iteration_stats
-        assert balanced_stats is not None
-        assert isinstance(balanced_stats, BalancedSuperKMeansIterationStats)
-        assert len(balanced_stats.mesoclustering_iteration_stats) == 3
-        assert len(balanced_stats.fineclustering_iteration_stats) > 0
-        assert len(balanced_stats.fineclustering_iteration_stats) <= 10 * 3  # At most 10 mesoclusters * 3 iters
-        assert len(balanced_stats.refinement_iteration_stats) == 2
+        hierarchical_stats = kmeans.hierarchical_iteration_stats
+        assert hierarchical_stats is not None
+        assert isinstance(hierarchical_stats, HierarchicalSuperKMeansIterationStats)
+        assert len(hierarchical_stats.mesoclustering_iteration_stats) == 3
+        assert len(hierarchical_stats.fineclustering_iteration_stats) > 0
+        assert len(hierarchical_stats.fineclustering_iteration_stats) <= 10 * 3  # At most 10 mesoclusters * 3 iters
+        assert len(hierarchical_stats.refinement_iteration_stats) == 2
 
     def test_hierarchical_reproducibility(self):
         """Test reproducibility in hierarchical mode."""

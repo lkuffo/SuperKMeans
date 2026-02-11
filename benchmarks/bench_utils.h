@@ -121,15 +121,15 @@ const std::vector<float> SAMPLING_FRACTION_VALUES = {
 // Iteration values for pareto experiment (grid search)
 const std::vector<int> PARETO_ITERS_VALUES = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
 
-// Balanced SuperKMeans pareto hyperparameter grids
-const std::vector<int> BALANCED_PARETO_MESOCLUSTERING_ITERS = {1, 3, 5, 7, 9};
-const std::vector<int> BALANCED_PARETO_FINECLUSTERING_ITERS = {1, 3, 5, 7, 9};
-const std::vector<int> BALANCED_PARETO_REFINEMENT_ITERS = {0, 1, 2, 3, 5};
+// Hierarchical SuperKMeans pareto hyperparameter grids
+const std::vector<int> HIERARCHICAL_PARETO_MESOCLUSTERING_ITERS = {1, 3, 5, 7, 9};
+const std::vector<int> HIERARCHICAL_PARETO_FINECLUSTERING_ITERS = {1, 3, 5, 7, 9};
+const std::vector<int> HIERARCHICAL_PARETO_REFINEMENT_ITERS = {0, 1, 2, 3, 5};
 
-// Balanced SuperKMeans sampling iteration parameters
-const int BALANCED_SAMPLING_MESOCLUSTERING_ITERS = 10;
-const int BALANCED_SAMPLING_FINECLUSTERING_ITERS = 10;
-const int BALANCED_SAMPLING_REFINEMENT_ITERS = 2;
+// Hierarchical SuperKMeans sampling iteration parameters
+const int HIERARCHICAL_SAMPLING_MESOCLUSTERING_ITERS = 10;
+const int HIERARCHICAL_SAMPLING_FINECLUSTERING_ITERS = 10;
+const int HIERARCHICAL_SAMPLING_REFINEMENT_ITERS = 2;
 
 // n_clusters values for varying_k experiment
 const std::vector<int> VARYING_K_VALUES = {100, 1000, 10000, 100000};
