@@ -636,6 +636,7 @@ namespace {
 
 // clang-format off
 const std::map<std::pair<size_t, size_t>, float> HIERARCHICAL_GROUND_TRUTH = {
+    // k=10
     {{10, 4}, 4.79044e+05f},
     {{10, 16}, 3.06173e+06f},
     {{10, 32}, 6.94447e+06f},

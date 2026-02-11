@@ -29,7 +29,6 @@ int main(int argc, char* argv[]) {
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
     const size_t n_clusters = bench_utils::get_default_n_clusters(n);
-    int n_iters = bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
@@ -38,8 +37,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "=== Running algorithm: " << algorithm << " ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
-    std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters
-              << " sampling_fraction=" << sampling_fraction << "\n";
+    std::cout << "n_clusters=" << n_clusters << " sampling_fraction=" << sampling_fraction << "\n";
     std::cout << "Eigen # threads: " << Eigen::nbThreads()
               << " (note: it will always be 1 if BLAS is enabled)" << std::endl;
 
@@ -108,12 +106,11 @@ int main(int argc, char* argv[]) {
     );
     timer.Toc();
     double construction_time_ms = timer.GetMilliseconds();
-    int actual_iterations = 2; // static_cast<int>(kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.size());
     double final_objective = 0; // kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back().objective;
 
     std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
-    std::cout << "Actual iterations: " << actual_iterations << " (requested: " << n_iters << ")"
-              << std::endl;
+    std::cout << "Iteration config: meso=" << config.iters_mesoclustering << ", fine=" << config.iters_fineclustering
+              << ", refine=" << config.iters_refinement << "\n";
     std::cout << "Final objective: " << final_objective << std::endl;
 
     // Compute assignments and cluster balance statistics

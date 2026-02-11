@@ -124,7 +124,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         this->_vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->_d).vertical_d;
         this->_partial_horizontal_centroids.resize(this->_n_clusters * this->_vertical_d);
 
-        // this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 2);
         this->_partial_d = this->_vertical_d; // We are more cautious with the partial d for hierarchical clustering
 
         auto initial_partial_d = this->_partial_d;
@@ -452,7 +451,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                       << " clusters) ===" << std::endl;
         }
         this->_n_samples = initial_n_samples;
-        this->_partial_d = initial_partial_d;
+        
+        this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 2);
 
         // We just transfer the state of centroids to the proper class variables, no rotation.
         auto final_refinement_pdx_wrapper =
