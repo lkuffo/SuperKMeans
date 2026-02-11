@@ -83,9 +83,9 @@ class SuperKMeans:
         hierarchical: Optional[bool] = None,
         # Training parameters
         iters: int = 10,
-        iters_mesoclustering: int = 10,
-        iters_fineclustering: int = 10,
-        iters_refinement: int = 2,
+        iters_mesoclustering: int = 3,
+        iters_fineclustering: int = 5,
+        iters_refinement: int = 1,
         sampling_fraction: float = 0.3,
         max_points_per_cluster: int = 256,
         n_threads: int = 0,

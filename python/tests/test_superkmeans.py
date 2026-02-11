@@ -158,7 +158,7 @@ class TestSuperKMeans:
     def test_non_contiguous_arrays(self):
         np.random.seed(42)
         n = 100
-        d = 256  # Use 256 so that after slicing we still have valid data
+        d = 256
         k = 10
         data = np.random.randn(n, d * 2).astype(np.float32)
         data_nc = data[:, ::2]  # This creates non-contiguous array with d=256
@@ -262,7 +262,7 @@ class TestSuperKMeans:
     def test_hierarchical_auto_large_dataset(self):
         """Test automatic hierarchical mode selection for large dataset (n > 100,000)."""
         np.random.seed(42)
-        n = 150000  # Large dataset
+        n = 150000
         d = 128
         k = 256
 
