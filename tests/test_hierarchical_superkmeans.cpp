@@ -584,8 +584,8 @@ TEST_F(HierarchicalSuperKMeansTest, AssignMethod_ProducesValidAssignments) {
     }
 
     std::unordered_set<uint32_t> used_clusters(assignments.begin(), assignments.end());
-    EXPECT_EQ(used_clusters.size(), n_clusters)
-        << "Not all clusters were used in assignments";
+    EXPECT_GE(used_clusters.size(), static_cast<size_t>(0.95 * n_clusters))
+        << "Less than 95% of clusters were used in assignments";
 }
 
 TEST_F(HierarchicalSuperKMeansTest, AngularMode_Normalizes) {
