@@ -94,8 +94,8 @@ inline std::vector<float> MakeBlobs(
         std::uniform_int_distribution<size_t> cluster_dist(0, n_centers - 1);
         std::normal_distribution<float> point_dist(0.0f, cluster_std);
         std::mt19937 thread_gen(
-            static_cast<uint32_t>(random_state) +
-            static_cast<uint32_t>(omp_get_thread_num()));
+            static_cast<uint32_t>(random_state) + static_cast<uint32_t>(omp_get_thread_num())
+        );
 #pragma omp for
         for (size_t i = 0; i < n_samples; ++i) {
             size_t center_idx = cluster_dist(thread_gen) * n_features;

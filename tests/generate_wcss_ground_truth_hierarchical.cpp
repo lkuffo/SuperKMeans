@@ -7,8 +7,8 @@
 #include <omp.h>
 #include <vector>
 
-#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/utils.h"
 
 int main() {
@@ -80,10 +80,9 @@ int main() {
             config.angular = false;
             config.n_threads = 1;
 
-            auto kmeans =
-                skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                    k, d, config
-                );
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
+                skmeans::Quantization::f32,
+                skmeans::DistanceFunction::l2>(k, d, config);
             kmeans.Train(data.data(), N_SAMPLES);
 
             // Final WCSS: refinement stats if available, otherwise last fineclustering stat

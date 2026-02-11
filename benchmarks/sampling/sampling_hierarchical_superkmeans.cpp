@@ -6,10 +6,10 @@
 
 #include "bench_utils.h"
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/utils.h"
-#include "superkmeans/hierarchical_superkmeans.h"
 
 int main(int argc, char* argv[]) {
     const std::string experiment_name = "sampling_hierarchical";
@@ -113,10 +113,9 @@ int main(int argc, char* argv[]) {
             config.angular = true;
         }
 
-        auto kmeans_state =
-            skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                n_clusters, d, config
-            );
+        auto kmeans_state = skmeans::HierarchicalSuperKMeans<
+            skmeans::Quantization::f32,
+            skmeans::DistanceFunction::l2>(n_clusters, d, config);
 
         bench_utils::TicToc timer;
         timer.Tic();
@@ -131,11 +130,19 @@ int main(int argc, char* argv[]) {
         // Compute final objective (get last refinement objective if available)
         double final_objective = 0.0;
         if (!kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.empty()) {
-            final_objective = kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back().objective;
-        } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.empty()) {
-            final_objective = kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.back().objective;
-        } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.empty()) {
-            final_objective = kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.back().objective;
+            final_objective =
+                kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back()
+                    .objective;
+        } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats
+                        .empty()) {
+            final_objective =
+                kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.back()
+                    .objective;
+        } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats
+                        .empty()) {
+            final_objective =
+                kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.back()
+                    .objective;
         }
 
         std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
@@ -154,35 +161,20 @@ int main(int argc, char* argv[]) {
             auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
             std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                       << " from ground truth)" << std::endl;
-            auto assignments =
-                kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
+            auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
 
             // Compute cluster balance statistics
-            auto balance_stats = skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::GetClustersBalanceStats(
-                assignments.data(), n, n_clusters
-            );
+            auto balance_stats = skmeans::
+                HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
+                    GetClustersBalanceStats(assignments.data(), n, n_clusters);
             balance_stats.print();
 
             auto results_knn_10 = bench_utils::compute_recall(
-                gt_map,
-                assignments,
-                queries.data(),
-                centroids.data(),
-                n_queries,
-                n_clusters,
-                d,
-                10
+                gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
             );
             bench_utils::print_recall_results(results_knn_10, 10);
             auto results_knn_100 = bench_utils::compute_recall(
-                gt_map,
-                assignments,
-                queries.data(),
-                centroids.data(),
-                n_queries,
-                n_clusters,
-                d,
-                100
+                gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
             );
             bench_utils::print_recall_results(results_knn_100, 100);
 
@@ -208,8 +200,8 @@ int main(int argc, char* argv[]) {
                 experiment_name,
                 algorithm,
                 dataset,
-                actual_iterations,  // Total iterations
-                actual_iterations,  // Actual = requested for hierarchical
+                actual_iterations, // Total iterations
+                actual_iterations, // Actual = requested for hierarchical
                 static_cast<int>(d),
                 n,
                 static_cast<int>(n_clusters),

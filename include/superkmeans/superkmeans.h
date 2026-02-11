@@ -83,24 +83,16 @@ struct ClusterBalanceStats {
 
     std::string to_json() const {
         std::ostringstream oss;
-        oss << "{\"mean\":" << mean
-            << ",\"geometric_mean\":" << geometric_mean
-            << ",\"stdev\":" << stdev
-            << ",\"cv\":" << cv
-            << ",\"min\":" << min
+        oss << "{\"mean\":" << mean << ",\"geometric_mean\":" << geometric_mean
+            << ",\"stdev\":" << stdev << ",\"cv\":" << cv << ",\"min\":" << min
             << ",\"max\":" << max << "}";
         return oss.str();
     }
 
     void print() const {
         std::cout << "Cluster size stats: "
-                  << "mean=" << mean
-                  << ", gmean=" << geometric_mean
-                  << ", std=" << stdev
-                  << ", CV=" << cv
-                  << ", min=" << min
-                  << ", max=" << max
-                  << std::endl;
+                  << "mean=" << mean << ", gmean=" << geometric_mean << ", std=" << stdev
+                  << ", CV=" << cv << ", min=" << min << ", max=" << max << std::endl;
     }
 };
 
@@ -138,7 +130,7 @@ class SuperKMeans {
         _pruner =
             std::make_unique<pruner_t>(dimensionality, PRUNER_INITIAL_THRESHOLD, _config.seed);
 
-        // If data is already rotated, we must not unrotate output centroids 
+        // If data is already rotated, we must not unrotate output centroids
         if (_config.data_already_rotated) {
             _config.unrotate_centroids = false;
         }
@@ -220,16 +212,24 @@ class SuperKMeans {
             std::cout << "Trailing dimensions (d'') = " << _d - _vertical_d << std::endl;
         }
 
-        auto centroids_pdx_wrapper = GenerateCentroids(data_p, _n_samples, _n_clusters, !_config.data_already_rotated);
+        auto centroids_pdx_wrapper =
+            GenerateCentroids(data_p, _n_samples, _n_clusters, !_config.data_already_rotated);
         if (_config.verbose) {
             std::cout << "Sampling data..." << std::endl;
         }
 
         std::vector<vector_value_t> data_samples_buffer;
-        SampleAndRotateVectors(data_p, data_samples_buffer, n, _n_samples, !_config.data_already_rotated);
+        SampleAndRotateVectors(
+            data_p, data_samples_buffer, n, _n_samples, !_config.data_already_rotated
+        );
         auto data_to_cluster = data_samples_buffer.data();
 
-        RotateOrCopy(_horizontal_centroids.data(), _prev_centroids.data(), _n_clusters, !_config.data_already_rotated);
+        RotateOrCopy(
+            _horizontal_centroids.data(),
+            _prev_centroids.data(),
+            _n_clusters,
+            !_config.data_already_rotated
+        );
 
         GetL2NormsRowMajor(data_to_cluster, _n_samples, _data_norms.data());
         GetL2NormsRowMajor(_prev_centroids.data(), _n_clusters, _centroid_norms.data());
@@ -256,7 +256,9 @@ class SuperKMeans {
                     data_to_cluster, rotated_queries, _n_samples, n_queries, false
                 );
             } else {
-                RotateOrCopy(queries, rotated_queries.data(), n_queries, !_config.data_already_rotated);
+                RotateOrCopy(
+                    queries, rotated_queries.data(), n_queries, !_config.data_already_rotated
+                );
             }
             _query_norms.resize(n_queries);
             GetL2NormsRowMajor(rotated_queries.data(), n_queries, _query_norms.data());
@@ -282,7 +284,7 @@ class SuperKMeans {
             _n_samples,
             _n_clusters,
             iter_idx,
-            true,  // is_first_iter
+            true, // is_first_iter
             iteration_stats
         );
         iter_idx = 1;
@@ -315,7 +317,7 @@ class SuperKMeans {
                     _n_samples,
                     _n_clusters,
                     iter_idx,
-                    false,  // is_first_iter
+                    false, // is_first_iter
                     iteration_stats
                 );
                 if (_config.early_termination &&
@@ -352,7 +354,7 @@ class SuperKMeans {
                 _n_samples,
                 _n_clusters,
                 iter_idx,
-                false,  // is_first_iter
+                false, // is_first_iter
                 iteration_stats
             );
             if (_config.early_termination &&
@@ -464,8 +466,7 @@ class SuperKMeans {
         stats.geometric_mean = (non_zero_count > 0) ? std::exp(log_sum / non_zero_count) : 0.0f;
 
         float sq_sum = std::inner_product(
-            cluster_sizes.begin(), cluster_sizes.end(),
-            cluster_sizes.begin(), 0.0f
+            cluster_sizes.begin(), cluster_sizes.end(), cluster_sizes.begin(), 0.0f
         );
         stats.stdev = std::sqrt(sq_sum / cluster_sizes.size() - stats.mean * stats.mean);
 
@@ -683,7 +684,9 @@ class SuperKMeans {
             avg_not_pruned_pct =
                 TunePartialD(not_pruned_counts.data(), n_samples, n_clusters, partial_d_changed);
             if (partial_d_changed) {
-                GetPartialL2NormsRowMajor(data_to_cluster, n_samples, _data_norms.data(), _partial_d);
+                GetPartialL2NormsRowMajor(
+                    data_to_cluster, n_samples, _data_norms.data(), _partial_d
+                );
             }
         }
 
@@ -712,10 +715,9 @@ class SuperKMeans {
 
         if (_config.verbose) {
             std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
-                      << " | Objective: " << _cost
-                      << " | Objective improvement: " << (iter_idx > 0 ? 1 - (_cost / _prev_cost) : 0.0f)
-                      << " | Shift: " << _shift << " | Split: " << _n_split
-                      << " | Recall: " << _recall;
+                      << " | Objective: " << _cost << " | Objective improvement: "
+                      << (iter_idx > 0 ? 1 - (_cost / _prev_cost) : 0.0f) << " | Shift: " << _shift
+                      << " | Split: " << _n_split << " | Recall: " << _recall;
             if constexpr (GEMM_ONLY) {
                 std::cout << " [BLAS-only]";
             } else {

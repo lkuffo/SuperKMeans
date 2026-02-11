@@ -1,5 +1,5 @@
-#include "superkmeans/pdx/utils.h"
 #include "superkmeans/hierarchical_superkmeans.h"
+#include "superkmeans/pdx/utils.h"
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>

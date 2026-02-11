@@ -1,7 +1,7 @@
 #pragma once
 
-#include "superkmeans/superkmeans.h"
 #include "superkmeans/pdx/utils.h"
+#include "superkmeans/superkmeans.h"
 
 namespace skmeans {
 
@@ -53,9 +53,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         static_cast<SuperKMeansConfig&>(hierarchical_config) = this->_config;
 
         if (n_clusters <= 128) {
-            std::cout << "WARNING: n_clusters <= 128 is not recommended for HierarchicalSuperKMeans. "
-                         "Consider using at least 128 clusters."
-                      << std::endl;
+            std::cout
+                << "WARNING: n_clusters <= 128 is not recommended for HierarchicalSuperKMeans. "
+                   "Consider using at least 128 clusters."
+                << std::endl;
         }
     }
 
@@ -67,7 +68,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
 
     /**
      * @brief Run hierarchical k-means clustering to determine centroids
-     * We don't support Early Termination by Recall here. 
+     * We don't support Early Termination by Recall here.
      * queries and n_queries are ignored. But we keep the function signature for compatibility.
      *
      * @param data Pointer to the data matrix (row-major, n × d)
@@ -85,8 +86,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         if (this->_trained) {
             throw std::runtime_error("The clustering has already been trained");
         }
-        if (n_queries > 0){
-            std::cout << "WARNING: Early Termination by Recall is not supported in HierarchicalSuperKMeans" << std::endl;
+        if (n_queries > 0) {
+            std::cout << "WARNING: Early Termination by Recall is not supported in "
+                         "HierarchicalSuperKMeans"
+                      << std::endl;
         }
         n_mesoclusters = GetNMesoclusters(this->_n_clusters);
         hierarchical_iteration_stats.fineclustering_iteration_stats.clear();
@@ -124,7 +127,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         this->_vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->_d).vertical_d;
         this->_partial_horizontal_centroids.resize(this->_n_clusters * this->_vertical_d);
 
-        this->_partial_d = this->_vertical_d; // We are more cautious with the partial d for hierarchical clustering
+        this->_partial_d = this->_vertical_d; // We are more cautious with the partial d for
+                                              // hierarchical clustering
 
         auto initial_partial_d = this->_partial_d;
         if (this->_partial_d > this->_vertical_d) {
@@ -142,20 +146,34 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         TicToc timer_mesoclustering;
         timer_mesoclustering.Tic();
         if (this->hierarchical_config.verbose) {
-            std::cout << "\n=== PHASE 1: MESOCLUSTERING (k=" << n_mesoclusters << " clusters) ===" << std::endl;
+            std::cout << "\n=== PHASE 1: MESOCLUSTERING (k=" << n_mesoclusters
+                      << " clusters) ===" << std::endl;
         }
-        auto centroids_pdx_wrapper =
-            this->GenerateCentroids(data_p, this->_n_samples, n_mesoclusters, !this->hierarchical_config.data_already_rotated);
+        auto centroids_pdx_wrapper = this->GenerateCentroids(
+            data_p,
+            this->_n_samples,
+            n_mesoclusters,
+            !this->hierarchical_config.data_already_rotated
+        );
         if (this->hierarchical_config.verbose) {
             std::cout << "Sampling data..." << std::endl;
         }
         // Samples for both mesoclustering and fineclustering
-        std::vector<vector_value_t> data_samples_buffer; 
-        this->SampleAndRotateVectors(data_p, data_samples_buffer, n, this->_n_samples, !this->hierarchical_config.data_already_rotated);
+        std::vector<vector_value_t> data_samples_buffer;
+        this->SampleAndRotateVectors(
+            data_p,
+            data_samples_buffer,
+            n,
+            this->_n_samples,
+            !this->hierarchical_config.data_already_rotated
+        );
         auto data_to_cluster = data_samples_buffer.data();
         auto initial_n_samples = this->_n_samples;
         this->RotateOrCopy(
-            this->_horizontal_centroids.data(), this->_prev_centroids.data(), n_mesoclusters, !this->hierarchical_config.data_already_rotated
+            this->_horizontal_centroids.data(),
+            this->_prev_centroids.data(),
+            n_mesoclusters,
+            !this->hierarchical_config.data_already_rotated
         );
         this->GetL2NormsRowMajor(data_to_cluster, this->_n_samples, this->_data_norms.data());
         this->GetL2NormsRowMajor(
@@ -259,12 +277,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         {
             SKM_PROFILE_SCOPE("allocator");
             mesoclusters_sizes.assign(
-                this->_cluster_sizes.begin(),
-                this->_cluster_sizes.begin() + n_mesoclusters
+                this->_cluster_sizes.begin(), this->_cluster_sizes.begin() + n_mesoclusters
             );
             mesoclusters_assignments.assign(
-                this->_assignments.begin(),
-                this->_assignments.begin() + this->_n_samples
+                this->_assignments.begin(), this->_assignments.begin() + this->_n_samples
             );
         }
 
@@ -287,25 +303,26 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         //
         // FINE-CLUSTERING
         // Each mesocluster is re-clustered sequentially
-        // Potential improvement: Doing 2 only-GEMM iterations and delegate the rest to GEMM+PRUNING 
-        // seems an interesting idea. However, we need to evaluate this with a larger dataset (+100M vectors)
+        // Potential improvement: Doing 2 only-GEMM iterations and delegate the rest to GEMM+PRUNING
+        // seems an interesting idea. However, we need to evaluate this with a larger dataset (+100M
+        // vectors)
         //
         if (this->hierarchical_config.verbose) {
             std::cout << "\n=== PHASE 2: FINE-CLUSTERING (subdividing " << n_mesoclusters
-                      << " mesoclusters into total " << this->_n_clusters << " clusters) ===" << std::endl;
+                      << " mesoclusters into total " << this->_n_clusters
+                      << " clusters) ===" << std::endl;
         }
         // Calculate proportional allocation of fine clusters per mesocluster
         auto fine_clusters_nums = ArrangeFineClusters(
-            this->_n_clusters,
-            n_mesoclusters,
-            this->_n_samples,
-            mesoclusters_sizes
+            this->_n_clusters, n_mesoclusters, this->_n_samples, mesoclusters_sizes
         );
 
         TicToc timer_fineclustering;
         timer_fineclustering.Tic();
 
-        size_t max_mesocluster_size = *std::max_element(this->_cluster_sizes.begin(), this->_cluster_sizes.begin() + n_mesoclusters);
+        size_t max_mesocluster_size = *std::max_element(
+            this->_cluster_sizes.begin(), this->_cluster_sizes.begin() + n_mesoclusters
+        );
         std::vector<vector_value_t> mesocluster_buffer(max_mesocluster_size * this->_d);
         std::vector<uint32_t> assignments_indirection_buffer(max_mesocluster_size);
         size_t fineclusters_offset = 0;
@@ -317,7 +334,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             this->_partial_d = initial_partial_d;
 
             auto mesocluster_size = mesoclusters_sizes[k];
-            // auto points_per_finecluster = static_cast<float>(mesocluster_size) / static_cast<float>(n_fineclusters);
+            // auto points_per_finecluster = static_cast<float>(mesocluster_size) /
+            // static_cast<float>(n_fineclusters);
             this->_n_samples = mesocluster_size;
             CompactMesoclusterToBuffer(
                 mesocluster_size,
@@ -361,8 +379,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 // FULL GEMM on low-dimensional data or too few clusters
                 //
                 if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
-                    n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING
-                ) {
+                    n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                     for (; fine_iter_idx < this->hierarchical_config.iters_fineclustering;
                          ++fine_iter_idx) {
                         this->template RunIteration<true>(
@@ -379,12 +396,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                             false, // is_first_iter
                             this->hierarchical_iteration_stats.fineclustering_iteration_stats
                         );
-                        if (this->hierarchical_config.early_termination && this->ShouldStopEarly(
-                                                                   false,
-                                                                   fine_best_recall,
-                                                                   iters_without_improvement,
-                                                                   fine_iter_idx
-                                                               )) {
+                        if (this->hierarchical_config.early_termination &&
+                            this->ShouldStopEarly(
+                                false, fine_best_recall, iters_without_improvement, fine_iter_idx
+                            )) {
                             break;
                         }
                     }
@@ -411,12 +426,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                             false, // is_first_iter
                             this->hierarchical_iteration_stats.fineclustering_iteration_stats
                         );
-                        if (this->hierarchical_config.early_termination && this->ShouldStopEarly(
-                                                                   false,
-                                                                   fine_best_recall,
-                                                                   iters_without_improvement,
-                                                                   fine_iter_idx
-                                                               )) {
+                        if (this->hierarchical_config.early_termination &&
+                            this->ShouldStopEarly(
+                                false, fine_best_recall, iters_without_improvement, fine_iter_idx
+                            )) {
                             break;
                         }
                     }
@@ -430,8 +443,9 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 mesocluster_size,
                 fineclusters_offset
             );
-            
-            // We move the resulting centroids from this fineclustering to the final buffer of centroids
+
+            // We move the resulting centroids from this fineclustering to the final buffer of
+            // centroids
             {
                 SKM_PROFILE_SCOPE("copy_fine_centroids");
                 memcpy(
@@ -451,17 +465,17 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                       << " clusters) ===" << std::endl;
         }
         this->_n_samples = initial_n_samples;
-        
+
         this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 2);
 
         // We just transfer the state of centroids to the proper class variables, no rotation.
         auto final_refinement_pdx_wrapper =
             SetupCentroids(final_centroids.data(), this->_n_clusters);
 
-        // (RunIteration with is_first_iter=false will swap _horizontal_centroids and _prev_centroids)
-        // Copy final_centroids to _prev_centroids so the swap in RunIteration works correctly
-        // We could avoid this copies by managing an offset on assignments and centroids 
-        // in the core functions of SuperKMeans. But this would just complicate the code.
+        // (RunIteration with is_first_iter=false will swap _horizontal_centroids and
+        // _prev_centroids) Copy final_centroids to _prev_centroids so the swap in RunIteration
+        // works correctly We could avoid this copies by managing an offset on assignments and
+        // centroids in the core functions of SuperKMeans. But this would just complicate the code.
         {
             SKM_PROFILE_SCOPE("copy_final_centroids_and_assignments");
             memcpy(
@@ -478,7 +492,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         this->GetL2NormsRowMajor(
             this->_prev_centroids.data(), this->_n_clusters, this->_centroid_norms.data()
         );
-    
+
         TicToc timer_refinement;
         timer_refinement.Tic();
 
@@ -508,9 +522,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     );
                 }
             } else { // Rest of Iterations with GEMM+PRUNING
-                // TODO(@lkuffo, high): The only reason I need to compute the data norms (again) 
-                //   is because we are using the same this->_data_norms.data() buffer in the fineclustering, which
-                //   replaces the norms that I already calculated before and put in this buffer.
+                // TODO(@lkuffo, high): The only reason I need to compute the data norms (again)
+                //   is because we are using the same this->_data_norms.data() buffer in the
+                //   fineclustering, which replaces the norms that I already calculated before and
+                //   put in this buffer.
                 this->GetPartialL2NormsRowMajor(
                     data_to_cluster, this->_n_samples, this->_data_norms.data(), this->_partial_d
                 );
@@ -536,16 +551,24 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         timer_refinement.Toc();
 
         if (this->hierarchical_config.verbose) {
-            std::cout << "Mesoclustering time: " << timer_mesoclustering.GetMilliseconds() << " ms" << std::endl;
-            std::cout << "Fineclustering time: " << timer_fineclustering.GetMilliseconds() << " ms" << std::endl;
-            std::cout << "Refinement time: " << timer_refinement.GetMilliseconds() << " ms" << std::endl;
-            std::cout << "Total time: " << timer_mesoclustering.GetMilliseconds() + timer_fineclustering.GetMilliseconds() + timer_refinement.GetMilliseconds() << " ms" << std::endl;
+            std::cout << "Mesoclustering time: " << timer_mesoclustering.GetMilliseconds() << " ms"
+                      << std::endl;
+            std::cout << "Fineclustering time: " << timer_fineclustering.GetMilliseconds() << " ms"
+                      << std::endl;
+            std::cout << "Refinement time: " << timer_refinement.GetMilliseconds() << " ms"
+                      << std::endl;
+            std::cout << "Total time: "
+                      << timer_mesoclustering.GetMilliseconds() +
+                             timer_fineclustering.GetMilliseconds() +
+                             timer_refinement.GetMilliseconds()
+                      << " ms" << std::endl;
         }
         this->_trained = true;
 
-        // TODO(@lkuffo, high): If unrotate_centroids is false, this computes incorrect assignments 
+        // TODO(@lkuffo, high): If unrotate_centroids is false, this computes incorrect assignments
         //   because it's using unrotated data with rotated output_centroids
-        auto output_centroids = this->GetOutputCentroids(this->hierarchical_config.unrotate_centroids);
+        auto output_centroids =
+            this->GetOutputCentroids(this->hierarchical_config.unrotate_centroids);
         if (this->hierarchical_config.perform_assignments) {
             // TODO(@lkuffo, high: Need a fast assign, for now we use the iter_idx-1 assignments)
             this->_assignments = this->Assign(data, output_centroids.data(), n, this->_n_clusters);
@@ -576,9 +599,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         if (this->hierarchical_config.sampling_fraction == 1.0) {
             return n;
         }
-        auto samples_by_n = static_cast<size_t>(std::floor(n * this->hierarchical_config.sampling_fraction));
+        auto samples_by_n =
+            static_cast<size_t>(std::floor(n * this->hierarchical_config.sampling_fraction));
         return samples_by_n;
-    }    
+    }
 
     /**
      * @brief Override SplitClusters with more aggressive balancing similar to cuVS
@@ -591,8 +615,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
      * @param n_clusters Number of clusters
      */
     void SplitClusters(const size_t n_samples, const size_t n_clusters) override {
-        constexpr float CENTER_ADJUSTMENT_WEIGHT = 7.0f;  // Weight for current center in weighted average
-        constexpr float BALANCING_THRESHOLD = 0.25f;  // Clusters smaller than 25% of average are adjusted
+        constexpr float CENTER_ADJUSTMENT_WEIGHT =
+            7.0f; // Weight for current center in weighted average
+        constexpr float BALANCING_THRESHOLD =
+            0.25f; // Clusters smaller than 25% of average are adjusted
 
         this->_n_split = 0;
         std::mt19937 rng(this->_config.seed);
@@ -605,7 +631,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             if (this->_cluster_sizes[ci] == 0) {
                 size_t cj;
                 for (cj = 0; true; cj = (cj + 1) % n_clusters) {
-                    float p = (this->_cluster_sizes[cj] - 1.0f) / static_cast<float>(n_samples - n_clusters);
+                    float p = (this->_cluster_sizes[cj] - 1.0f) /
+                              static_cast<float>(n_samples - n_clusters);
                     float r = std::uniform_real_distribution<float>(0, 1)(rng);
                     if (r < p) {
                         break;
@@ -621,11 +648,15 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 // Small symmetric perturbation
                 for (size_t j = 0; j < this->_d; j++) {
                     if (j % 2 == 0) {
-                        _horizontal_centroids_p[ci * this->_d + j] *= 1.0f + CENTROID_PERTURBATION_EPS;
-                        _horizontal_centroids_p[cj * this->_d + j] *= 1.0f - CENTROID_PERTURBATION_EPS;
+                        _horizontal_centroids_p[ci * this->_d + j] *=
+                            1.0f + CENTROID_PERTURBATION_EPS;
+                        _horizontal_centroids_p[cj * this->_d + j] *=
+                            1.0f - CENTROID_PERTURBATION_EPS;
                     } else {
-                        _horizontal_centroids_p[ci * this->_d + j] *= 1.0f - CENTROID_PERTURBATION_EPS;
-                        _horizontal_centroids_p[cj * this->_d + j] *= 1.0f + CENTROID_PERTURBATION_EPS;
+                        _horizontal_centroids_p[ci * this->_d + j] *=
+                            1.0f - CENTROID_PERTURBATION_EPS;
+                        _horizontal_centroids_p[cj * this->_d + j] *=
+                            1.0f + CENTROID_PERTURBATION_EPS;
                     }
                 }
 
@@ -640,16 +671,19 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         // Pick large clusters with probability proportional to their size
         for (size_t ci = 0; ci < n_clusters; ci++) {
             size_t csize = this->_cluster_sizes[ci];
-            if (csize == 0 || csize > threshold_size) continue;
+            if (csize == 0 || csize > threshold_size)
+                continue;
 
             // Find a large cluster with probability proportional to its size
             size_t large_cluster_idx;
-            for (large_cluster_idx = 0; true; large_cluster_idx = (large_cluster_idx + 1) % n_clusters) {
+            for (large_cluster_idx = 0; true;
+                 large_cluster_idx = (large_cluster_idx + 1) % n_clusters) {
                 size_t large_size = this->_cluster_sizes[large_cluster_idx];
-                if (large_size < average_size) continue;
+                if (large_size < average_size)
+                    continue;
                 // Probability proportional to how much larger this cluster is than average
                 float p = static_cast<float>(large_size - average_size + 1) /
-                         static_cast<float>(n_samples - average_size * n_clusters + n_clusters);
+                          static_cast<float>(n_samples - average_size * n_clusters + n_clusters);
                 float r = std::uniform_real_distribution<float>(0, 1)(rng);
                 if (r < p) {
                     break; // Found our cluster to be split
@@ -661,7 +695,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             // Weight of the current center for the weighted average.
             // We dump it for anomalously small clusters, but keep constant otherwise.
             float wc = std::min(static_cast<float>(csize), CENTER_ADJUSTMENT_WEIGHT);
-            float wd = 1.0f;  // Weight for the datapoint used to shift the center.
+            float wd = 1.0f; // Weight for the datapoint used to shift the center.
             for (size_t j = 0; j < this->_d; j++) {
                 float val = 0.0f;
                 val += wc * _horizontal_centroids_p[ci * this->_d + j];
@@ -737,10 +771,13 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     fine_clusters_nums[i] = 0;
                 } else {
                     n_nonempty_mesoclusters_remaining--;
-                    double proportion = static_cast<double>(n_clusters_remaining * mesocluster_sizes[i]) /
-                                      static_cast<double>(n_samples_remaining);
+                    double proportion =
+                        static_cast<double>(n_clusters_remaining * mesocluster_sizes[i]) /
+                        static_cast<double>(n_samples_remaining);
                     size_t allocated = static_cast<size_t>(proportion + 0.5);
-                    allocated = std::min(allocated, n_clusters_remaining - n_nonempty_mesoclusters_remaining);
+                    allocated = std::min(
+                        allocated, n_clusters_remaining - n_nonempty_mesoclusters_remaining
+                    );
                     fine_clusters_nums[i] = std::max(allocated, size_t{1});
                 }
             } else {

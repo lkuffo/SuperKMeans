@@ -78,7 +78,9 @@ class WCSSTest : public ::testing::TestWithParam<std::tuple<size_t, size_t>> {
         std::string data_file = CMAKE_SOURCE_DIR "/tests/test_data.bin";
         std::ifstream in(data_file, std::ios::binary);
         if (!in) {
-            throw std::runtime_error("Could not open test_data.bin. Run generate_wcss_ground_truth.out first.");
+            throw std::runtime_error(
+                "Could not open test_data.bin. Run generate_wcss_ground_truth.out first."
+            );
         }
         full_data_.resize(N_SAMPLES * MAX_D);
         in.read(reinterpret_cast<char*>(full_data_.data()), full_data_.size() * sizeof(float));

@@ -112,9 +112,9 @@ int main(int argc, char* argv[]) {
 
     // Compute assignments and cluster balance statistics
     auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
-    auto balance_stats = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::GetClustersBalanceStats(
-        assignments.data(), n, n_clusters
-    );
+    auto balance_stats =
+        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
+            GetClustersBalanceStats(assignments.data(), n, n_clusters);
     balance_stats.print();
 
     // Compute recall if ground truth file exists

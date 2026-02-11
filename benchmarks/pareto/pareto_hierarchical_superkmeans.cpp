@@ -6,10 +6,10 @@
 
 #include "bench_utils.h"
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/utils.h"
-#include "superkmeans/hierarchical_superkmeans.h"
 
 int main(int argc, char* argv[]) {
     const std::string experiment_name = "pareto_hierarchical";
@@ -79,8 +79,8 @@ int main(int argc, char* argv[]) {
             for (int iters_refine : bench_utils::HIERARCHICAL_PARETO_REFINEMENT_ITERS) {
                 std::cout << "\n========================================" << std::endl;
                 std::cout << "Running with iters_meso=" << iters_meso
-                          << ", iters_fine=" << iters_fine
-                          << ", iters_refine=" << iters_refine << std::endl;
+                          << ", iters_fine=" << iters_fine << ", iters_refine=" << iters_refine
+                          << std::endl;
                 std::cout << "========================================" << std::endl;
 
                 skmeans::HierarchicalSuperKMeansConfig config;
@@ -101,16 +101,17 @@ int main(int argc, char* argv[]) {
                 config.iters_refinement = iters_refine;
 
                 auto is_angular = std::find(
-                    bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
+                    bench_utils::ANGULAR_DATASETS.begin(),
+                    bench_utils::ANGULAR_DATASETS.end(),
+                    dataset
                 );
                 if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
                     config.angular = true;
                 }
 
-                auto kmeans_state =
-                    skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                        n_clusters, d, config
-                    );
+                auto kmeans_state = skmeans::HierarchicalSuperKMeans<
+                    skmeans::Quantization::f32,
+                    skmeans::DistanceFunction::l2>(n_clusters, d, config);
 
                 bench_utils::TicToc timer;
                 timer.Tic();
@@ -125,14 +126,25 @@ int main(int argc, char* argv[]) {
                 // Compute final objective (get last refinement objective if available)
                 double final_objective = 0.0;
                 if (!kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.empty()) {
-                    final_objective = kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back().objective;
-                } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.empty()) {
-                    final_objective = kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.back().objective;
-                } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.empty()) {
-                    final_objective = kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.back().objective;
+                    final_objective =
+                        kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back()
+                            .objective;
+                } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats
+                                .empty()) {
+                    final_objective =
+                        kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats
+                            .back()
+                            .objective;
+                } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats
+                                .empty()) {
+                    final_objective =
+                        kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats
+                            .back()
+                            .objective;
                 }
 
-                std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
+                std::cout << "\nTraining completed in " << construction_time_ms << " ms"
+                          << std::endl;
                 std::cout << "Total iterations: " << actual_iterations << std::endl;
                 std::cout << "Final objective: " << final_objective << std::endl;
 
@@ -152,9 +164,10 @@ int main(int argc, char* argv[]) {
                         kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
 
                     // Compute cluster balance statistics
-                    auto balance_stats = skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::GetClustersBalanceStats(
-                        assignments.data(), n, n_clusters
-                    );
+                    auto balance_stats = skmeans::HierarchicalSuperKMeans<
+                        skmeans::Quantization::f32,
+                        skmeans::DistanceFunction::l2>::
+                        GetClustersBalanceStats(assignments.data(), n, n_clusters);
                     balance_stats.print();
 
                     auto results_knn_10 = bench_utils::compute_recall(
@@ -181,8 +194,10 @@ int main(int argc, char* argv[]) {
                     bench_utils::print_recall_results(results_knn_100, 100);
 
                     std::unordered_map<std::string, std::string> config_map;
-                    config_map["iters_mesoclustering"] = std::to_string(config.iters_mesoclustering);
-                    config_map["iters_fineclustering"] = std::to_string(config.iters_fineclustering);
+                    config_map["iters_mesoclustering"] =
+                        std::to_string(config.iters_mesoclustering);
+                    config_map["iters_fineclustering"] =
+                        std::to_string(config.iters_fineclustering);
                     config_map["iters_refinement"] = std::to_string(config.iters_refinement);
                     config_map["sampling_fraction"] = std::to_string(config.sampling_fraction);
                     config_map["n_threads"] = std::to_string(config.n_threads);
@@ -193,17 +208,19 @@ int main(int argc, char* argv[]) {
                     config_map["early_termination"] = config.early_termination ? "true" : "false";
                     config_map["sample_queries"] = config.sample_queries ? "true" : "false";
                     config_map["objective_k"] = std::to_string(config.objective_k);
-                    config_map["ann_explore_fraction"] = std::to_string(config.ann_explore_fraction);
+                    config_map["ann_explore_fraction"] =
+                        std::to_string(config.ann_explore_fraction);
                     config_map["unrotate_centroids"] = config.unrotate_centroids ? "true" : "false";
-                    config_map["perform_assignments"] = config.perform_assignments ? "true" : "false";
+                    config_map["perform_assignments"] =
+                        config.perform_assignments ? "true" : "false";
                     config_map["verbose"] = config.verbose ? "true" : "false";
 
                     bench_utils::write_results_to_csv(
                         experiment_name,
                         algorithm,
                         dataset,
-                        actual_iterations,  // Total iterations
-                        actual_iterations,  // Actual = requested for hierarchical
+                        actual_iterations, // Total iterations
+                        actual_iterations, // Actual = requested for hierarchical
                         static_cast<int>(d),
                         n,
                         static_cast<int>(n_clusters),

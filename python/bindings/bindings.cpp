@@ -3,8 +3,8 @@
 #include <pybind11/stl.h>
 
 #include "superkmeans/common.h"
-#include "superkmeans/superkmeans.h"
 #include "superkmeans/hierarchical_superkmeans.h"
+#include "superkmeans/superkmeans.h"
 
 namespace py = pybind11;
 
@@ -326,10 +326,10 @@ PYBIND11_MODULE(_superkmeans, m) {
             }
         );
 
-    py::class_<
-        skmeans::HierarchicalSuperKMeansConfig,
-        skmeans::SuperKMeansConfig>(
-        m, "HierarchicalSuperKMeansConfig", "Configuration parameters for Hierarchical SuperKMeans clustering."
+    py::class_<skmeans::HierarchicalSuperKMeansConfig, skmeans::SuperKMeansConfig>(
+        m,
+        "HierarchicalSuperKMeansConfig",
+        "Configuration parameters for Hierarchical SuperKMeans clustering."
     )
         .def(py::init<>(), "Default constructor")
 
@@ -350,7 +350,8 @@ PYBIND11_MODULE(_superkmeans, m) {
         )
 
         .def("__repr__", [](const skmeans::HierarchicalSuperKMeansConfig& config) {
-            return "<HierarchicalSuperKMeansConfig: iters_meso=" + std::to_string(config.iters_mesoclustering) +
+            return "<HierarchicalSuperKMeansConfig: iters_meso=" +
+                   std::to_string(config.iters_mesoclustering) +
                    ", iters_fine=" + std::to_string(config.iters_fineclustering) +
                    ", iters_refine=" + std::to_string(config.iters_refinement) +
                    ", sampling_fraction=" + std::to_string(config.sampling_fraction) + ">";
@@ -378,7 +379,9 @@ PYBIND11_MODULE(_superkmeans, m) {
             "Statistics for refinement iterations"
         );
 
-    py::class_<skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>>(
+    py::class_<skmeans::HierarchicalSuperKMeans<
+        skmeans::Quantization::f32,
+        skmeans::DistanceFunction::l2>>(
         m, "HierarchicalSuperKMeans", "Hierarchical SuperKMeans clustering"
     )
         .def(
@@ -415,8 +418,9 @@ PYBIND11_MODULE(_superkmeans, m) {
 
         .def(
             "train",
-            [](skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>&
-                   self,
+            [](skmeans::HierarchicalSuperKMeans<
+                   skmeans::Quantization::f32,
+                   skmeans::DistanceFunction::l2>& self,
                py::array_t<float> data,
                py::object queries_obj,
                size_t n_queries) {
@@ -466,8 +470,9 @@ PYBIND11_MODULE(_superkmeans, m) {
 
         .def(
             "assign",
-            [](skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>&
-                   self,
+            [](skmeans::HierarchicalSuperKMeans<
+                   skmeans::Quantization::f32,
+                   skmeans::DistanceFunction::l2>& self,
                py::array_t<float> vectors,
                py::array_t<float> centroids) {
                 ValidatePyArray(vectors, "vectors", 2);
@@ -515,8 +520,9 @@ PYBIND11_MODULE(_superkmeans, m) {
 
         .def(
             "get_n_clusters",
-            &skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-                GetNClusters,
+            &skmeans::HierarchicalSuperKMeans<
+                skmeans::Quantization::f32,
+                skmeans::DistanceFunction::l2>::GetNClusters,
             "Get the number of clusters.\n\n"
             "Returns:\n"
             "    Number of clusters"
@@ -524,9 +530,9 @@ PYBIND11_MODULE(_superkmeans, m) {
 
         .def(
             "is_trained",
-            [](const skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>& self) {
-                return self.IsTrained();
-            },
+            [](const skmeans::HierarchicalSuperKMeans<
+                skmeans::Quantization::f32,
+                skmeans::DistanceFunction::l2>& self) { return self.IsTrained(); },
             "Check whether the model has been trained.\n\n"
             "Returns:\n"
             "    True if trained, False otherwise"
@@ -534,23 +540,27 @@ PYBIND11_MODULE(_superkmeans, m) {
 
         .def_readonly(
             "iteration_stats",
-            &skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-                iteration_stats,
+            &skmeans::HierarchicalSuperKMeans<
+                skmeans::Quantization::f32,
+                skmeans::DistanceFunction::l2>::iteration_stats,
             "List of statistics for each iteration (read-only)"
         )
 
         .def_readonly(
             "hierarchical_iteration_stats",
-            &skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-                hierarchical_iteration_stats,
+            &skmeans::HierarchicalSuperKMeans<
+                skmeans::Quantization::f32,
+                skmeans::DistanceFunction::l2>::hierarchical_iteration_stats,
             "Hierarchical iteration statistics (read-only)"
         )
 
         .def(
             "__repr__",
-            [](const skmeans::
-                   HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>& self) {
-                return "<HierarchicalSuperKMeans: n_clusters=" + std::to_string(self.GetNClusters()) +
+            [](const skmeans::HierarchicalSuperKMeans<
+                skmeans::Quantization::f32,
+                skmeans::DistanceFunction::l2>& self) {
+                return "<HierarchicalSuperKMeans: n_clusters=" +
+                       std::to_string(self.GetNClusters()) +
                        ", trained=" + (self.IsTrained() ? "True" : "False") + ">";
             }
         );

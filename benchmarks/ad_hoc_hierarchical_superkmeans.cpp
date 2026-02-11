@@ -10,10 +10,10 @@
 
 #include "bench_utils.h"
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/utils.h"
-#include "superkmeans/hierarchical_superkmeans.h"
 
 int main(int argc, char* argv[]) {
     const std::string algorithm = "hierarchical_superkmeans";
@@ -106,18 +106,20 @@ int main(int argc, char* argv[]) {
     );
     timer.Toc();
     double construction_time_ms = timer.GetMilliseconds();
-    double final_objective = 0; // kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back().objective;
+    double final_objective =
+        0; // kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back().objective;
 
     std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;
-    std::cout << "Iteration config: meso=" << config.iters_mesoclustering << ", fine=" << config.iters_fineclustering
-              << ", refine=" << config.iters_refinement << "\n";
+    std::cout << "Iteration config: meso=" << config.iters_mesoclustering
+              << ", fine=" << config.iters_fineclustering << ", refine=" << config.iters_refinement
+              << "\n";
     std::cout << "Final objective: " << final_objective << std::endl;
 
     // Compute assignments and cluster balance statistics
     auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
-    auto balance_stats = skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::GetClustersBalanceStats(
-        assignments.data(), n, n_clusters
-    );
+    auto balance_stats = skmeans::HierarchicalSuperKMeans<
+        skmeans::Quantization::f32,
+        skmeans::DistanceFunction::l2>::GetClustersBalanceStats(assignments.data(), n, n_clusters);
     balance_stats.print();
 
     // Compute recall if ground truth file exists

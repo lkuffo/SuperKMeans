@@ -38,7 +38,8 @@ int main() {
     }
     out.write(reinterpret_cast<const char*>(full_data.data()), full_data.size() * sizeof(float));
     out.close();
-    std::cerr << "Saved test data to " << data_file << " (" << (full_data.size() * sizeof(float) / 1024 / 1024) << " MB)\n\n";
+    std::cerr << "Saved test data to " << data_file << " ("
+              << (full_data.size() * sizeof(float) / 1024 / 1024) << " MB)\n\n";
 
     auto extract_subdim = [&](size_t d) -> std::vector<float> {
         if (d > MAX_D) {

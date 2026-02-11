@@ -6,10 +6,10 @@
 
 #include "bench_utils.h"
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/pdx/utils.h"
-#include "superkmeans/hierarchical_superkmeans.h"
 
 int main(int argc, char* argv[]) {
     const std::string algorithm = "hierarchical_superkmeans";
@@ -94,10 +94,9 @@ int main(int argc, char* argv[]) {
             config.angular = true;
         }
 
-        auto kmeans_state =
-            skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                n_clusters, d, config
-            );
+        auto kmeans_state = skmeans::HierarchicalSuperKMeans<
+            skmeans::Quantization::f32,
+            skmeans::DistanceFunction::l2>(n_clusters, d, config);
 
         bench_utils::TicToc timer;
         timer.Tic();
@@ -109,11 +108,19 @@ int main(int argc, char* argv[]) {
 
         double final_objective = 0.0;
         if (!kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.empty()) {
-            final_objective = kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back().objective;
-        } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.empty()) {
-            final_objective = kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.back().objective;
-        } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.empty()) {
-            final_objective = kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.back().objective;
+            final_objective =
+                kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back()
+                    .objective;
+        } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats
+                        .empty()) {
+            final_objective =
+                kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.back()
+                    .objective;
+        } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats
+                        .empty()) {
+            final_objective =
+                kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.back()
+                    .objective;
         }
 
         std::cout << "\nTraining completed in " << construction_time_ms << " ms" << std::endl;

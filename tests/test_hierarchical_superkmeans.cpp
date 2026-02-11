@@ -10,8 +10,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/utils.h"
 
 class HierarchicalSuperKMeansTest : public ::testing::Test {
@@ -32,10 +32,10 @@ TEST_F(HierarchicalSuperKMeansTest, ConfigSynchronizationWithParent) {
     config.seed = 123;
     config.sampling_fraction = 0.5f;
 
-    auto kmeans = skmeans::HierarchicalSuperKMeans<
-        skmeans::Quantization::f32,
-        skmeans::DistanceFunction::l2
-    >(n_clusters, d, config);
+    auto kmeans =
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            n_clusters, d, config
+        );
 
     EXPECT_FALSE(kmeans.hierarchical_config.unrotate_centroids)
         << "unrotate_centroids should be forced to false when data_already_rotated=true";
@@ -268,14 +268,17 @@ TEST_F(HierarchicalSuperKMeansTest, IterationStats_Populated) {
     }
 
     // Fineclustering stats
-    // With early_termination=false, we expect exactly n_mesoclusters * iters_fineclustering iterations
-    size_t n_mesoclusters =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-            GetNMesoclusters(n_clusters);
+    // With early_termination=false, we expect exactly n_mesoclusters * iters_fineclustering
+    // iterations
+    size_t n_mesoclusters = skmeans::HierarchicalSuperKMeans<
+        skmeans::Quantization::f32,
+        skmeans::DistanceFunction::l2>::GetNMesoclusters(n_clusters);
     size_t expected_fineclustering_iters = n_mesoclusters * config.iters_fineclustering;
-    EXPECT_EQ(hierarchical_stats.fineclustering_iteration_stats.size(), expected_fineclustering_iters)
-        << "Expected " << expected_fineclustering_iters << " fineclustering iterations ("
-        << n_mesoclusters << " mesoclusters * " << config.iters_fineclustering << " iters)";
+    EXPECT_EQ(
+        hierarchical_stats.fineclustering_iteration_stats.size(), expected_fineclustering_iters
+    ) << "Expected "
+      << expected_fineclustering_iters << " fineclustering iterations (" << n_mesoclusters
+      << " mesoclusters * " << config.iters_fineclustering << " iters)";
 
     for (const auto& stat : hierarchical_stats.fineclustering_iteration_stats) {
         EXPECT_GT(stat.objective, 0.0f) << "Objective should be positive";
@@ -393,7 +396,8 @@ TEST_F(HierarchicalSuperKMeansTest, EarlyTermination_Mesoclustering) {
             n_clusters, d, config_early
         );
     kmeans_early.Train(data.data(), n);
-    const auto& stats_early = kmeans_early.hierarchical_iteration_stats.mesoclustering_iteration_stats;
+    const auto& stats_early =
+        kmeans_early.hierarchical_iteration_stats.mesoclustering_iteration_stats;
     size_t iters_with_early = stats_early.size();
 
     // Test WITHOUT early termination
@@ -420,9 +424,8 @@ TEST_F(HierarchicalSuperKMeansTest, EarlyTermination_Mesoclustering) {
         << "Early termination should stop mesoclustering before max_iters=" << max_iters;
 
     // Without early termination, should run all iterations
-    EXPECT_EQ(iters_without_early, max_iters)
-        << "Without early termination, should run all " << max_iters
-        << " mesoclustering iterations";
+    EXPECT_EQ(iters_without_early, max_iters) << "Without early termination, should run all "
+                                              << max_iters << " mesoclustering iterations";
 
     // Early termination should use fewer iterations
     EXPECT_LT(iters_with_early, iters_without_early)
@@ -452,10 +455,9 @@ TEST_F(HierarchicalSuperKMeansTest, Sampling_AffectsSpeed) {
         config.sampling_fraction = 1.0f;
         config.seed = static_cast<uint32_t>(42 + i);
 
-        auto kmeans =
-            skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                n_clusters, d, config
-            );
+        auto kmeans = skmeans::HierarchicalSuperKMeans<
+            skmeans::Quantization::f32,
+            skmeans::DistanceFunction::l2>(n_clusters, d, config);
 
         timer_full.Tic();
         kmeans.Train(data.data(), n);
@@ -469,10 +471,9 @@ TEST_F(HierarchicalSuperKMeansTest, Sampling_AffectsSpeed) {
         config.sampling_fraction = 0.3f;
         config.seed = static_cast<uint32_t>(42 + i);
 
-        auto kmeans =
-            skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                n_clusters, d, config
-            );
+        auto kmeans = skmeans::HierarchicalSuperKMeans<
+            skmeans::Quantization::f32,
+            skmeans::DistanceFunction::l2>(n_clusters, d, config);
 
         timer_sampled.Tic();
         kmeans.Train(data.data(), n);
@@ -484,10 +485,10 @@ TEST_F(HierarchicalSuperKMeansTest, Sampling_AffectsSpeed) {
     double speedup = full_time_ms / sampled_time_ms;
 
     // Sampling should provide some speedup (at least 1.5x)
-    EXPECT_GE(speedup, 1.5)
-        << "Sampling should provide at least 1.5x speedup. "
-        << "Full: " << full_time_ms << "ms, Sampled: " << sampled_time_ms << "ms, "
-        << "Speedup: " << speedup << "x";
+    EXPECT_GE(speedup, 1.5) << "Sampling should provide at least 1.5x speedup. "
+                            << "Full: " << full_time_ms << "ms, Sampled: " << sampled_time_ms
+                            << "ms, "
+                            << "Speedup: " << speedup << "x";
 }
 
 TEST_F(HierarchicalSuperKMeansTest, Reproducibility_SameSeed) {
@@ -549,8 +550,7 @@ TEST_F(HierarchicalSuperKMeansTest, SmallClusters_PrintsWarning) {
         );
     std::string output = testing::internal::GetCapturedStdout();
 
-    EXPECT_TRUE(output.find("WARNING") != std::string::npos)
-        << "Should warn for n_clusters < 128";
+    EXPECT_TRUE(output.find("WARNING") != std::string::npos) << "Should warn for n_clusters < 128";
 }
 
 TEST_F(HierarchicalSuperKMeansTest, AssignMethod_ProducesValidAssignments) {
@@ -686,7 +686,8 @@ class HierarchicalWCSSTest : public ::testing::TestWithParam<std::tuple<size_t, 
 
     static std::vector<float> full_data_;
     static void LoadTestData() {
-        if (!full_data_.empty()) return;
+        if (!full_data_.empty())
+            return;
         std::string data_file = CMAKE_SOURCE_DIR "/tests/test_data.bin";
         std::ifstream in(data_file, std::ios::binary);
         if (!in) {
@@ -759,11 +760,11 @@ TEST_P(HierarchicalWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
 
     float expected_wcss = it->second;
     EXPECT_LE(final_wcss, expected_wcss * (1.0f + TOLERANCE))
-        << "WCSS too high (k=" << n_clusters << ", d=" << d << "): " << final_wcss
-        << " > " << expected_wcss * (1.0f + TOLERANCE) << " (expected ~" << expected_wcss << ")";
+        << "WCSS too high (k=" << n_clusters << ", d=" << d << "): " << final_wcss << " > "
+        << expected_wcss * (1.0f + TOLERANCE) << " (expected ~" << expected_wcss << ")";
     EXPECT_GE(final_wcss, expected_wcss * 0.5f)
-        << "WCSS suspiciously low (k=" << n_clusters << ", d=" << d << "): " << final_wcss
-        << " < " << expected_wcss * 0.5f << " (expected ~" << expected_wcss << ")";
+        << "WCSS suspiciously low (k=" << n_clusters << ", d=" << d << "): " << final_wcss << " < "
+        << expected_wcss * 0.5f << " (expected ~" << expected_wcss << ")";
 
     // Refinement WCSS should decrease monotonically
     const auto& ref_stats = hierarchical_stats.refinement_iteration_stats;
@@ -777,9 +778,9 @@ TEST_P(HierarchicalWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
 
     // Within each mesocluster's fineclustering block, WCSS should decrease
     const auto& fine_stats = hierarchical_stats.fineclustering_iteration_stats;
-    const size_t n_mesoclusters =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-            GetNMesoclusters(n_clusters);
+    const size_t n_mesoclusters = skmeans::HierarchicalSuperKMeans<
+        skmeans::Quantization::f32,
+        skmeans::DistanceFunction::l2>::GetNMesoclusters(n_clusters);
     const size_t iters_fine = ITERS_FINECLUSTERING;
     ASSERT_EQ(fine_stats.size(), n_mesoclusters * iters_fine)
         << "Expected " << n_mesoclusters * iters_fine << " fineclustering iterations";
