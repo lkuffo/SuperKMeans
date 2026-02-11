@@ -33,11 +33,11 @@ class SuperKMeans:
         uses hierarchical=True for datasets with n > 100,000, otherwise False.
     iters : int, optional (default=10)
         Number of k-means iterations (only for non-hierarchical mode).
-    iters_mesoclustering : int, optional (default=10)
+    iters_mesoclustering : int, optional (default=3)
         Number of mesoclustering iterations (only for hierarchical mode).
-    iters_fineclustering : int, optional (default=10)
+    iters_fineclustering : int, optional (default=5)
         Number of fineclustering iterations (only for hierarchical mode).
-    iters_refinement : int, optional (default=2)
+    iters_refinement : int, optional (default=1)
         Number of refinement iterations (only for hierarchical mode).
     sampling_fraction : float, optional (default=0.3)
         Fraction of data to sample, must be in (0.0, 1.0].
