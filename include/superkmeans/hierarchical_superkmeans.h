@@ -44,7 +44,11 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         const HierarchicalSuperKMeansConfig& config
     )
         : SuperKMeans<q, alpha>(n_clusters, dimensionality, config), hierarchical_config(config) {
+        this->_pruner = std::make_unique<pruner_t>(
+            dimensionality, HIERARCHICAL_PRUNER_INITIAL_THRESHOLD, this->_config.seed
+        );
         SKMEANS_ENSURE_POSITIVE(config.iters_mesoclustering);
+        SKMEANS_ENSURE_POSITIVE(config.iters_fineclustering);
 
         static_cast<SuperKMeansConfig&>(hierarchical_config) = this->_config;
 
@@ -120,7 +124,9 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         this->_vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->_d).vertical_d;
         this->_partial_horizontal_centroids.resize(this->_n_clusters * this->_vertical_d);
 
-        this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 2);
+        // this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 2);
+        this->_partial_d = this->_vertical_d; // We are more cautious with the partial d for hierarchical clustering
+
         auto initial_partial_d = this->_partial_d;
         if (this->_partial_d > this->_vertical_d) {
             this->_partial_d = this->_vertical_d;
@@ -130,8 +136,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             std::cout << "Trailing dimensions (d'') = " << this->_d - this->_vertical_d
                       << std::endl;
         }
-
-        std::cout << "Points per mesocluster: " << static_cast<float>(this->_n_samples) / static_cast<float>(n_mesoclusters) << std::endl;
 
         //
         // MESOCLUSTERING
@@ -284,6 +288,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         //
         // FINE-CLUSTERING
         // Each mesocluster is re-clustered sequentially
+        // Potential improvement: Doing 2 only-GEMM iterations and delegate the rest to GEMM+PRUNING 
+        // seems an interesting idea. However, we need to evaluate this with a larger dataset (+100M vectors)
         //
         if (this->hierarchical_config.verbose) {
             std::cout << "\n=== PHASE 2: FINE-CLUSTERING (subdividing " << n_mesoclusters
@@ -356,8 +362,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 // FULL GEMM on low-dimensional data or too few clusters
                 //
                 if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
-                    n_fineclusters <= 500 //|| N_CLUSTERS_THRESHOLD_FOR_PRUNING
-                    //points_per_finecluster > 2000.0f
+                    n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING
                 ) {
                     for (; fine_iter_idx < this->hierarchical_config.iters_fineclustering;
                          ++fine_iter_idx) {
@@ -458,7 +463,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         // We could avoid this copies by managing an offset on assignments and centroids 
         // in the core functions of SuperKMeans. But this would just complicate the code.
         {
-            SKM_PROFILE_SCOPE("dumb_cpy_final_centroids_and_assignments");
+            SKM_PROFILE_SCOPE("copy_final_centroids_and_assignments");
             memcpy(
                 static_cast<void*>(this->_prev_centroids.data()),
                 static_cast<void*>(final_centroids.data()),
@@ -530,10 +535,12 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         }
         timer_refinement.Toc();
 
-        std::cout << "Mesoclustering time: " << timer_mesoclustering.GetMilliseconds() << " ms" << std::endl;
-        std::cout << "Fineclustering time: " << timer_fineclustering.GetMilliseconds() << " ms" << std::endl;
-        std::cout << "Refinement time: " << timer_refinement.GetMilliseconds() << " ms" << std::endl;
-        std::cout << "Total time: " << timer_mesoclustering.GetMilliseconds() + timer_fineclustering.GetMilliseconds() + timer_refinement.GetMilliseconds() << " ms" << std::endl;
+        if (this->hierarchical_config.verbose) {
+            std::cout << "Mesoclustering time: " << timer_mesoclustering.GetMilliseconds() << " ms" << std::endl;
+            std::cout << "Fineclustering time: " << timer_fineclustering.GetMilliseconds() << " ms" << std::endl;
+            std::cout << "Refinement time: " << timer_refinement.GetMilliseconds() << " ms" << std::endl;
+            std::cout << "Total time: " << timer_mesoclustering.GetMilliseconds() + timer_fineclustering.GetMilliseconds() + timer_refinement.GetMilliseconds() << " ms" << std::endl;
+        }
         this->_trained = true;
 
         // TODO(@lkuffo, high): If unrotate_centroids is false, this computes incorrect assignments 
