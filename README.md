@@ -7,7 +7,7 @@
 <!-- </div> -->
 </h1>
 <h3 align="center">
-  A super fast clustering library for high-dimensional vector embeddings
+  A super-fast clustering library for high-dimensional vector embeddings
 </h3>
 
 <p align="center">
@@ -88,9 +88,9 @@ int main(int argc, char* argv[]) {
 
 ```
 
-Check our [examples](./examples/) for a fully working C++ example.
-
 </details>
+
+Check our [examples](./examples/) for fully working examples in Python and C++.
 
 ## Installation
 We provide Python bindings for ease of use. 

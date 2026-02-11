@@ -1,6 +1,6 @@
 # Super K-Means examples
 
-These examples are a demonstration of how to use our clustering library.
+These examples demonstrate how to use our clustering library.
 
 ## C++: Simple example
 
@@ -14,7 +14,7 @@ These examples are a demonstration of how to use our clustering library.
 
 ## C++: Hierarchical Clustering example
 
-Much faster while preserving quality. Recommended when n > 100K.
+Absurdly faster while preserving quality. Recommended when n > 100K.
 
 **File:** [`hierarchical_clustering.cpp`](./simple_clustering.cpp)   
 **Compile:** `make hierarchical_clustering.out`   
