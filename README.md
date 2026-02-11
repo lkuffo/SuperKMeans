@@ -14,13 +14,13 @@
         <img src="./benchmarks/results/plots/github_1.png" height=220 alt="SuperKMeans vs FAISS and Scikit Learn" style="{max-height: 100px}">
 </p>
 
-<!-- <h4 align="center">
+<h4 align="center">
 High number of clusters? No problem! SuperKMeans scales like charm:
 </h4>
 
 <p align="center">
         <img src="./benchmarks/results/plots/github_2.png" height=230 alt="SuperKMeans vs FAISS and Scikit Learn" style="{max-height: 100px}">
-</p> -->
+</p>
 
 > [!IMPORTANT]
 > **VLDB'26 reviewers**: For reproducibility of our results, check [BENCHMARKING.md](./BENCHMARKING.md).
@@ -29,7 +29,7 @@ High number of clusters? No problem! SuperKMeans scales like charm:
 - Up to **10x faster clustering** than FAISS of large-scale high-dimensional vector embeddings (Cohere, OpenAI, Contriever, MXBAI, CLIP, MiniLM, GIST).
 - Faster **without compromising clustering quality**.
 - Efficient in **CPUs** (ARM and x86) and **GPUs**.
-- Up to **100x faster clustering** with equivalent quality with Hierarchical K-Means
+- Up to **30x faster clustering** without quality tradeoffs with Hierarchical K-Means
 
 ## Our secret sauce
 - Reliable and efficient **pruning of dimensions**.
@@ -66,13 +66,18 @@ Then, you can use the `centroids` to create an IVF index for Vector Search, for 
 #include <vector>
 #include <cstddef>
 #include "superkmeans/superkmeans.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 
 int main(int argc, char* argv[]) {
     std::vector<float> data; // Fill
+    size_t n = 1000000;
     size_t k = 10000;
     size_t d = 768;
-    size_t n = 1000000;
+
     auto kmeans = skmeans::SuperKMeans(k, d);
+
+    // Or Hierarchical Super K-Means for extreme performance:
+    // auto kmeans = skmeans::HierarchicalSuperKMeans(k, d);
     
     // Run the clustering
     std::vector<float> centroids = kmeans.Train(data.data(), n);
