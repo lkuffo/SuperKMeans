@@ -65,12 +65,12 @@ def setup_hdf5_dataset(dataset_id, raw_data_path):
     print(f"  Actual dims: {len(train[0])}")
 
 
-def setup_cohere_dataset():
+def setup_cohere_dataset(full=False):
     """Download and process Cohere Wikipedia embeddings from HuggingFace."""
     from datasets import load_dataset
 
     USE_SEPARATE_QUERIES = True  # Use separate queries subset
-    MAX_TRAIN_SAMPLES = 10_000_000
+    MAX_TRAIN_SAMPLES = 50_000_000 if full else 10_000_000
     MAX_TEST_SAMPLES = 1000
 
     batch_size = 10000  # Fetch 10k embeddings per batch from HuggingFace
@@ -78,8 +78,8 @@ def setup_cohere_dataset():
     embedding_dim = 1024
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    train_file = DATA_DIR / "data_cohere.bin"
-    test_file = DATA_DIR / "data_cohere_test.bin"
+    train_file = DATA_DIR / "data_cohere50m.bin" if full else DATA_DIR / "data_cohere.bin"
+    test_file = DATA_DIR / "data_cohere50m_test.bin" if full else DATA_DIR / "data_cohere_test.bin"
 
     print("Downloading Cohere Wikipedia embeddings from HuggingFace (this may take a few hours)...")
     print(f"  Max train samples: {MAX_TRAIN_SAMPLES:,}")
@@ -217,6 +217,8 @@ Examples:
 
     if args.dataset == "cohere":
         setup_cohere_dataset()
+    elif args.dataset == "cohere50m":
+        setup_cohere_dataset(True)
     else:
         setup_hdf5_dataset(args.dataset, args.data_dir)
 
