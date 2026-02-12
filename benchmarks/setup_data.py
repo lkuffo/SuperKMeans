@@ -8,6 +8,7 @@
 # ///
 
 import argparse
+import os
 import numpy as np
 import sys
 from pathlib import Path
@@ -77,6 +78,8 @@ def setup_cohere_dataset(full=False):
     # Process in chunks to avoid PyArrow list offset overflow on large streams
     chunk_size = 10_000_000
     cache_dir = str(DATA_DIR / ".hf_cache")
+    # Redirect ALL huggingface downloads to the data partition (avoids /dev/root filling up)
+    os.environ["HF_HOME"] = cache_dir
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     train_file = DATA_DIR / "data_cohere50m.bin" if full else DATA_DIR / "data_cohere.bin"
