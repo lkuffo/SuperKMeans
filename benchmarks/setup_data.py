@@ -92,77 +92,66 @@ def setup_cohere_dataset(full=False):
     train_file = DATA_DIR / "data_cohere50m.bin" if full else DATA_DIR / "data_cohere.bin"
     test_file = DATA_DIR / "data_cohere50m_test.bin" if full else DATA_DIR / "data_cohere_test.bin"
 
-    # Resume support: check existing file size
-    start_count = 0
-    if train_file.exists():
-        file_size = train_file.stat().st_size
-        expected_row_bytes = embedding_dim * np.dtype(np.float32).itemsize
-        start_count = file_size // expected_row_bytes
-        if file_size % expected_row_bytes != 0:
-            print(f"WARNING: File size not aligned to row size, truncating to {start_count:,} complete rows")
-            with open(train_file, 'r+b') as f:
-                f.truncate(start_count * expected_row_bytes)
-
     print("Downloading Cohere Wikipedia embeddings from HuggingFace...")
     print(f"  Max train samples: {MAX_TRAIN_SAMPLES:,}")
     print(f"  Max test samples:  {MAX_TEST_SAMPLES:,}")
-    if start_count > 0:
-        print(f"  Resuming from:     {start_count:,}")
 
     if USE_SEPARATE_QUERIES:
         print(f"\nLoading train embeddings (max {MAX_TRAIN_SAMPLES:,})...")
 
         batch_size = 10_000
         write_chunk_size = 100_000
-        file_mode = 'ab' if start_count > 0 else 'wb'
-        total_count = start_count
 
         write_buffer = np.empty((write_chunk_size, embedding_dim), dtype=np.float32)
         buffer_idx = 0
+        total_count = 0
 
-        with open(train_file, file_mode) as f_train:
-            while total_count < MAX_TRAIN_SAMPLES:
+        ds_meta = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "passages", split="train", streaming=False)
+        shards = ds_meta.data_files['train']
+        print('Shards: ', shards)
+
+        with open(train_file, 'wb') as f_train:
+
+            for shard_path in shards:
+                print(f"\nProcessing shard: {shard_path}")
+
+                # Load only this shard
                 ds = load_dataset(
-                    "Cohere/msmarco-v2.1-embed-english-v3", "passages",
+                    "Cohere/msmarco-v2.1-embed-english-v3",
+                    "passages",
                     split="train",
-                    streaming=True,
-                    cache_dir=cache_dir,
+                    data_files={"train": [shard_path]},
+                    streaming=False,
                 )
-                if total_count > 0:
-                    print(f"Skipping first {total_count:,} samples (may take a few minutes)...")
-                    ds = ds.skip(total_count)
-                ds = ds.take(MAX_TRAIN_SAMPLES - total_count)
 
-                try:
-                    for batch in ds.iter(batch_size=batch_size):
-                        batch_embeddings = np.array(batch['emb'], dtype=np.float32)
-                        for i in range(len(batch_embeddings)):
-                            if total_count >= MAX_TRAIN_SAMPLES:
-                                break
-                            write_buffer[buffer_idx] = batch_embeddings[i]
-                            buffer_idx += 1
-                            total_count += 1
-                            if buffer_idx >= write_chunk_size:
-                                write_buffer.tofile(f_train)
-                                f_train.flush()
-                                print(f"Processed and wrote {total_count:,} / {MAX_TRAIN_SAMPLES:,} train samples...")
-                                buffer_idx = 0
-                        if total_count >= MAX_TRAIN_SAMPLES:
-                            break
-                except (OSError, RuntimeError) as e:
-                    if "overflow" in str(e).lower() or "list index" in str(e).lower():
-                        # Flush any buffered data before restarting
-                        if buffer_idx > 0:
-                            write_buffer[:buffer_idx].tofile(f_train)
+                for batch_start in range(0, len(ds), 10000):
+                    batch = ds.select(range(batch_start, min(batch_start + 10000, len(ds))))
+                    batch_embeddings = np.array(batch['emb'], dtype=np.float32)
+
+                    for vec in batch_embeddings:
+                        write_buffer[buffer_idx] = vec
+                        buffer_idx += 1
+                        total_count += 1
+
+                        if buffer_idx == write_chunk_size:
+                            write_buffer.tofile(f_train)
                             f_train.flush()
                             buffer_idx = 0
-                        print(f"\nPyArrow list offset overflow at {total_count:,}, restarting stream...")
-                        continue
-                    raise
+                            print(f"Saved {total_count:,} embeddings...")
 
-            if buffer_idx > 0:
-                write_buffer[:buffer_idx].tofile(f_train)
-                f_train.flush()
+                # Remove shard from cache if needed
+                cache_file = Path(shard_path)
+                if cache_file.exists():
+                    try:
+                        cache_file.unlink()
+                    except Exception:
+                        pass
+
+        if buffer_idx > 0:
+            write_buffer[:buffer_idx].tofile(f_train)
+            f_train.flush()
+
+        print(f"Done! Total embeddings saved: {total_count:,}")
 
         train_count = total_count
         print(f"Train complete: {train_count:,} samples")
