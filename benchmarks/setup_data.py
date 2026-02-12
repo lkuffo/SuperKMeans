@@ -121,32 +121,44 @@ def setup_cohere_dataset(full=False):
         buffer_idx = 0
 
         with open(train_file, file_mode) as f_train:
-            for chunk_start in range(start_count, MAX_TRAIN_SAMPLES, chunk_size):
-                chunk_end = min(chunk_start + chunk_size, MAX_TRAIN_SAMPLES)
-                print(f"\nStreaming chunk [{chunk_start:,}:{chunk_end:,}]...")
-
+            while total_count < MAX_TRAIN_SAMPLES:
                 ds = load_dataset(
                     "Cohere/msmarco-v2.1-embed-english-v3", "passages",
-                    split=f"train[{chunk_start}:{chunk_end}]",
+                    split="train",
                     streaming=True,
                     cache_dir=cache_dir,
                 )
+                if total_count > 0:
+                    print(f"Skipping first {total_count:,} samples (may take a few minutes)...")
+                    ds = ds.skip(total_count)
+                ds = ds.take(MAX_TRAIN_SAMPLES - total_count)
 
-                for batch in ds.iter(batch_size=batch_size):
-                    batch_embeddings = np.array(batch['emb'], dtype=np.float32)
-                    for i in range(len(batch_embeddings)):
+                try:
+                    for batch in ds.iter(batch_size=batch_size):
+                        batch_embeddings = np.array(batch['emb'], dtype=np.float32)
+                        for i in range(len(batch_embeddings)):
+                            if total_count >= MAX_TRAIN_SAMPLES:
+                                break
+                            write_buffer[buffer_idx] = batch_embeddings[i]
+                            buffer_idx += 1
+                            total_count += 1
+                            if buffer_idx >= write_chunk_size:
+                                write_buffer.tofile(f_train)
+                                f_train.flush()
+                                print(f"Processed and wrote {total_count:,} / {MAX_TRAIN_SAMPLES:,} train samples...")
+                                buffer_idx = 0
                         if total_count >= MAX_TRAIN_SAMPLES:
                             break
-                        write_buffer[buffer_idx] = batch_embeddings[i]
-                        buffer_idx += 1
-                        total_count += 1
-                        if buffer_idx >= write_chunk_size:
-                            write_buffer.tofile(f_train)
+                except (OSError, RuntimeError) as e:
+                    if "overflow" in str(e).lower() or "list index" in str(e).lower():
+                        # Flush any buffered data before restarting
+                        if buffer_idx > 0:
+                            write_buffer[:buffer_idx].tofile(f_train)
                             f_train.flush()
-                            print(f"Processed and wrote {total_count:,} / {MAX_TRAIN_SAMPLES:,} train samples...")
                             buffer_idx = 0
-                    if total_count >= MAX_TRAIN_SAMPLES:
-                        break
+                        print(f"\nPyArrow list offset overflow at {total_count:,}, restarting stream...")
+                        continue
+                    raise
 
             if buffer_idx > 0:
                 write_buffer[:buffer_idx].tofile(f_train)
