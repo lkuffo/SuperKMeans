@@ -112,26 +112,45 @@ def setup_cohere_dataset(full=False):
     if USE_SEPARATE_QUERIES:
         print(f"\nLoading train embeddings (max {MAX_TRAIN_SAMPLES:,})...")
 
+        batch_size = 10_000
+        write_chunk_size = 100_000
         file_mode = 'ab' if start_count > 0 else 'wb'
         total_count = start_count
+
+        write_buffer = np.empty((write_chunk_size, embedding_dim), dtype=np.float32)
+        buffer_idx = 0
 
         with open(train_file, file_mode) as f_train:
             for chunk_start in range(start_count, MAX_TRAIN_SAMPLES, chunk_size):
                 chunk_end = min(chunk_start + chunk_size, MAX_TRAIN_SAMPLES)
-                print(f"\nLoading chunk [{chunk_start:,}:{chunk_end:,}]...")
+                print(f"\nStreaming chunk [{chunk_start:,}:{chunk_end:,}]...")
 
                 ds = load_dataset(
                     "Cohere/msmarco-v2.1-embed-english-v3", "passages",
                     split=f"train[{chunk_start}:{chunk_end}]",
+                    streaming=True,
                     cache_dir=cache_dir,
                 )
 
-                embeddings = np.array(ds['emb'], dtype=np.float32)
-                embeddings.tofile(f_train)
+                for batch in ds.iter(batch_size=batch_size):
+                    batch_embeddings = np.array(batch['emb'], dtype=np.float32)
+                    for i in range(len(batch_embeddings)):
+                        if total_count >= MAX_TRAIN_SAMPLES:
+                            break
+                        write_buffer[buffer_idx] = batch_embeddings[i]
+                        buffer_idx += 1
+                        total_count += 1
+                        if buffer_idx >= write_chunk_size:
+                            write_buffer.tofile(f_train)
+                            f_train.flush()
+                            print(f"Processed and wrote {total_count:,} / {MAX_TRAIN_SAMPLES:,} train samples...")
+                            buffer_idx = 0
+                    if total_count >= MAX_TRAIN_SAMPLES:
+                        break
+
+            if buffer_idx > 0:
+                write_buffer[:buffer_idx].tofile(f_train)
                 f_train.flush()
-                total_count += len(embeddings)
-                print(f"Wrote {total_count:,} / {MAX_TRAIN_SAMPLES:,} train samples")
-                del ds, embeddings
 
         train_count = total_count
         print(f"Train complete: {train_count:,} samples")
