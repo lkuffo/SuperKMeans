@@ -76,6 +76,7 @@ def setup_cohere_dataset(full=False):
     embedding_dim = 1024
     # Process in chunks to avoid PyArrow list offset overflow on large streams
     chunk_size = 10_000_000
+    cache_dir = str(DATA_DIR / ".hf_cache")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     train_file = DATA_DIR / "data_cohere50m.bin" if full else DATA_DIR / "data_cohere.bin"
@@ -112,6 +113,7 @@ def setup_cohere_dataset(full=False):
                 ds = load_dataset(
                     "Cohere/msmarco-v2.1-embed-english-v3", "passages",
                     split=f"train[{chunk_start}:{chunk_end}]",
+                    cache_dir=cache_dir,
                 )
 
                 embeddings = np.array(ds['emb'], dtype=np.float32)
@@ -125,7 +127,7 @@ def setup_cohere_dataset(full=False):
         print(f"Train complete: {train_count:,} samples")
 
         print(f"\nLoading test queries from 'queries' subset (max {MAX_TEST_SAMPLES})...")
-        dataset_test = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "queries", split="test")
+        dataset_test = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "queries", split="test", cache_dir=cache_dir)
 
         test_embeddings = np.array(dataset_test['emb'], dtype=np.float32)
         test_idx = min(MAX_TEST_SAMPLES, len(test_embeddings))
