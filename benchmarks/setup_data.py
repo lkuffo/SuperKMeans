@@ -73,50 +73,53 @@ def setup_cohere_dataset(full=False):
     MAX_TRAIN_SAMPLES = 50_000_000 if full else 10_000_000
     MAX_TEST_SAMPLES = 1000
 
-    batch_size = 10000  # Fetch 10k embeddings per batch from HuggingFace
-    write_chunk_size = 100000  # Write to disk every 100k embeddings
     embedding_dim = 1024
+    # Process in chunks to avoid PyArrow list offset overflow on large streams
+    chunk_size = 10_000_000
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     train_file = DATA_DIR / "data_cohere50m.bin" if full else DATA_DIR / "data_cohere.bin"
     test_file = DATA_DIR / "data_cohere50m_test.bin" if full else DATA_DIR / "data_cohere_test.bin"
 
-    print("Downloading Cohere Wikipedia embeddings from HuggingFace (this may take a few hours)...")
+    # Resume support: check existing file size
+    start_count = 0
+    if train_file.exists():
+        file_size = train_file.stat().st_size
+        expected_row_bytes = embedding_dim * np.dtype(np.float32).itemsize
+        start_count = file_size // expected_row_bytes
+        if file_size % expected_row_bytes != 0:
+            print(f"WARNING: File size not aligned to row size, truncating to {start_count:,} complete rows")
+            with open(train_file, 'r+b') as f:
+                f.truncate(start_count * expected_row_bytes)
+
+    print("Downloading Cohere Wikipedia embeddings from HuggingFace...")
     print(f"  Max train samples: {MAX_TRAIN_SAMPLES:,}")
     print(f"  Max test samples:  {MAX_TEST_SAMPLES:,}")
+    if start_count > 0:
+        print(f"  Resuming from:     {start_count:,}")
 
     if USE_SEPARATE_QUERIES:
         print(f"\nLoading train embeddings (max {MAX_TRAIN_SAMPLES:,})...")
-        dataset_train = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "passages", split="train", streaming=True)
 
-        write_buffer = np.empty((write_chunk_size, embedding_dim), dtype=np.float32)
-        buffer_idx = 0
-        total_count = 0
+        file_mode = 'ab' if start_count > 0 else 'wb'
+        total_count = start_count
 
-        with open(train_file, 'wb') as f_train:
-            for batch in dataset_train.iter(batch_size=batch_size):
-                print(f'Receiving train batch (total: {total_count:,}/{MAX_TRAIN_SAMPLES:,})')
-                batch_embeddings = np.array(batch['emb'], dtype=np.float32)
-                batch_len = len(batch_embeddings)
+        with open(train_file, file_mode) as f_train:
+            for chunk_start in range(start_count, MAX_TRAIN_SAMPLES, chunk_size):
+                chunk_end = min(chunk_start + chunk_size, MAX_TRAIN_SAMPLES)
+                print(f"\nLoading chunk [{chunk_start:,}:{chunk_end:,}]...")
 
-                for i in range(batch_len):
-                    if total_count >= MAX_TRAIN_SAMPLES:
-                        break
+                ds = load_dataset(
+                    "Cohere/msmarco-v2.1-embed-english-v3", "passages",
+                    split=f"train[{chunk_start}:{chunk_end}]",
+                )
 
-                    write_buffer[buffer_idx] = batch_embeddings[i]
-                    buffer_idx += 1
-                    total_count += 1
-
-                    if buffer_idx >= write_chunk_size:
-                        write_buffer.tofile(f_train)
-                        print(f"Processed and wrote {total_count:,} train samples...")
-                        buffer_idx = 0
-
-                if total_count >= MAX_TRAIN_SAMPLES:
-                    break
-
-            if buffer_idx > 0:
-                write_buffer[:buffer_idx].tofile(f_train)
+                embeddings = np.array(ds['emb'], dtype=np.float32)
+                embeddings.tofile(f_train)
+                f_train.flush()
+                total_count += len(embeddings)
+                print(f"Wrote {total_count:,} / {MAX_TRAIN_SAMPLES:,} train samples")
+                del ds, embeddings
 
         train_count = total_count
         print(f"Train complete: {train_count:,} samples")
