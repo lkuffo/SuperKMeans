@@ -28,8 +28,8 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters = 250000; bench_utils::get_default_n_clusters(n);
-    float sampling_fraction = 1.0;
+    const size_t n_clusters = 250000; //bench_utils::get_default_n_clusters(n);
+    float sampling_fraction = 0.20;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
     const size_t THREADS = omp_get_max_threads();
@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
     config.unrotate_centroids = true;
     config.perform_assignments = false;
     config.early_termination = false;
-    config.sampling_fraction = 0.3; // sampling_fraction;
+    config.sampling_fraction = 0.2; // sampling_fraction;
     config.use_blas_only = false;
     config.tol = 1e-3f;
 

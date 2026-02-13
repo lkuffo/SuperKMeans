@@ -220,7 +220,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             //
             // FULL GEMM on low-dimensional data or too few clusters
             //
-            if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+            if (iter_idx < 2 || this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
                 n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                 for (; iter_idx < this->hierarchical_config.iters_mesoclustering; ++iter_idx) {
                     this->template RunIteration<true>(
@@ -377,8 +377,9 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             if (this->hierarchical_config.iters_fineclustering > 1) {
                 //
                 // FULL GEMM on low-dimensional data or too few clusters
+                // 
                 //
-                if (this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                if (fine_iter_idx < 2 || this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
                     n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                     for (; fine_iter_idx < this->hierarchical_config.iters_fineclustering;
                          ++fine_iter_idx) {
@@ -466,7 +467,9 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         }
         this->_n_samples = initial_n_samples;
 
-        this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 2);
+        // In the refinement phase, we use an even smaller partial d (around 8% of d) because the clusters 
+        // are already well-formed, and pruning rate is expected to be high.
+        this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 3);
 
         // We just transfer the state of centroids to the proper class variables, no rotation.
         auto final_refinement_pdx_wrapper =
@@ -496,7 +499,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         TicToc timer_refinement;
         timer_refinement.Tic();
 
-        // 2 refinement iterations GEMM+PRUNING
+        // Refinement iterations GEMM+PRUNING
         size_t refinement_iter_idx = 0;
         if (this->hierarchical_config.iters_refinement > 0) {
             //
@@ -666,6 +669,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 this->_n_split++;
             }
         }
+
+        std::cout << "n_split before smaller clusters balancing: " << this->_n_split << std::endl;
 
         // Adjust small clusters (cuVS-style balancing)
         // Pick large clusters with probability proportional to their size
