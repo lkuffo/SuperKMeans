@@ -80,7 +80,7 @@ def setup_cohere_dataset(full=False):
     from datasets import load_dataset
 
     USE_SEPARATE_QUERIES = True  # Use separate queries subset
-    MAX_TRAIN_SAMPLES = 50_000_000 if full else 10_000_000
+    MAX_TRAIN_SAMPLES = 700_000 if full else 10_000_000
     MAX_TEST_SAMPLES = 1000
 
     embedding_dim = 1024
@@ -106,50 +106,68 @@ def setup_cohere_dataset(full=False):
         buffer_idx = 0
         total_count = 0
 
-        ds_meta = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "passages", split="train", streaming=False)
-        shards = ds_meta.data_files['train']
-        print('Shards: ', shards)
+        #ds_meta = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "passages", split="train", streaming=False)
+        #shards = ds_meta.data_files['train']
+        
+        # print('Shards: ', shards)
 
-        with open(train_file, 'wb') as f_train:
+        shards = [
+            f"passages_parquet/msmarco_v2.1_doc_segmented_{i:02d}.parquet"
+            for i in range(30, 32)
+        ]
+
+        # Open in append mode ('ab') to continue from where we left off
+        with open(train_file, 'ab') as f_train:
 
             for shard_path in shards:
                 print(f"\nProcessing shard: {shard_path}")
+                try:
+                    # Load only this shard
+                    ds = load_dataset(
+                        "Cohere/msmarco-v2.1-embed-english-v3",
+                        "passages",
+                        split="train",
+                        data_files={"train": [shard_path]},
+                        streaming=False,
+                    )
 
-                # Load only this shard
-                ds = load_dataset(
-                    "Cohere/msmarco-v2.1-embed-english-v3",
-                    "passages",
-                    split="train",
-                    data_files={"train": [shard_path]},
-                    streaming=False,
-                )
+                    for batch_start in range(0, len(ds), 10000):
+                        batch = ds.select(range(batch_start, min(batch_start + 10000, len(ds))))
+                        batch_embeddings = np.array(batch['emb'], dtype=np.float32)
 
-                for batch_start in range(0, len(ds), 10000):
-                    batch = ds.select(range(batch_start, min(batch_start + 10000, len(ds))))
-                    batch_embeddings = np.array(batch['emb'], dtype=np.float32)
+                        for vec in batch_embeddings:
+                            if total_count >= MAX_TRAIN_SAMPLES:
+                                break  # Exit inner loop
 
-                    for vec in batch_embeddings:
-                        write_buffer[buffer_idx] = vec
-                        buffer_idx += 1
-                        total_count += 1
+                            write_buffer[buffer_idx] = vec
+                            buffer_idx += 1
+                            total_count += 1
 
-                        if buffer_idx == write_chunk_size:
-                            write_buffer.tofile(f_train)
-                            f_train.flush()
-                            buffer_idx = 0
-                            print(f"Saved {total_count:,} embeddings...")
+                            if buffer_idx == write_chunk_size:
+                                write_buffer.tofile(f_train)
+                                f_train.flush()
+                                buffer_idx = 0
+                                print(f"Saved {total_count:,} embeddings...")
+
+                        if total_count >= MAX_TRAIN_SAMPLES:
+                            break  # Exit batch loop
+
+                except Exception as e:
+                    print('Failed shard', shard_path)
+                    print(e)
 
                 # Remove shard from cache if needed
-                cache_file = Path(shard_path)
-                if cache_file.exists():
-                    try:
-                        cache_file.unlink()
-                    except Exception:
-                        pass
+                import shutil
+                print('Removing cache')
+                shutil.rmtree("./data/.hf_cache/")
 
-        if buffer_idx > 0:
-            write_buffer[:buffer_idx].tofile(f_train)
-            f_train.flush()
+                if total_count >= MAX_TRAIN_SAMPLES:
+                    break  # Exit shard loop
+
+            # Write any remaining data in buffer
+            if buffer_idx > 0:
+                write_buffer[:buffer_idx].tofile(f_train)
+                f_train.flush()
 
         print(f"Done! Total embeddings saved: {total_count:,}")
 
