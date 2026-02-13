@@ -213,9 +213,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             immutable_data_norms = this->_data_norms;
         }
 
-        // My theory is that for Mesoclusters SuperKMeans is not going to work as well,
-        // Depending on how many clusters we have
-        // But for fineclusters, since the ratio is around 1:100, then it should work.
         if (this->hierarchical_config.iters_mesoclustering > 1) {
             //
             // FULL GEMM on low-dimensional data or too few clusters
@@ -223,7 +220,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             //
             bool partial_norms_computed = false;
             for (; iter_idx < this->hierarchical_config.iters_mesoclustering; ++iter_idx) {
-                if (iter_idx < 2 || this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                if (iter_idx < 1 || this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
                     n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                     this->template RunIteration<true>(
                         data_to_cluster,
@@ -390,7 +387,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 bool partial_norms_computed = false;
                 for (; fine_iter_idx < this->hierarchical_config.iters_fineclustering;
                      ++fine_iter_idx) {
-                    if (fine_iter_idx < 2 || this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                    if (fine_iter_idx < 1 || this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
                         n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                         this->template RunIteration<true>(
                             mesocluster_data_to_cluster,
