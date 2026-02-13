@@ -47,7 +47,6 @@ TEST_F(SuperKMeansTest, AllClustersUsed) {
     skmeans::SuperKMeansConfig config;
     config.iters = 25;
     config.verbose = false;
-    config.perform_assignments = true;
 
     auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
         n_clusters, d, config
@@ -55,7 +54,7 @@ TEST_F(SuperKMeansTest, AllClustersUsed) {
     auto centroids = kmeans.Train(data.data(), n);
 
     // Check that all clusters have at least one assignment
-    const auto& assignments = kmeans._assignments;
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     std::unordered_set<uint32_t> used_clusters(assignments.begin(), assignments.end());
 
     EXPECT_EQ(used_clusters.size(), n_clusters)
@@ -73,14 +72,13 @@ TEST_F(SuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     skmeans::SuperKMeansConfig config;
     config.iters = 10;
     config.verbose = false;
-    config.perform_assignments = true;
 
     auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
         n_clusters, d, config
     );
     auto centroids = kmeans.Train(data.data(), n);
 
-    const auto& assignments = kmeans._assignments;
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     EXPECT_EQ(assignments.size(), n);
 
     // Check all assignments are valid cluster indices

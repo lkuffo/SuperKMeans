@@ -92,7 +92,6 @@ TEST_F(HierarchicalSuperKMeansTest, AllClustersUsed) {
     config.iters_fineclustering = 10;
     config.iters_refinement = 4;
     config.verbose = false;
-    config.perform_assignments = true;
 
     auto kmeans =
         skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
@@ -100,7 +99,7 @@ TEST_F(HierarchicalSuperKMeansTest, AllClustersUsed) {
         );
     auto centroids = kmeans.Train(data.data(), n);
 
-    const auto& assignments = kmeans._assignments;
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     std::unordered_set<uint32_t> used_clusters(assignments.begin(), assignments.end());
 
     EXPECT_EQ(used_clusters.size(), n_clusters)
@@ -120,7 +119,6 @@ TEST_F(HierarchicalSuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     config.iters_fineclustering = 5;
     config.iters_refinement = 2;
     config.verbose = false;
-    config.perform_assignments = true;
 
     auto kmeans =
         skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
@@ -128,7 +126,7 @@ TEST_F(HierarchicalSuperKMeansTest, PerformAssignments_PopulatesAssignments) {
         );
     auto centroids = kmeans.Train(data.data(), n);
 
-    const auto& assignments = kmeans._assignments;
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     EXPECT_EQ(assignments.size(), n);
 
     for (size_t i = 0; i < n; ++i) {

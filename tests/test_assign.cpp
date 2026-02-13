@@ -37,7 +37,7 @@ TEST_F(AssignTest, AssignMatchesTrainAssignments_SyntheticClusters) {
     );
 
     auto centroids = kmeans.Train(data.data(), n);
-    const auto& train_assignments = kmeans._assignments;
+    const auto& train_assignments = kmeans.assignments;
     auto assign_assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     size_t mismatches = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -68,12 +68,11 @@ TEST_F(AssignTest, EachPointAssignedToNearestCentroid) {
     config.verbose = false;
     config.seed = 42;
     config.unrotate_centroids = true;
-    config.perform_assignments = true;
     auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
         n_clusters, d, config
     );
     auto centroids = kmeans.Train(data.data(), n);
-    const auto& assignments = kmeans._assignments;
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
 
     ASSERT_EQ(assignments.size(), n) << "Assignment size mismatch";
     ASSERT_EQ(centroids.size(), n_clusters * d) << "Centroid size mismatch";
@@ -117,13 +116,12 @@ TEST_F(AssignTest, EachPointAssignedToNearestCentroid_HighDim) {
     config.verbose = false;
     config.seed = 123;
     config.unrotate_centroids = true;
-    config.perform_assignments = true;
 
     auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
         n_clusters, d, config
     );
     auto centroids = kmeans.Train(data.data(), n);
-    const auto& assignments = kmeans._assignments;
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
 
     ASSERT_EQ(assignments.size(), n) << "Assignment size mismatch";
     size_t incorrect_assignments = 0;
@@ -166,12 +164,11 @@ TEST_F(AssignTest, AllClustersNonEmpty) {
     config.verbose = false;
     config.seed = 42;
     config.unrotate_centroids = true;
-    config.perform_assignments = true;
     auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
         n_clusters, d, config
     );
     auto centroids = kmeans.Train(data.data(), n);
-    const auto& assignments = kmeans._assignments;
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
 
     ASSERT_EQ(assignments.size(), n) << "Assignment size mismatch";
 
