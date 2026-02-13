@@ -624,44 +624,46 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
 
         size_t average_size = n_samples / n_clusters;
         size_t threshold_size = static_cast<size_t>(average_size * BALANCING_THRESHOLD);
-
-        for (size_t ci = 0; ci < n_clusters; ci++) {
-            if (this->_cluster_sizes[ci] == 0) {
-                size_t cj;
-                for (cj = 0; true; cj = (cj + 1) % n_clusters) {
-                    float p = (this->_cluster_sizes[cj] - 1.0f) /
-                              static_cast<float>(n_samples - n_clusters);
-                    float r = std::uniform_real_distribution<float>(0, 1)(rng);
-                    if (r < p) {
-                        break;
+        {
+            SKM_PROFILE_SCOPE("consolidate/empty");
+            for (size_t ci = 0; ci < n_clusters; ci++) {
+                if (this->_cluster_sizes[ci] == 0) {
+                    size_t cj;
+                    for (cj = 0; true; cj = (cj + 1) % n_clusters) {
+                        float p = (this->_cluster_sizes[cj] - 1.0f) /
+                                static_cast<float>(n_samples - n_clusters);
+                        float r = std::uniform_real_distribution<float>(0, 1)(rng);
+                        if (r < p) {
+                            break;
+                        }
                     }
-                }
 
-                memcpy(
-                    (void*) (_horizontal_centroids_p + ci * this->_d),
-                    (void*) (_horizontal_centroids_p + cj * this->_d),
-                    sizeof(centroid_value_t) * this->_d
-                );
+                    memcpy(
+                        (void*) (_horizontal_centroids_p + ci * this->_d),
+                        (void*) (_horizontal_centroids_p + cj * this->_d),
+                        sizeof(centroid_value_t) * this->_d
+                    );
 
-                // Small symmetric perturbation
-                for (size_t j = 0; j < this->_d; j++) {
-                    if (j % 2 == 0) {
-                        _horizontal_centroids_p[ci * this->_d + j] *=
-                            1.0f + CENTROID_PERTURBATION_EPS;
-                        _horizontal_centroids_p[cj * this->_d + j] *=
-                            1.0f - CENTROID_PERTURBATION_EPS;
-                    } else {
-                        _horizontal_centroids_p[ci * this->_d + j] *=
-                            1.0f - CENTROID_PERTURBATION_EPS;
-                        _horizontal_centroids_p[cj * this->_d + j] *=
-                            1.0f + CENTROID_PERTURBATION_EPS;
+                    // Small symmetric perturbation
+                    for (size_t j = 0; j < this->_d; j++) {
+                        if (j % 2 == 0) {
+                            _horizontal_centroids_p[ci * this->_d + j] *=
+                                1.0f + CENTROID_PERTURBATION_EPS;
+                            _horizontal_centroids_p[cj * this->_d + j] *=
+                                1.0f - CENTROID_PERTURBATION_EPS;
+                        } else {
+                            _horizontal_centroids_p[ci * this->_d + j] *=
+                                1.0f - CENTROID_PERTURBATION_EPS;
+                            _horizontal_centroids_p[cj * this->_d + j] *=
+                                1.0f + CENTROID_PERTURBATION_EPS;
+                        }
                     }
-                }
 
-                // Assume even split of the cluster
-                this->_cluster_sizes[ci] = this->_cluster_sizes[cj] / 2;
-                this->_cluster_sizes[cj] -= this->_cluster_sizes[ci];
-                this->_n_split++;
+                    // Assume even split of the cluster
+                    this->_cluster_sizes[ci] = this->_cluster_sizes[cj] / 2;
+                    this->_cluster_sizes[cj] -= this->_cluster_sizes[ci];
+                    this->_n_split++;
+                }
             }
         }
 
@@ -669,42 +671,45 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
 
         // Adjust small clusters (cuVS-style balancing)
         // Pick large clusters with probability proportional to their size
-        for (size_t ci = 0; ci < n_clusters; ci++) {
-            size_t csize = this->_cluster_sizes[ci];
-            if (csize == 0 || csize > threshold_size)
-                continue;
-
-            // Find a large cluster with probability proportional to its size
-            size_t large_cluster_idx;
-            for (large_cluster_idx = 0; true;
-                 large_cluster_idx = (large_cluster_idx + 1) % n_clusters) {
-                size_t large_size = this->_cluster_sizes[large_cluster_idx];
-                if (large_size < average_size)
+        {
+            SKM_PROFILE_SCOPE("consolidate/balancing");
+            for (size_t ci = 0; ci < n_clusters; ci++) {
+                size_t csize = this->_cluster_sizes[ci];
+                if (csize == 0 || csize > threshold_size)
                     continue;
-                // Probability proportional to how much larger this cluster is than average
-                float p = static_cast<float>(large_size - average_size + 1) /
-                          static_cast<float>(n_samples - average_size * n_clusters + n_clusters);
-                float r = std::uniform_real_distribution<float>(0, 1)(rng);
-                if (r < p) {
-                    break; // Found our cluster to be split
+
+                // Find a large cluster with probability proportional to its size
+                size_t large_cluster_idx;
+                for (large_cluster_idx = 0; true;
+                    large_cluster_idx = (large_cluster_idx + 1) % n_clusters) {
+                    size_t large_size = this->_cluster_sizes[large_cluster_idx];
+                    if (large_size < average_size)
+                        continue;
+                    // Probability proportional to how much larger this cluster is than average
+                    float p = static_cast<float>(large_size - average_size + 1) /
+                            static_cast<float>(n_samples - average_size * n_clusters + n_clusters);
+                    float r = std::uniform_real_distribution<float>(0, 1)(rng);
+                    if (r < p) {
+                        break; // Found our cluster to be split
+                    }
                 }
-            }
 
-            // Adjust the center of the selected smaller cluster to gravitate towards
-            // a sample from the selected larger cluster.
-            // Weight of the current center for the weighted average.
-            // We dump it for anomalously small clusters, but keep constant otherwise.
-            float wc = std::min(static_cast<float>(csize), CENTER_ADJUSTMENT_WEIGHT);
-            float wd = 1.0f; // Weight for the datapoint used to shift the center.
-            for (size_t j = 0; j < this->_d; j++) {
-                float val = 0.0f;
-                val += wc * _horizontal_centroids_p[ci * this->_d + j];
-                val += wd * _horizontal_centroids_p[large_cluster_idx * this->_d + j];
-                val /= (wc + wd);
-                _horizontal_centroids_p[ci * this->_d + j] = val;
-            }
+                // Adjust the center of the selected smaller cluster to gravitate towards
+                // a sample from the selected larger cluster.
+                // Weight of the current center for the weighted average.
+                // We dump it for anomalously small clusters, but keep constant otherwise.
+                float wc = std::min(static_cast<float>(csize), CENTER_ADJUSTMENT_WEIGHT);
+                float wd = 1.0f; // Weight for the datapoint used to shift the center.
+                for (size_t j = 0; j < this->_d; j++) {
+                    float val = 0.0f;
+                    val += wc * _horizontal_centroids_p[ci * this->_d + j];
+                    val += wd * _horizontal_centroids_p[large_cluster_idx * this->_d + j];
+                    val /= (wc + wd);
+                    _horizontal_centroids_p[ci * this->_d + j] = val;
+                }
 
-            this->_n_split++;
+                this->_n_split++;
+            }
         }
     }
 
