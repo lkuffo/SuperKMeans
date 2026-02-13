@@ -85,7 +85,7 @@ int main(int argc, char* argv[]) {
     // Hierarchical SuperKMeans specific parameters
     config.iters_mesoclustering = 3;
     config.iters_fineclustering = 5;
-    config.iters_refinement = 1;
+    config.iters_refinement = 0;
 
     auto is_angular = std::find(
         bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
