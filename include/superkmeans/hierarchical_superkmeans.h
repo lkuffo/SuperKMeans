@@ -341,7 +341,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             auto mesocluster_size = mesoclusters_sizes[k];
             // auto points_per_finecluster = static_cast<float>(mesocluster_size) /
             // static_cast<float>(n_fineclusters);
-            std::cout << "n_fineclusters = " << n_fineclusters << std::endl;
             this->_n_samples = mesocluster_size;
             CompactMesoclusterToBuffer(
                 mesocluster_size,
@@ -680,8 +679,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 }
             }
         }
-
-        std::cout << "n_split before smaller clusters balancing: " << this->_n_split << std::endl;
 
         // Adjust small clusters (cuVS-style balancing)
         // Pick large clusters with probability proportional to their size
