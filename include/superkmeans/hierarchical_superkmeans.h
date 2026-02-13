@@ -127,13 +127,13 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         this->_vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->_d).vertical_d;
         this->_partial_horizontal_centroids.resize(this->_n_clusters * this->_vertical_d);
 
-        this->_partial_d = this->_vertical_d; // We are more cautious with the partial d for
-                                              // hierarchical clustering
+        this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 2);
 
-        auto initial_partial_d = this->_partial_d;
         if (this->_partial_d > this->_vertical_d) {
             this->_partial_d = this->_vertical_d;
         }
+        auto initial_partial_d = this->_partial_d;
+        
         if (this->hierarchical_config.verbose) {
             std::cout << "Front dimensions (d') = " << this->_partial_d << std::endl;
             std::cout << "Trailing dimensions (d'') = " << this->_d - this->_vertical_d
