@@ -41,8 +41,8 @@ int main(int argc, char* argv[]) {
     std::vector<skmeans::skmeans_value_t<skmeans::Quantization::f32>> data;
     std::vector<skmeans::skmeans_value_t<skmeans::Quantization::f32>> queries;
     try {
-        data.resize(n * d);
-        queries.resize(n_queries * d);
+        data.reserve(n * d);
+        queries.reserve(n_queries * d);
     } catch (const std::bad_alloc& e) {
         std::cerr << "Failed to allocate data vector for n*d = " << (n * d) << ": " << e.what()
                   << "\n";
@@ -53,14 +53,14 @@ int main(int argc, char* argv[]) {
         std::cerr << "Failed to open " << filename << std::endl;
         return 1;
     }
-    file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
+    file.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     file.close();
     std::ifstream file_queries(filename_queries, std::ios::binary);
     if (!file_queries) {
         std::cerr << "Failed to open " << filename_queries << std::endl;
         return 1;
     }
-    file_queries.read(reinterpret_cast<char*>(queries.data()), queries.size() * sizeof(float));
+    file_queries.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
     file_queries.close();
 
     for (int n_clusters : bench_utils::VARYING_K_VALUES) {

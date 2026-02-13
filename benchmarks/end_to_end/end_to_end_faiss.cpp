@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<float> data;
     try {
-        data.resize(n * d);
+        data.reserve(n * d);
     } catch (const std::bad_alloc& e) {
         std::cerr << "Failed to allocate data vector for n*d = " << (n * d) << ": " << e.what()
                   << "\n";
@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "Failed to open " << std::endl;
         return 1;
     }
-    file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
+    file.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     file.close();
 
     faiss::IndexFlatL2 index(d);
@@ -94,8 +94,9 @@ int main(int argc, char* argv[]) {
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
 
-        std::vector<float> queries(n_queries * d);
-        queries_file.read(reinterpret_cast<char*>(queries.data()), queries.size() * sizeof(float));
+        std::vector<float> queries;
+        queries.reserve(n_queries * d);
+        queries_file.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
         queries_file.close();
 
         std::vector<faiss::idx_t> assignments(n);

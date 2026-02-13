@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<float> data;
     try {
-        data.resize(n * d);
+        data.reserve(n * d);
     } catch (const std::bad_alloc& e) {
         std::cerr << "Failed to allocate data vector for n*d = " << (n * d) << ": " << e.what()
                   << "\n";
@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "Failed to open " << filename << std::endl;
         return 1;
     }
-    file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
+    file.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     file.close();
 
     for (int n_clusters : bench_utils::VARYING_K_VALUES) {
