@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters = 10000; //bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = 250000; //bench_utils::get_default_n_clusters(n);
     float sampling_fraction = 0.20;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
