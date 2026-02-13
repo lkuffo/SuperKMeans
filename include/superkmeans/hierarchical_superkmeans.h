@@ -349,8 +349,15 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             auto mesocluster_centroids_pdx_wrapper = this->GenerateCentroids(
                 mesocluster_data_to_cluster, mesocluster_size, n_fineclusters, false
             );
+            // Copy centroids to _prev_centroids for use in the first RunIteration
+            // (is_first_iter=true skips the swap, so _prev_centroids must be populated)
+            memcpy(
+                this->_prev_centroids.data(),
+                this->_horizontal_centroids.data(),
+                sizeof(centroid_value_t) * n_fineclusters * this->_d
+            );
             this->GetL2NormsRowMajor(
-                this->_horizontal_centroids.data(), n_fineclusters, this->_centroid_norms.data()
+                this->_prev_centroids.data(), n_fineclusters, this->_centroid_norms.data()
             );
 
             size_t fine_iter_idx = 0;
