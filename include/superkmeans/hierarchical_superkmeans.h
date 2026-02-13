@@ -336,6 +336,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             auto mesocluster_size = mesoclusters_sizes[k];
             // auto points_per_finecluster = static_cast<float>(mesocluster_size) /
             // static_cast<float>(n_fineclusters);
+            std::cout << "n_fineclusters = " << n_fineclusters << std::endl;
             this->_n_samples = mesocluster_size;
             CompactMesoclusterToBuffer(
                 mesocluster_size,
