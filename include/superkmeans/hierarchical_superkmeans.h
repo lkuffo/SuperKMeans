@@ -111,21 +111,23 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         {
             SKM_PROFILE_SCOPE("allocator");
             // Buffers to concatenate each fineclustering assignments and centroids
-            this->final_assignments.resize(this->_n_samples);
-            this->final_centroids.resize(this->_n_clusters * this->_d);
+            this->final_assignments.reserve(this->_n_samples);
+            this->final_centroids.reserve(this->_n_clusters * this->_d);
             // These buffers are reused for all three phases
-            this->_centroids.resize(this->_n_clusters * this->_d);
+            this->_centroids.reserve(this->_n_clusters * this->_d);
+            // TODO: Replace these with unique_ptr<T[]> to avoid zero-fill overhead from resize()
             this->_horizontal_centroids.resize(this->_n_clusters * this->_d);
             this->_prev_centroids.resize(this->_n_clusters * this->_d);
             this->_cluster_sizes.resize(this->_n_clusters);
             this->_assignments.resize(n);
             this->_distances.resize(n);
             this->_data_norms.resize(this->_n_samples);
-            this->_centroid_norms.resize(this->_n_clusters);
+            this->_centroid_norms.reserve(this->_n_clusters);
         }
-        std::vector<distance_t> tmp_distances_buf(X_BATCH_SIZE * Y_BATCH_SIZE);
+        std::vector<distance_t> tmp_distances_buf;
+        tmp_distances_buf.reserve(X_BATCH_SIZE * Y_BATCH_SIZE);
         this->_vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->_d).vertical_d;
-        this->_partial_horizontal_centroids.resize(this->_n_clusters * this->_vertical_d);
+        this->_partial_horizontal_centroids.reserve(this->_n_clusters * this->_vertical_d);
 
         this->_partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->_vertical_d / 2);
 
@@ -160,9 +162,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         }
         // Samples for both mesoclustering and fineclustering
         std::vector<vector_value_t> data_samples_buffer;
+        data_samples_buffer.reserve(this->_n_samples * this->_d);
         this->SampleAndRotateVectors(
             data_p,
-            data_samples_buffer,
+            data_samples_buffer.data(),
             n,
             this->_n_samples,
             !this->hierarchical_config.data_already_rotated
@@ -185,8 +188,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         size_t iters_without_improvement = 0;
 
         // Buffers for RunIteration (needed for function signature even if unused in GEMM-only mode)
-        std::vector<vector_value_t> centroids_partial_norms(this->_n_clusters);
-        std::vector<size_t> not_pruned_counts(this->_n_samples);
+        std::vector<vector_value_t> centroids_partial_norms;
+        centroids_partial_norms.reserve(this->_n_clusters);
+        std::vector<size_t> not_pruned_counts;
+        not_pruned_counts.reserve(this->_n_samples);
 
         this->template RunIteration<true>(
             data_to_cluster,
@@ -282,8 +287,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         }
 
         // Build partitioned index for efficient mesocluster compaction
-        std::vector<size_t> mesocluster_indices_flat(this->_n_samples);
-        std::vector<size_t> mesocluster_offsets(n_mesoclusters + 1);
+        std::vector<size_t> mesocluster_indices_flat;
+        mesocluster_indices_flat.resize(this->_n_samples);
+        std::vector<size_t> mesocluster_offsets;
+        mesocluster_offsets.resize(n_mesoclusters + 1);
         {
             SKM_PROFILE_SCOPE("compact_indices");
             mesocluster_offsets[0] = 0;

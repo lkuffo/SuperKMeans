@@ -90,7 +90,7 @@ TEST_F(HierarchicalSuperKMeansTest, AllClustersUsed) {
     skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 10;
     config.iters_fineclustering = 10;
-    config.iters_refinement = 2;
+    config.iters_refinement = 4;
     config.verbose = false;
     config.perform_assignments = true;
 

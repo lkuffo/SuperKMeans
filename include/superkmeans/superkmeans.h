@@ -188,20 +188,24 @@ class SuperKMeans {
         }
         {
             SKM_PROFILE_SCOPE("allocator");
-            _centroids.resize(_n_clusters * _d);
+            _centroids.reserve(_n_clusters * _d);
+            // TODO: Replace these with unique_ptr<T[]> to avoid zero-fill overhead from resize()
             _horizontal_centroids.resize(_n_clusters * _d);
             _prev_centroids.resize(_n_clusters * _d);
             _cluster_sizes.resize(_n_clusters);
             _assignments.resize(n);
             _distances.resize(n);
             _data_norms.resize(_n_samples);
-            _centroid_norms.resize(_n_clusters);
+            _centroid_norms.reserve(_n_clusters);
         }
-        std::vector<vector_value_t> centroids_partial_norms(_n_clusters);
-        std::vector<size_t> not_pruned_counts(_n_samples);
-        std::vector<distance_t> tmp_distances_buf(X_BATCH_SIZE * Y_BATCH_SIZE);
+        std::vector<vector_value_t> centroids_partial_norms;
+        centroids_partial_norms.reserve(_n_clusters);
+        std::vector<size_t> not_pruned_counts;
+        not_pruned_counts.reserve(_n_samples);
+        std::vector<distance_t> tmp_distances_buf;
+        tmp_distances_buf.reserve(X_BATCH_SIZE * Y_BATCH_SIZE);
         _vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(_d).vertical_d;
-        _partial_horizontal_centroids.resize(_n_clusters * _vertical_d);
+        _partial_horizontal_centroids.reserve(_n_clusters * _vertical_d);
 
         // Set _partial_d (d') dynamically as half of _vertical_d (around 12% of d)
         _partial_d = std::max<uint32_t>(MIN_PARTIAL_D, _vertical_d / 2);
@@ -220,8 +224,9 @@ class SuperKMeans {
         }
 
         std::vector<vector_value_t> data_samples_buffer;
+        data_samples_buffer.reserve(_n_samples * _d);
         SampleAndRotateVectors(
-            data_p, data_samples_buffer, n, _n_samples, !_config.data_already_rotated
+            data_p, data_samples_buffer.data(), n, _n_samples, !_config.data_already_rotated
         );
         auto data_to_cluster = data_samples_buffer.data();
 
@@ -250,18 +255,18 @@ class SuperKMeans {
                 _gt_assignments.resize(n_queries * _config.objective_k);
                 _gt_distances.resize(n_queries * _config.objective_k);
             }
-            rotated_queries.resize(n_queries * _d);
+            rotated_queries.reserve(n_queries * _d);
             if (_config.sample_queries) {
                 std::cout << "Sampling queries from data..." << std::endl;
                 SampleAndRotateVectors(
-                    data_to_cluster, rotated_queries, _n_samples, n_queries, false
+                    data_to_cluster, rotated_queries.data(), _n_samples, n_queries, false
                 );
             } else {
                 RotateOrCopy(
                     queries, rotated_queries.data(), n_queries, !_config.data_already_rotated
                 );
             }
-            _query_norms.resize(n_queries);
+            _query_norms.reserve(n_queries);
             GetL2NormsRowMajor(rotated_queries.data(), n_queries, _query_norms.data());
             GetGTAssignmentsAndDistances(data_to_cluster, rotated_queries.data(), n_queries);
         }
@@ -877,7 +882,7 @@ class SuperKMeans {
         const size_t n_queries
     ) {
         SKM_PROFILE_SCOPE("gt_assignments");
-        _tmp_distances_buffer.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
+        _tmp_distances_buffer.reserve(X_BATCH_SIZE * Y_BATCH_SIZE);
         std::vector<distance_t> query_norms(n_queries);
         GetL2NormsRowMajor(queries, n_queries, query_norms.data());
         batch_computer::FindKNearestNeighbors(
@@ -908,9 +913,9 @@ class SuperKMeans {
      */
     float ComputeRecall(const vector_value_t* SKM_RESTRICT queries, const size_t n_queries) {
         SKM_PROFILE_SCOPE("recall");
-        _tmp_distances_buffer.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
+        _tmp_distances_buffer.reserve(X_BATCH_SIZE * Y_BATCH_SIZE);
         _promising_centroids.resize(n_queries * _centroids_to_explore);
-        _recall_distances.resize(n_queries * _centroids_to_explore);
+        _recall_distances.reserve(n_queries * _centroids_to_explore);
         batch_computer::FindKNearestNeighbors(
             queries,
             _horizontal_centroids.data(),
@@ -1249,13 +1254,11 @@ class SuperKMeans {
      */
     void SampleAndRotateVectors(
         const vector_value_t* SKM_RESTRICT data,
-        std::vector<vector_value_t>& out_buffer,
+        vector_value_t* SKM_RESTRICT out,
         const size_t n,
         const size_t n_samples,
         const bool rotate = true
     ) {
-        out_buffer.resize(n_samples * _d);
-
         // Intermediate buffer needed only when both sampling and rotating
         // (we have not yet implemented rotation in-place)
         std::vector<vector_value_t> samples_tmp;
@@ -1268,58 +1271,28 @@ class SuperKMeans {
             // Random sampling without replacement
             std::mt19937 rng(_config.seed);
             std::vector<size_t> indices(n);
-            {
-                SKM_PROFILE_SCOPE("sampling/indices");
-                for (size_t i = 0; i < n; ++i) {
-                    indices[i] = i;
-                }
+            for (size_t i = 0; i < n; ++i) {
+                indices[i] = i;
             }
-            {
-                SKM_PROFILE_SCOPE("sampling/shuffle");
-                for (size_t i = 0; i < n_samples; ++i) {
-                    std::uniform_int_distribution<size_t> dist(i, n - 1);
-                    std::swap(indices[i], indices[dist(rng)]);
-                }
-            }
-            {
-                SKM_PROFILE_SCOPE("sampling/sort");
-                std::sort(indices.begin(), indices.begin() + n_samples);
-            }
-
+            std::shuffle(indices.begin(), indices.end(), rng);
             if (rotate) {
-                samples_tmp.resize(n_samples * _d);
-                {
-                    SKM_PROFILE_SCOPE("sampling/memcpy1");
-                    // Need intermediate buffer: sample first, then rotate
+                samples_tmp.reserve(n_samples * _d);
+                // Need intermediate buffer: sample first, then rotate
 #pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
-                    for (size_t i = 0; i < n_samples; ++i) {
-                        memcpy(
-                            static_cast<void*>(samples_tmp.data() + i * _d),
-                            static_cast<const void*>(data + indices[i] * _d),
-                            sizeof(vector_value_t) * _d
-                        );
-                    }
+                for (size_t i = 0; i < n_samples; ++i) {
+                    memcpy(
+                        static_cast<void*>(samples_tmp.data() + i * _d),
+                        static_cast<const void*>(data + indices[i] * _d),
+                        sizeof(vector_value_t) * _d
+                    );
                 }
-
-                {
-                    SKM_PROFILE_SCOPE("sampling/memcpy2");
-#pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
-                    for (size_t i = 0; i < n_samples; ++i) {
-                        memcpy(
-                            static_cast<void*>(samples_tmp.data() + i * _d),
-                            static_cast<const void*>(data + indices[i] * _d),
-                            sizeof(vector_value_t) * _d
-                        );
-                    }
-                }
-
                 src_data = samples_tmp.data();
             } else {
                 // No rotation: copy directly into output buffer
 #pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
                 for (size_t i = 0; i < n_samples; ++i) {
                     memcpy(
-                        static_cast<void*>(out_buffer.data() + i * _d),
+                        static_cast<void*>(out + i * _d),
                         static_cast<const void*>(data + indices[i] * _d),
                         sizeof(vector_value_t) * _d
                     );
@@ -1330,7 +1303,7 @@ class SuperKMeans {
         if (_config.verbose)
             std::cout << "Using " << n_samples << " vectors" << std::endl;
 
-        RotateOrCopy(src_data, out_buffer.data(), n_samples, rotate);
+        RotateOrCopy(src_data, out, n_samples, rotate);
     }
 
     const size_t _d;
