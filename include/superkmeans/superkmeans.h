@@ -513,10 +513,15 @@ class SuperKMeans {
             _distances.data(),
             tmp_distances_buf
         );
-        std::fill(
-            _horizontal_centroids.data(), _horizontal_centroids.data() + (n_clusters * _d), 0.0
-        );
-        std::fill(_cluster_sizes.data(), _cluster_sizes.data() + n_clusters, 0);
+        {
+            SKM_PROFILE_SCOPE("fill");
+            std::fill(
+                _horizontal_centroids.data(),
+                _horizontal_centroids.data() + (n_clusters * _d),
+                0.0
+            );
+            std::fill(_cluster_sizes.data(), _cluster_sizes.data() + n_clusters, 0);
+        }
     }
 
     /**
@@ -557,10 +562,15 @@ class SuperKMeans {
             _partial_d,
             out_not_pruned_counts
         );
-        std::fill(
-            _horizontal_centroids.data(), _horizontal_centroids.data() + (n_clusters * _d), 0.0
-        );
-        std::fill(_cluster_sizes.data(), _cluster_sizes.data() + n_clusters, 0);
+        {
+            SKM_PROFILE_SCOPE("fill");
+            std::fill(
+                _horizontal_centroids.data(),
+                _horizontal_centroids.data() + (n_clusters * _d),
+                0.0
+            );
+            std::fill(_cluster_sizes.data(), _cluster_sizes.data() + n_clusters, 0);
+        }
     }
 
     /**
@@ -662,7 +672,10 @@ class SuperKMeans {
                 data_to_cluster, _prev_centroids.data(), tmp_distances_buf, n_samples, n_clusters
             );
         } else {
-            std::fill(not_pruned_counts.data(), not_pruned_counts.data() + n_samples, 0);
+            {
+                SKM_PROFILE_SCOPE("fill");
+                std::fill(not_pruned_counts.data(), not_pruned_counts.data() + n_samples, 0);
+            }
             AssignAndUpdateCentroids(
                 data_to_cluster,
                 _prev_centroids.data(),
@@ -821,6 +834,7 @@ class SuperKMeans {
      * @brief Computes Within-Cluster Sum of Squares (WCSS).
      */
     void ComputeCost(const size_t n_samples) {
+        SKM_PROFILE_SCOPE("compute_cost");
         _prev_cost = _cost;
         _cost = 0.0f;
 #pragma clang loop vectorize(enable)
