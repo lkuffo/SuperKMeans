@@ -971,7 +971,7 @@ class SuperKMeans {
         const bool rotate = true
     ) {
         {
-            SKM_PROFILE_SCOPE("sampling");
+            SKM_PROFILE_SCOPE("generating_centroids");
             auto tmp_centroids_p = _horizontal_centroids.data();
 
             std::mt19937 rng(_config.seed);
@@ -1267,12 +1267,19 @@ class SuperKMeans {
             // Random sampling without replacement using shuffle
             std::mt19937 rng(_config.seed);
             std::vector<size_t> indices(n);
-            for (size_t i = 0; i < n; ++i) {
-                indices[i] = i;
+            {
+                SKM_PROFILE_SCOPE("sampling/indices");
+                for (size_t i = 0; i < n; ++i) {
+                    indices[i] = i;
+                }
             }
-            std::shuffle(indices.begin(), indices.end(), rng);
+            {
+                SKM_PROFILE_SCOPE("sampling/shuffle");
+                std::shuffle(indices.begin(), indices.end(), rng);
+            }
 
             if (rotate) {
+                SKM_PROFILE_SCOPE("sampling/memcpy");
                 // Need intermediate buffer: sample first, then rotate
                 samples_tmp.resize(n_samples * _d);
 #pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
