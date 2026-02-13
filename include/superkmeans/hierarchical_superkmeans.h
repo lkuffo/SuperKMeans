@@ -226,6 +226,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             bool partial_norms_computed = false;
             for (; iter_idx < this->hierarchical_config.iters_mesoclustering; ++iter_idx) {
                 if (iter_idx < 1 || this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                    this->hierarchical_config.use_blas_only ||
                     n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                     this->template RunIteration<true>(
                         data_to_cluster,
@@ -395,6 +396,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 for (; fine_iter_idx < this->hierarchical_config.iters_fineclustering;
                      ++fine_iter_idx) {
                     if (fine_iter_idx < 1 || this->_d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                        this->hierarchical_config.use_blas_only ||
                         n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                         this->template RunIteration<true>(
                             mesocluster_data_to_cluster,
