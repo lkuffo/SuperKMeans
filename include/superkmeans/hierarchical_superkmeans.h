@@ -126,7 +126,9 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         std::vector<distance_t> tmp_distances_buf;
         tmp_distances_buf.reserve(X_BATCH_SIZE * Y_BATCH_SIZE);
         this->vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->d).vertical_d;
-        this->partial_horizontal_centroids.reset(new centroid_value_t[this->n_clusters * this->vertical_d]);
+        this->partial_horizontal_centroids.reset(
+            new centroid_value_t[this->n_clusters * this->vertical_d]
+        );
 
         this->partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->vertical_d / 2);
 
@@ -134,11 +136,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             this->partial_d = this->vertical_d;
         }
         auto initial_partial_d = this->partial_d;
-        
+
         if (this->hierarchical_config.verbose) {
             std::cout << "Front dimensions (d') = " << this->partial_d << std::endl;
-            std::cout << "Trailing dimensions (d'') = " << this->d - this->vertical_d
-                      << std::endl;
+            std::cout << "Trailing dimensions (d'') = " << this->d - this->vertical_d << std::endl;
         }
 
         //
@@ -151,10 +152,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                       << " clusters) ===" << std::endl;
         }
         auto centroids_pdx_wrapper = this->GenerateCentroids(
-            data_p,
-            this->n_samples,
-            n_mesoclusters,
-            !this->hierarchical_config.data_already_rotated
+            data_p, this->n_samples, n_mesoclusters, !this->hierarchical_config.data_already_rotated
         );
         if (this->hierarchical_config.verbose) {
             std::cout << "Sampling data..." << std::endl;
@@ -215,7 +213,11 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         {
             SKM_PROFILE_SCOPE("allocator");
             immutable_data_norms.reset(new vector_value_t[this->n_samples]);
-            memcpy(immutable_data_norms.get(), this->data_norms.get(), sizeof(vector_value_t) * this->n_samples);
+            memcpy(
+                immutable_data_norms.get(),
+                this->data_norms.get(),
+                sizeof(vector_value_t) * this->n_samples
+            );
         }
 
         if (this->hierarchical_config.iters_mesoclustering > 1) {
@@ -475,13 +477,12 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         }
         this->n_samples = initialn_samples;
 
-        // In the refinement phase, we use an even smaller partial d (around 8% of d) because the clusters 
-        // are already well-formed, and pruning rate is expected to be high.
+        // In the refinement phase, we use an even smaller partial d (around 8% of d) because the
+        // clusters are already well-formed, and pruning rate is expected to be high.
         this->partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->vertical_d / 3);
 
         // We just transfer the state of centroids to the proper class variables, no rotation.
-        auto final_refinement_pdx_wrapper =
-            SetupCentroids(final_centroids.get(), this->n_clusters);
+        auto final_refinement_pdx_wrapper = SetupCentroids(final_centroids.get(), this->n_clusters);
 
         // (RunIteration with is_first_iter=false will swap horizontal_centroids and
         // prev_centroids) Copy final_centroids to prev_centroids so the swap in RunIteration
@@ -645,7 +646,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     size_t cj;
                     for (cj = 0; true; cj = (cj + 1) % n_clusters) {
                         float p = (this->cluster_sizes[cj] - 1.0f) /
-                                static_cast<float>(n_samples - n_clusters);
+                                  static_cast<float>(n_samples - n_clusters);
                         float r = std::uniform_real_distribution<float>(0, 1)(rng);
                         if (r < p) {
                             break;
@@ -693,13 +694,14 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 // Find a large cluster with probability proportional to its size
                 size_t large_cluster_idx;
                 for (large_cluster_idx = 0; true;
-                    large_cluster_idx = (large_cluster_idx + 1) % n_clusters) {
+                     large_cluster_idx = (large_cluster_idx + 1) % n_clusters) {
                     size_t large_size = this->cluster_sizes[large_cluster_idx];
                     if (large_size < average_size)
                         continue;
                     // Probability proportional to how much larger this cluster is than average
-                    float p = static_cast<float>(large_size - average_size + 1) /
-                            static_cast<float>(n_samples - average_size * n_clusters + n_clusters);
+                    float p =
+                        static_cast<float>(large_size - average_size + 1) /
+                        static_cast<float>(n_samples - average_size * n_clusters + n_clusters);
                     float r = std::uniform_real_distribution<float>(0, 1)(rng);
                     if (r < p) {
                         break; // Found our cluster to be split

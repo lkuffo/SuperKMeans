@@ -128,8 +128,7 @@ class SuperKMeans {
         }
         n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
         g_n_threads = n_threads;
-        pruner =
-            std::make_unique<pruner_t>(dimensionality, PRUNER_INITIAL_THRESHOLD, config.seed);
+        pruner = std::make_unique<pruner_t>(dimensionality, PRUNER_INITIAL_THRESHOLD, config.seed);
 
         // If data is already rotated, we must not unrotate output centroids
         if (this->config.data_already_rotated) {
@@ -241,9 +240,8 @@ class SuperKMeans {
 
         std::vector<vector_value_t> rotated_queries;
         if (n_queries) {
-            centroids_to_explore = std::max<size_t>(
-                static_cast<size_t>(n_clusters * config.ann_explore_fraction), 1
-            );
+            centroids_to_explore =
+                std::max<size_t>(static_cast<size_t>(n_clusters * config.ann_explore_fraction), 1);
             if (config.verbose) {
                 std::cout << "Centroids to explore: " << centroids_to_explore << " ("
                           << config.ann_explore_fraction * 100.0f << "% of " << n_clusters << ")"
@@ -527,9 +525,7 @@ class SuperKMeans {
         {
             SKM_PROFILE_SCOPE("fill");
             std::fill(
-                horizontal_centroids.get(),
-                horizontal_centroids.get() + (n_clusters * d),
-                0.0
+                horizontal_centroids.get(), horizontal_centroids.get() + (n_clusters * d), 0.0
             );
             std::fill(cluster_sizes.get(), cluster_sizes.get() + n_clusters, 0);
         }
@@ -576,9 +572,7 @@ class SuperKMeans {
         {
             SKM_PROFILE_SCOPE("fill");
             std::fill(
-                horizontal_centroids.get(),
-                horizontal_centroids.get() + (n_clusters * d),
-                0.0
+                horizontal_centroids.get(), horizontal_centroids.get() + (n_clusters * d), 0.0
             );
             std::fill(cluster_sizes.get(), cluster_sizes.get() + n_clusters, 0);
         }
@@ -708,9 +702,7 @@ class SuperKMeans {
             avg_not_pruned_pct =
                 TunePartialD(not_pruned_counts.data(), n_samples, n_clusters, partial_d_changed);
             if (partial_d_changed) {
-                GetPartialL2NormsRowMajor(
-                    data_to_cluster, n_samples, data_norms.get(), partial_d
-                );
+                GetPartialL2NormsRowMajor(data_to_cluster, n_samples, data_norms.get(), partial_d);
             }
         }
 
@@ -1195,8 +1187,8 @@ class SuperKMeans {
                 if (iters_without_improvement >= RECALL_CONVERGENCE_PATIENCE) {
                     if (config.verbose)
                         std::cout << "Converged at iteration " << iter_idx + 1 << " (recall "
-                                  << recall << " hasn't improved by more than "
-                                  << config.recall_tol << " in " << RECALL_CONVERGENCE_PATIENCE
+                                  << recall << " hasn't improved by more than " << config.recall_tol
+                                  << " in " << RECALL_CONVERGENCE_PATIENCE
                                   << " iterations, best: " << best_recall << ")" << std::endl;
                     return true;
                 }
@@ -1334,9 +1326,9 @@ class SuperKMeans {
     //    We can trivially avoid partial_horizontal_centroids by using the full horizontal
     //    centroids in PDXearch. We can also avoid prev_centroids if we dont care about the shift
     //    convergence check.
-    std::unique_ptr<centroid_value_t[]> centroids;                    // PDX-layout centroids
-    std::unique_ptr<centroid_value_t[]> horizontal_centroids;         // Row-major centroids
-    std::unique_ptr<centroid_value_t[]> prev_centroids;               // Previous iteration centroids
+    std::unique_ptr<centroid_value_t[]> centroids;            // PDX-layout centroids
+    std::unique_ptr<centroid_value_t[]> horizontal_centroids; // Row-major centroids
+    std::unique_ptr<centroid_value_t[]> prev_centroids;       // Previous iteration centroids
     std::unique_ptr<centroid_value_t[]> partial_horizontal_centroids; // First vertical_d dimensions
 
     // Buffers for assignment and distance computation
