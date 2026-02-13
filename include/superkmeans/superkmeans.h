@@ -727,6 +727,7 @@ class SuperKMeans {
         target_stats.push_back(stats);
 
         if (_config.verbose) {
+            SKM_PROFILE_SCOPE("verbose_output");
             std::cout << "Iteration " << iter_idx + 1 << "/" << _config.iters
                       << " | Objective: " << _cost << " | Objective improvement: "
                       << (iter_idx > 0 ? 1 - (_cost / _prev_cost) : 0.0f) << " | Shift: " << _shift
