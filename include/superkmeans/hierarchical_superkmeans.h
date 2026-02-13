@@ -543,7 +543,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                         false, // is_first_iter
                         this->hierarchical_iteration_stats.refinement_iteration_stats
                     );
-                    }
                 }
             }
         }
