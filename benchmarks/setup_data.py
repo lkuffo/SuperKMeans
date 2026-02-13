@@ -80,7 +80,7 @@ def setup_cohere_dataset(full=False):
     from datasets import load_dataset
 
     USE_SEPARATE_QUERIES = True  # Use separate queries subset
-    MAX_TRAIN_SAMPLES = 700_000 if full else 10_000_000
+    MAX_TRAIN_SAMPLES = 50_000_000 if full else 10_000_000
     MAX_TEST_SAMPLES = 1000
 
     embedding_dim = 1024
@@ -113,10 +113,9 @@ def setup_cohere_dataset(full=False):
 
         shards = [
             f"passages_parquet/msmarco_v2.1_doc_segmented_{i:02d}.parquet"
-            for i in range(30, 32)
+            for i in range(0, 32)
         ]
 
-        # Open in append mode ('ab') to continue from where we left off
         with open(train_file, 'ab') as f_train:
 
             for shard_path in shards:
@@ -137,7 +136,7 @@ def setup_cohere_dataset(full=False):
 
                         for vec in batch_embeddings:
                             if total_count >= MAX_TRAIN_SAMPLES:
-                                break  # Exit inner loop
+                                break
 
                             write_buffer[buffer_idx] = vec
                             buffer_idx += 1
@@ -150,7 +149,7 @@ def setup_cohere_dataset(full=False):
                                 print(f"Saved {total_count:,} embeddings...")
 
                         if total_count >= MAX_TRAIN_SAMPLES:
-                            break  # Exit batch loop
+                            break
 
                 except Exception as e:
                     print('Failed shard', shard_path)
@@ -162,7 +161,7 @@ def setup_cohere_dataset(full=False):
                 shutil.rmtree("./data/.hf_cache/")
 
                 if total_count >= MAX_TRAIN_SAMPLES:
-                    break  # Exit shard loop
+                    break
 
             # Write any remaining data in buffer
             if buffer_idx > 0:
