@@ -1287,10 +1287,10 @@ class SuperKMeans {
             }
 
             if (rotate) {
+                samples_tmp.resize(n_samples * _d);
                 {
                     SKM_PROFILE_SCOPE("sampling/memcpy1");
                     // Need intermediate buffer: sample first, then rotate
-                    samples_tmp.resize(n_samples * _d);
 #pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
                     for (size_t i = 0; i < n_samples; ++i) {
                         memcpy(
@@ -1303,7 +1303,6 @@ class SuperKMeans {
 
                 {
                     SKM_PROFILE_SCOPE("sampling/memcpy2");
-                    samples_tmp.resize(n_samples * _d);
 #pragma omp parallel for if (_n_threads > 1) num_threads(_n_threads)
                     for (size_t i = 0; i < n_samples; ++i) {
                         memcpy(
