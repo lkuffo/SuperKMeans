@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <algorithm>
 #include <iomanip>
 #include <omp.h>
 #include <random>
@@ -1265,7 +1266,7 @@ class SuperKMeans {
             if (_config.verbose)
                 std::cout << "Sampling " << n_samples << " vectors" << std::endl;
             SKM_PROFILE_SCOPE("sampling");
-            // Random sampling without replacement using shuffle
+            // Random sampling without replacement
             std::mt19937 rng(_config.seed);
             std::vector<size_t> indices(n);
             {
@@ -1276,7 +1277,14 @@ class SuperKMeans {
             }
             {
                 SKM_PROFILE_SCOPE("sampling/shuffle");
-                std::shuffle(indices.begin(), indices.end(), rng);
+                for (size_t i = 0; i < n_samples; ++i) {
+                    std::uniform_int_distribution<size_t> dist(i, n - 1);
+                    std::swap(indices[i], indices[dist(rng)]);
+                }
+            }
+            {
+                SKM_PROFILE_SCOPE("sampling/sort");
+                std::sort(indices.begin(), indices.begin() + n_samples);
             }
 
             if (rotate) {
