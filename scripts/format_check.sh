@@ -42,7 +42,7 @@ for dir in "${DIRECTORIES[@]}"; do
 
     for ext in "${EXTENSIONS[@]}"; do
         while IFS= read -r -d '' file; do
-            ((total_files++))
+            total_files=$((total_files + 1))
 
             # Run clang-format and compare with original
             if ! diff -q <(clang-format "$file") "$file" > /dev/null 2>&1; then

@@ -44,7 +44,7 @@ for dir in "${DIRECTORIES[@]}"; do
         while IFS= read -r -d '' file; do
             echo "  Formatting: ${file#$PROJECT_ROOT/}"
             clang-format -i "$file"
-            ((total_files++))
+            total_files=$((total_files + 1))
         done < <(find "$dir_path" -type f -name "*.$ext" -print0)
     done
 done
