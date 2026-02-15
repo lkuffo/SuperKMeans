@@ -84,6 +84,38 @@ extend-exclude = '''
 )/
 '''
 
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-*"
+skip = "*-win* *-musllinux*"
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64", "aarch64"]
+before-all = [
+    "yum install -y gcc-gfortran",
+    "git clone https://github.com/OpenMathLib/OpenBLAS.git --depth 1 --branch v0.3.28",
+    "cd OpenBLAS && make -j$(nproc) DYNAMIC_ARCH=1 USE_OPENMP=1 NUM_THREADS=128 && make install PREFIX=/usr/local && ldconfig",
+]
+
+[tool.cibuildwheel.macos]
+archs = ["native"]
+before-all = "brew install libomp"
+
+[[tool.cibuildwheel.overrides]]
+select = "*-manylinux_x86_64"
+environment = { CMAKE_ARGS="-DSKMEANS_MARCH=x86-64-v3" }
+
+[[tool.cibuildwheel.overrides]]
+select = "*-manylinux_aarch64"
+environment = { CMAKE_ARGS="-DSKMEANS_MARCH=armv8.2-a+dotprod" }
+
+[[tool.cibuildwheel.overrides]]
+select = "*-macosx_arm64"
+environment = { CMAKE_ARGS="-DSKMEANS_MARCH=armv8-a" }
+
+[[tool.cibuildwheel.overrides]]
+select = "*-macosx_x86_64"
+environment = { CMAKE_ARGS="-DSKMEANS_MARCH=x86-64-v3" }
+
 [tool.mypy]
 python_version = "3.8"
 warn_return_any = true
