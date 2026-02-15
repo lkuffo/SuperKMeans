@@ -181,14 +181,14 @@ int main() {
     avg_speedup /= results.size();
     std::cout << "Average speedup: " << std::setprecision(2) << avg_speedup << "x" << std::endl;
     auto best = std::max_element(
-        results.begin(), results.end(), [](const BenchmarkResult& a, const BenchmarkResult& b) {
-            return a.speedup < b.speedup;
-        }
+        results.begin(),
+        results.end(),
+        [](const BenchmarkResult& a, const BenchmarkResult& b) { return a.speedup < b.speedup; }
     );
     auto worst = std::min_element(
-        results.begin(), results.end(), [](const BenchmarkResult& a, const BenchmarkResult& b) {
-            return a.speedup < b.speedup;
-        }
+        results.begin(),
+        results.end(),
+        [](const BenchmarkResult& a, const BenchmarkResult& b) { return a.speedup < b.speedup; }
     );
     std::cout << "Best speedup:    " << std::setprecision(2) << best->speedup
               << "x (d=" << best->dimensionality << ")" << std::endl;

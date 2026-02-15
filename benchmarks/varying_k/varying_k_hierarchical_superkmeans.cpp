@@ -110,13 +110,13 @@ int main(int argc, char* argv[]) {
             final_objective =
                 kmeans_state.hierarchical_iteration_stats.refinement_iteration_stats.back()
                     .objective;
-        } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats
-                        .empty()) {
+        } else if (!kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.empty(
+                   )) {
             final_objective =
                 kmeans_state.hierarchical_iteration_stats.fineclustering_iteration_stats.back()
                     .objective;
-        } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats
-                        .empty()) {
+        } else if (!kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.empty(
+                   )) {
             final_objective =
                 kmeans_state.hierarchical_iteration_stats.mesoclustering_iteration_stats.back()
                     .objective;

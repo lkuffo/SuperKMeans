@@ -143,8 +143,7 @@ const std::vector<int> VARYING_K_VALUES = {100, 1000, 10000, 100000};
  * @param filename Path to JSON file
  * @return Map of query index to vector IDs
  */
-inline std::unordered_map<int, std::vector<int>> parse_ground_truth_json(
-    const std::string& filename
+inline std::unordered_map<int, std::vector<int>> parse_ground_truth_json(const std::string& filename
 ) {
     std::unordered_map<int, std::vector<int>> gt_map;
     std::ifstream file(filename);
@@ -339,11 +338,9 @@ std::vector<std::tuple<int, float, float, float, float>> compute_recall(
 
         float avg_vectors_to_visit =
             static_cast<float>(total_vectors_to_visit) / static_cast<float>(n_queries);
-        results.push_back(
-            std::make_tuple(
-                centroids_to_explore, explore_frac, average_recall, std_recall, avg_vectors_to_visit
-            )
-        );
+        results.push_back(std::make_tuple(
+            centroids_to_explore, explore_frac, average_recall, std_recall, avg_vectors_to_visit
+        ));
     }
 
     return results;

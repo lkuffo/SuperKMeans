@@ -189,7 +189,9 @@ class Profiler {
 
         // Sort top-level by accumulated time (descending)
         std::sort(
-            top_level.begin(), top_level.end(), [this](const std::string& a, const std::string& b) {
+            top_level.begin(),
+            top_level.end(),
+            [this](const std::string& a, const std::string& b) {
                 return timers_.at(a).accum_time_ns > timers_.at(b).accum_time_ns;
             }
         );
