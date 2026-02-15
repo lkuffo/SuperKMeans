@@ -76,7 +76,7 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32> {
             d2 += d * d;
         }
 
-        return static_cast<distance_t>(d2);
+        return static_cast<distance_t>(d2); // NOLINT(bugprone-narrowing-conversions)
     };
 };
 
@@ -134,7 +134,7 @@ class SIMDComputer<skmeans::DistanceFunction::dp, skmeans::Quantization::f32> {
         for (; i < num_dimensions; ++i) {
             d2 += vector1[i] * vector2[i];
         }
-        return static_cast<distance_t>(d2);
+        return static_cast<distance_t>(d2); // NOLINT(bugprone-narrowing-conversions)
     };
 };
 

@@ -8,8 +8,13 @@ Checks: >
   modernize-use-using,
   performance-*,
   readability-redundant-*,
-  -bugprone-easily-swappable-parameters
+  -bugprone-easily-swappable-parameters,
+  -performance-avoid-endl
 
 WarningsAsErrors: ''
+
+CheckOptions:
+  - key: bugprone-narrowing-conversions.WarnOnEquivalentBitWidth
+    value: false
 
 HeaderFilterRegex: 'include/superkmeans/.*'

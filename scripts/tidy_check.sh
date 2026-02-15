@@ -52,11 +52,12 @@ for dir in "${DIRECTORIES[@]}"; do
             relative_file="${file#$PROJECT_ROOT/}"
 
             # Only check warnings from headers in include/superkmeans/
-            if ! clang-tidy -p "$PROJECT_ROOT" "$file" 2>&1 | grep "warning:" | grep -q "include/superkmeans/"; then
+            header_warnings=$(clang-tidy -p "$PROJECT_ROOT" "$file" 2>&1 | grep "warning:" | grep "include/superkmeans/" || true)
+            if [ -z "$header_warnings" ]; then
                 echo "  ✓ $relative_file"
             else
                 echo "  ✗ $relative_file"
-                clang-tidy -p "$PROJECT_ROOT" "$file" 2>&1 | grep "warning:" | grep "include/superkmeans/" | head -10
+                echo "$header_warnings" | head -50
                 files_with_warnings=$((files_with_warnings + 1))
             fi
         done < <(find "$dir_path" -type f -name "*.$ext" -not -name "generate_*" -print0)

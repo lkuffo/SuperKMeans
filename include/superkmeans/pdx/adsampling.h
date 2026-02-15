@@ -36,7 +36,7 @@ class ADSamplingPruner {
 
   public:
     uint32_t num_dimensions;
-    std::vector<float> ratios{}; // Precomputed pruning threshold ratios
+    std::vector<float> ratios; // Precomputed pruning threshold ratios
 
     /**
      * @brief Constructor
