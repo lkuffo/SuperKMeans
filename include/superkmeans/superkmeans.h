@@ -602,8 +602,8 @@ class SuperKMeans {
             cluster_sizes[assignments[i]]++;
         }
 
-        float sum = std::accumulate(cluster_sizes.begin(), cluster_sizes.end(), 0.0f);
-        stats.mean = sum / cluster_sizes.size();
+        auto sum = std::accumulate(cluster_sizes.begin(), cluster_sizes.end(), size_t{0});
+        stats.mean = static_cast<float>(sum) / static_cast<float>(cluster_sizes.size());
 
         // Geometric mean
         float log_sum = 0.0f;
@@ -617,10 +617,13 @@ class SuperKMeans {
         stats.geometric_mean =
             (non_zero_count > 0) ? std::exp(log_sum / static_cast<float>(non_zero_count)) : 0.0f;
 
-        float sq_sum = std::inner_product(
-            cluster_sizes.begin(), cluster_sizes.end(), cluster_sizes.begin(), 0.0f
+        auto sq_sum = std::inner_product(
+            cluster_sizes.begin(), cluster_sizes.end(), cluster_sizes.begin(), size_t{0}
         );
-        stats.stdev = std::sqrt(sq_sum / cluster_sizes.size() - stats.mean * stats.mean);
+        stats.stdev = std::sqrt(
+            static_cast<float>(sq_sum) / static_cast<float>(cluster_sizes.size()) -
+            stats.mean * stats.mean
+        );
 
         // Coefficient of variation
         stats.cv = stats.stdev / stats.mean;
