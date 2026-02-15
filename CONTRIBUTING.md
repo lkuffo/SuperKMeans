@@ -7,14 +7,11 @@ These are our current priorities:
 **Features**:
 - Support `uint64_t` for the `assignments`. Right now, we are limited to ~4 billion vectors.
 - Support for different datatypes: 64-bit `double`, 16-bit `half`, 8-bit `uint8` (experimental).
-- Faster `.Assign()`
 - Support for out-of-core capabilities
 
 **Improvements**:
 - A proper benchmarking framework for development.
-- GitHub CI tests.
 - Regression tests on CI.
-- A `.clang-tidy`.
 
 
 ## Getting Started

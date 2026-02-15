@@ -3,8 +3,16 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
 
 jobs:
   format-check:
@@ -23,6 +31,33 @@ jobs:
         run: |
           clang-format --version
           ./scripts/format_check.sh
+
+  tidy-check:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 clang-tidy-18 libomp-18-dev libopenblas-dev cmake
+          sudo ln -sf /usr/bin/clang-tidy-18 /usr/local/bin/clang-tidy
+
+      - name: Configure
+        run: cmake -B build -DSKMEANS_COMPILE_TESTS=ON -DSKMEANS_COMPILE_EXAMPLES=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run clang-tidy
+        run: |
+          ln -s build/compile_commands.json compile_commands.json
+          ./scripts/tidy_check.sh
 
   cpp-build-and-test:
     runs-on: ubuntu-24.04
@@ -78,3 +113,79 @@ jobs:
 
       - name: Run Python example
         run: python examples/simple_clustering.py 10000 128 50
+
+  sanitizers-asan-ubsan:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+
+      - name: Configure with ASan + UBSan
+        run: |
+          cmake -B build_asan -DSKMEANS_COMPILE_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+
+      - name: Build tests
+        run: cmake --build build_asan -j$(nproc) --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build_asan --output-on-failure --exclude-regex "SLOW_"
+
+  sanitizers-tsan:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+      TSAN_OPTIONS: ignore_noninstrumented_modules=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+
+      - name: Configure with TSan
+        run: |
+          cmake -B build_tsan -DSKMEANS_COMPILE_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+
+      - name: Build tests
+        run: cmake --build build_tsan -j$(nproc) --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build_tsan --output-on-failure --exclude-regex "SLOW_"
+
+  ci-pass:
+    # Gate job: require this single job in branch protection settings
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - format-check
+      - tidy-check
+      - cpp-build-and-test
+      - python
+      - sanitizers-asan-ubsan
+      - sanitizers-tsan
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more jobs failed or were cancelled"
+            exit 1
+          fi

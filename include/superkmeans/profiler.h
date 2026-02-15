@@ -154,7 +154,7 @@ class Profiler {
 
         os << "---------------------------------------\n";
         os << std::left << std::setw(35) << "TOTAL" << std::right << std::setw(10)
-           << (total_ns / 1e9) << "s\n";
+           << (static_cast<double>(total_ns) / 1e9) << "s\n";
         os << "=======================================\n";
     }
 
@@ -239,7 +239,7 @@ class Profiler {
 
         os << "-------------------------------------------\n";
         os << std::left << std::setw(40) << "TOTAL" << std::right << std::setw(10)
-           << (total_ns / 1e9) << "s\n";
+           << (static_cast<double>(total_ns) / 1e9) << "s\n";
         os << "===========================================\n";
     }
 
@@ -265,7 +265,7 @@ class Profiler {
  */
 class ScopedTimer {
   public:
-    explicit ScopedTimer(const std::string& name) : name_(name) {
+    explicit ScopedTimer(std::string name) : name_(std::move(name)) {
         if (Profiler::Get().IsEnabled()) {
             Profiler::Get().Start(name_);
         }

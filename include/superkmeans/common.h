@@ -95,9 +95,9 @@ static constexpr uint32_t AlignValue(T n) {
     return ((n + (val - 1)) / val) * val;
 }
 
-enum class DistanceFunction { l2, dp };
+enum class DistanceFunction : uint8_t { l2, dp };
 
-enum class Quantization { f32, u8, f16, bf16 };
+enum class Quantization : uint8_t { f32, u8, f16, bf16 };
 
 template <Quantization q>
 struct DistanceType {

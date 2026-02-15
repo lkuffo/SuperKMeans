@@ -260,33 +260,30 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                         row_p[c] = -2.0f * row_p[c] + norm_x_i + norms_y[j + c];
                     }
 
-                    // TODO(lkuffo, low): I feel this can be improved
-                    // Merge: Combine previous top-k with current Y batch candidates
+                    // TODO(@lkuffo, low): I feel this can be improved
                     auto& candidates = thread_candidates[omp_get_thread_num()];
                     candidates.clear();
                     // Add previous top-k
                     for (size_t ki = 0; ki < k; ++ki) {
                         if (out_distances[i_idx * k + ki] <
                             std::numeric_limits<distance_t>::max()) {
-                            candidates.push_back(
-                                {out_distances[i_idx * k + ki], out_knn[i_idx * k + ki]}
+                            candidates.emplace_back(
+                                out_distances[i_idx * k + ki], out_knn[i_idx * k + ki]
                             );
                         }
                     }
                     // Add current batch candidates
                     for (size_t c = 0; c < batch_n_y; ++c) {
-                        candidates.push_back({row_p[c], static_cast<uint32_t>(j + c)});
+                        candidates.emplace_back(row_p[c], static_cast<uint32_t>(j + c));
                     }
                     size_t actual_k = std::min(k, candidates.size());
                     std::partial_sort(
                         candidates.begin(), candidates.begin() + actual_k, candidates.end()
                     );
-                    // Update output with new top-k
                     for (size_t ki = 0; ki < actual_k; ++ki) {
                         out_distances[i_idx * k + ki] = std::max(0.0f, candidates[ki].first);
                         out_knn[i_idx * k + ki] = candidates[ki].second;
                     }
-                    // Fill remaining slots if needed
                     for (size_t ki = actual_k; ki < k; ++ki) {
                         out_distances[i_idx * k + ki] = std::numeric_limits<distance_t>::max();
                         out_knn[i_idx * k + ki] = static_cast<uint32_t>(-1);

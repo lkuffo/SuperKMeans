@@ -36,7 +36,7 @@ class ADSamplingPruner {
 
   public:
     uint32_t num_dimensions;
-    std::vector<float> ratios{}; // Precomputed pruning threshold ratios
+    std::vector<float> ratios; // Precomputed pruning threshold ratios
 
     /**
      * @brief Constructor
@@ -48,7 +48,7 @@ class ADSamplingPruner {
     ADSamplingPruner(uint32_t num_dimensions_, float epsilon0, uint32_t seed = 42)
         : num_dimensions(num_dimensions_), epsilon0(epsilon0) {
         InitializeRatios();
-        std::mt19937 gen(seed);
+        std::mt19937 gen(seed); // NOLINT(bugprone-narrowing-conversions)
         bool matrix_created = false;
 #ifdef HAS_FFTW
 #ifdef __AVX2__
@@ -75,8 +75,8 @@ class ADSamplingPruner {
         if (!matrix_created) {
             matrix.resize(num_dimensions, num_dimensions);
             std::normal_distribution<float> dist(0.0f, 1.0f);
-            for (int i = 0; i < num_dimensions; ++i) {
-                for (int j = 0; j < num_dimensions; ++j) {
+            for (uint32_t i = 0; i < num_dimensions; ++i) {
+                for (uint32_t j = 0; j < num_dimensions; ++j) {
                     matrix(i, j) = dist(gen);
                 }
             }
@@ -176,7 +176,7 @@ class ADSamplingPruner {
                 flag = FFTW_ESTIMATE;
             }
             fftwf_plan plan;
-            fftwf_plan_with_nthreads(g_n_threads);
+            fftwf_plan_with_nthreads(static_cast<int>(g_n_threads));
             plan = fftwf_plan_many_r2r(
                 1, &n0, howmany, out.data(), NULL, 1, n0, out.data(), NULL, 1, n0, kind, flag
             );
@@ -236,7 +236,9 @@ class ADSamplingPruner {
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
 #endif
             // Copy input to output buffer for in-place transform
-            std::memcpy(out_buffer, rotated_vectors, n * num_dimensions * sizeof(float));
+            std::memcpy(
+                out_buffer, rotated_vectors, static_cast<size_t>(n) * num_dimensions * sizeof(float)
+            );
 
             // Undo scaling (inverse of forward scaling)
             const float inv_s0 = std::sqrt(4.0f * num_dimensions);
@@ -246,7 +248,7 @@ class ADSamplingPruner {
 
             // Apply inverse DCT (DCT-III = FFTW_REDFT01)
             fftwf_init_threads();
-            fftwf_plan_with_nthreads(g_n_threads);
+            fftwf_plan_with_nthreads(static_cast<int>(g_n_threads));
             int n0 = static_cast<int>(num_dimensions);
             int howmany = static_cast<int>(n);
             fftw_r2r_kind kind[1] = {FFTW_REDFT01}; // DCT-III (inverse of DCT-II)
@@ -255,7 +257,7 @@ class ADSamplingPruner {
                 flag = FFTW_ESTIMATE;
             }
             fftwf_plan plan;
-            fftwf_plan_with_nthreads(g_n_threads);
+            fftwf_plan_with_nthreads(static_cast<int>(g_n_threads));
             plan = fftwf_plan_many_r2r(
                 1, &n0, howmany, out.data(), NULL, 1, n0, out.data(), NULL, 1, n0, kind, flag
             );
@@ -296,9 +298,11 @@ class ADSamplingPruner {
         if (visited_dimensions == num_dimensions) {
             return 1.0;
         }
-        return 1.0 * visited_dimensions / num_dimensions *
-               (1.0 + epsilon0 / std::sqrt(visited_dimensions)) *
-               (1.0 + epsilon0 / std::sqrt(visited_dimensions));
+        return static_cast<float>(
+            static_cast<double>(visited_dimensions) / static_cast<double>(num_dimensions) *
+            (1.0 + epsilon0 / std::sqrt(static_cast<double>(visited_dimensions))) *
+            (1.0 + epsilon0 / std::sqrt(static_cast<double>(visited_dimensions)))
+        );
     }
 };
 
