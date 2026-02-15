@@ -12,11 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Install clang-format-18
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-18
+          sudo ln -sf /usr/bin/clang-format-18 /usr/bin/clang-format
 
       - name: Check C++ formatting
-        run: ./scripts/format_check.sh
+        run: |
+          clang-format --version
+          ./scripts/format_check.sh
 
   cpp-build-and-test:
     runs-on: ubuntu-24.04
