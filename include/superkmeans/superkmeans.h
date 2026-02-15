@@ -98,6 +98,9 @@ struct ClusterBalanceStats {
 
 template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
 class SuperKMeans {
+  public:
+    virtual ~SuperKMeans() = default;
+
   protected:
     using centroid_value_t = skmeans_centroid_value_t<q>;
     using vector_value_t = skmeans_value_t<q>;
@@ -575,10 +578,10 @@ class SuperKMeans {
     }
 
     /** @brief Returns the number of clusters. */
-    [[nodiscard]] inline size_t GetNClusters() const noexcept { return n_clusters; }
+    [[nodiscard]] size_t GetNClusters() const noexcept { return n_clusters; }
 
     /** @brief Returns whether the model has been trained. */
-    [[nodiscard]] inline bool IsTrained() const noexcept { return trained; }
+    [[nodiscard]] bool IsTrained() const noexcept { return trained; }
 
     /**
      * @brief Calculate cluster balance statistics from assignments
@@ -611,7 +614,8 @@ class SuperKMeans {
                 non_zero_count++;
             }
         }
-        stats.geometric_mean = (non_zero_count > 0) ? std::exp(log_sum / non_zero_count) : 0.0f;
+        stats.geometric_mean =
+            (non_zero_count > 0) ? std::exp(log_sum / static_cast<float>(non_zero_count)) : 0.0f;
 
         float sq_sum = std::inner_product(
             cluster_sizes.begin(), cluster_sizes.end(), cluster_sizes.begin(), 0.0f
@@ -805,17 +809,13 @@ class SuperKMeans {
 
         if constexpr (GEMM_ONLY) {
             GetL2NormsRowMajor(prev_centroids.get(), n_clusters, centroid_norms.get());
-        } else {
-            GetPartialL2NormsRowMajor(
-                prev_centroids.get(), n_clusters, centroids_partial_norms.data(), partial_d
-            );
-        }
-
-        if constexpr (GEMM_ONLY) {
             FirstAssignAndUpdateCentroids(
                 data_to_cluster, prev_centroids.get(), tmp_distances_buf, n_samples, n_clusters
             );
         } else {
+            GetPartialL2NormsRowMajor(
+                prev_centroids.get(), n_clusters, centroids_partial_norms.data(), partial_d
+            );
             {
                 SKM_PROFILE_SCOPE("fill");
                 std::fill(not_pruned_counts.data(), not_pruned_counts.data() + n_samples, 0);
@@ -1276,7 +1276,7 @@ class SuperKMeans {
             return n;
         }
         auto samples_byn_clusters = n_clusters * config.max_points_per_cluster;
-        auto samples_by_n = static_cast<size_t>(std::floor(n * config.sampling_fraction));
+        auto samples_by_n = static_cast<size_t>(std::floor(static_cast<float>(n) * config.sampling_fraction));
         return std::min(samples_by_n, samples_byn_clusters);
     }
 

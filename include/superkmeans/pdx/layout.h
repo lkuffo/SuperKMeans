@@ -5,6 +5,7 @@
 #include "superkmeans/pdx/pdxearch.h"
 #include <Eigen/Dense>
 #include <cassert>
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -111,15 +112,15 @@ class PDXLayout {
      * @param d Number of dimensions (cols) in the data
      * @return PDXDimensionSplit
      */
-    static inline PDXDimensionSplit GetDimensionSplit(const size_t d) {
+    static PDXDimensionSplit GetDimensionSplit(const size_t d) {
         auto local_proportion_horizontal_dim = PROPORTION_HORIZONTAL_DIM;
         if (d <= 256) {
             local_proportion_horizontal_dim = 0.25;
         }
-        size_t horizontal_d = static_cast<uint32_t>(d * local_proportion_horizontal_dim);
+        size_t horizontal_d = static_cast<size_t>(static_cast<double>(d) * local_proportion_horizontal_dim);
         size_t vertical_d = d - horizontal_d;
         if (horizontal_d % H_DIM_SIZE > 0) {
-            horizontal_d = std::floor((1.0 * horizontal_d / H_DIM_SIZE) + 0.5) * H_DIM_SIZE;
+            horizontal_d = static_cast<size_t>(std::lround(static_cast<double>(horizontal_d) / static_cast<double>(H_DIM_SIZE))) * H_DIM_SIZE;
             vertical_d = d - horizontal_d;
         }
         if (!vertical_d) {
@@ -147,7 +148,7 @@ class PDXLayout {
      * @return void
      */
     template <bool FULLY_TRANSPOSED = false, size_t CHUNK_SIZE = VECTOR_CHUNK_SIZE>
-    static inline void PDXify(
+    static void PDXify(
         const skmeans_value_t<q>* SKM_RESTRICT in_vectors,
         skmeans_value_t<q>* SKM_RESTRICT out_pdx_vectors,
         const size_t n,

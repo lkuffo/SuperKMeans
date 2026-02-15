@@ -67,7 +67,7 @@ class SIMDComputer<DistanceFunction::l2, Quantization::f32> {
         size_t num_dimensions
     ) {
 #if defined(__APPLE__)
-        float distance = 0.0;
+        distance_t distance = 0.0f;
 #pragma clang loop vectorize(enable)
         for (size_t i = 0; i < num_dimensions; ++i) {
             float diff = vector1[i] - vector2[i];

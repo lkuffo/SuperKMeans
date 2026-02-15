@@ -24,6 +24,33 @@ jobs:
           clang-format --version
           ./scripts/format_check.sh
 
+  tidy-check:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 clang-tidy-18 libomp-18-dev libopenblas-dev cmake
+          sudo ln -sf /usr/bin/clang-tidy-18 /usr/local/bin/clang-tidy
+
+      - name: Configure
+        run: cmake -B build -DSKMEANS_COMPILE_TESTS=ON -DSKMEANS_COMPILE_EXAMPLES=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run clang-tidy
+        run: |
+          ln -s build/compile_commands.json compile_commands.json
+          ./scripts/tidy_check.sh
+
   cpp-build-and-test:
     runs-on: ubuntu-24.04
     env:
@@ -112,6 +139,7 @@ jobs:
     env:
       CC: clang-18
       CXX: clang++-18
+      TSAN_OPTIONS: ignore_noninstrumented_modules=1
     steps:
       - uses: actions/checkout@v4
         with:

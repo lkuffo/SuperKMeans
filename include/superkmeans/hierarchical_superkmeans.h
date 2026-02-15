@@ -555,7 +555,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             return n;
         }
         auto samples_by_n =
-            static_cast<size_t>(std::floor(n * this->hierarchical_config.sampling_fraction));
+            static_cast<size_t>(std::floor(static_cast<double>(n) * this->hierarchical_config.sampling_fraction));
         return samples_by_n;
     }
 
@@ -580,7 +580,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         auto horizontal_centroids_p = this->horizontal_centroids.get();
 
         size_t average_size = n_samples / n_clusters;
-        size_t threshold_size = static_cast<size_t>(average_size * BALANCING_THRESHOLD);
+        size_t threshold_size = static_cast<size_t>(static_cast<float>(average_size) * BALANCING_THRESHOLD);
         {
             SKM_PROFILE_SCOPE("consolidate/empty");
             for (size_t ci = 0; ci < n_clusters; ci++) {
@@ -735,7 +735,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     double proportion =
                         static_cast<double>(n_clusters_remaining * mesocluster_sizes[i]) /
                         static_cast<double>(n_samples_remaining);
-                    size_t allocated = static_cast<size_t>(proportion + 0.5);
+                    size_t allocated = static_cast<size_t>(std::lround(proportion));
                     allocated = std::min(
                         allocated, n_clusters_remaining - n_nonempty_mesoclusters_remaining
                     );

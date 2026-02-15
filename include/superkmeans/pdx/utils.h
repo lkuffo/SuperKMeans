@@ -33,7 +33,7 @@ class TicToc {
     }
 
     double GetMilliseconds() const {
-        return accum_time / 1e6; // Convert nanoseconds to milliseconds
+        return static_cast<double>(accum_time) / 1e6; // Convert nanoseconds to milliseconds
     }
 };
 
@@ -80,7 +80,7 @@ inline std::vector<float> MakeBlobs(
     float center_spread = 10.0f,
     uint32_t random_state = 42
 ) {
-    std::mt19937 gen(random_state);
+    std::mt19937 gen(random_state); // NOLINT(bugprone-narrowing-conversions)
     std::normal_distribution<float> center_dist(0.0f, center_spread);
 
     std::vector<float> centers(n_centers * n_features);
@@ -93,9 +93,8 @@ inline std::vector<float> MakeBlobs(
     {
         std::uniform_int_distribution<size_t> cluster_dist(0, n_centers - 1);
         std::normal_distribution<float> point_dist(0.0f, cluster_std);
-        std::mt19937 thread_gen(
-            static_cast<uint32_t>(random_state) + static_cast<uint32_t>(omp_get_thread_num())
-        );
+        // NOLINTNEXTLINE(bugprone-narrowing-conversions)
+        std::mt19937 thread_gen(random_state + static_cast<uint32_t>(omp_get_thread_num()));
 #pragma omp for
         for (size_t i = 0; i < n_samples; ++i) {
             size_t center_idx = cluster_dist(thread_gen) * n_features;
@@ -144,7 +143,7 @@ inline std::vector<float> GenerateRandomVectors(
     uint32_t seed = 42
 ) {
     std::vector<float> output(n * d);
-    std::mt19937 rng(seed);
+    std::mt19937 rng(seed); // NOLINT(bugprone-narrowing-conversions)
     std::uniform_real_distribution<float> dist(min_val, max_val);
     for (auto& val : output) {
         val = dist(rng);
@@ -316,7 +315,7 @@ inline void GenerateRandomDataWithMasks(
     float flip_probability = 0.5f,
     uint32_t seed = 42
 ) {
-    std::mt19937 gen(seed);
+    std::mt19937 gen(seed); // NOLINT(bugprone-narrowing-conversions)
     std::uniform_real_distribution<float> value_dist(-100.0f, 100.0f);
     std::uniform_real_distribution<float> flip_dist(0.0f, 1.0f);
     for (size_t i = 0; i < n; ++i) {
@@ -344,8 +343,8 @@ inline void GenerateRandomDistances(
     float selectivity = 0.03f,
     uint32_t seed = 42
 ) {
-    std::mt19937 gen(seed);
-    size_t n_below = static_cast<size_t>(n * selectivity);
+    std::mt19937 gen(seed); // NOLINT(bugprone-narrowing-conversions)
+    size_t n_below = static_cast<size_t>(static_cast<float>(n) * selectivity);
     std::uniform_real_distribution<float> below_dist(0.0f, threshold * 0.99f);
     for (size_t i = 0; i < n_below; ++i) {
         pruning_distances[i] = below_dist(gen);

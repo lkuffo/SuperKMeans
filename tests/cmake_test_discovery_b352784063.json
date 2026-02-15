@@ -1,0 +1,37 @@
+{
+  "tests": 5,
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "PDXLayoutTest",
+      "tests": 5,
+      "testsuite": [
+        {
+          "name": "DimensionSplit_CorrectForVariousDimensions",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_pdx_layout.cpp",
+          "line": 61
+        },
+        {
+          "name": "SmallDimensions_HorizontalIsZero",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_pdx_layout.cpp",
+          "line": 86
+        },
+        {
+          "name": "VerticalNeverZero",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_pdx_layout.cpp",
+          "line": 100
+        },
+        {
+          "name": "PDXify_PreservesAllValues",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_pdx_layout.cpp",
+          "line": 116
+        },
+        {
+          "name": "PDXify_FullyTransposed",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_pdx_layout.cpp",
+          "line": 168
+        }
+      ]
+    }
+  ]
+}
