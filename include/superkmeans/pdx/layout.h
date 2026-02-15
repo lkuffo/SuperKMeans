@@ -117,10 +117,15 @@ class PDXLayout {
         if (d <= 256) {
             local_proportion_horizontal_dim = 0.25;
         }
-        size_t horizontal_d = static_cast<size_t>(static_cast<double>(d) * local_proportion_horizontal_dim);
+        size_t horizontal_d =
+            static_cast<size_t>(static_cast<double>(d) * local_proportion_horizontal_dim);
         size_t vertical_d = d - horizontal_d;
         if (horizontal_d % H_DIM_SIZE > 0) {
-            horizontal_d = static_cast<size_t>(std::lround(static_cast<double>(horizontal_d) / static_cast<double>(H_DIM_SIZE))) * H_DIM_SIZE;
+            horizontal_d =
+                static_cast<size_t>(
+                    std::lround(static_cast<double>(horizontal_d) / static_cast<double>(H_DIM_SIZE))
+                ) *
+                H_DIM_SIZE;
             vertical_d = d - horizontal_d;
         }
         if (!vertical_d) {

@@ -1276,7 +1276,8 @@ class SuperKMeans {
             return n;
         }
         auto samples_byn_clusters = n_clusters * config.max_points_per_cluster;
-        auto samples_by_n = static_cast<size_t>(std::floor(static_cast<float>(n) * config.sampling_fraction));
+        auto samples_by_n =
+            static_cast<size_t>(std::floor(static_cast<float>(n) * config.sampling_fraction));
         return std::min(samples_by_n, samples_byn_clusters);
     }
 

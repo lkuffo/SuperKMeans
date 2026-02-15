@@ -554,8 +554,9 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         if (this->hierarchical_config.sampling_fraction == 1.0) {
             return n;
         }
-        auto samples_by_n =
-            static_cast<size_t>(std::floor(static_cast<double>(n) * this->hierarchical_config.sampling_fraction));
+        auto samples_by_n = static_cast<size_t>(
+            std::floor(static_cast<double>(n) * this->hierarchical_config.sampling_fraction)
+        );
         return samples_by_n;
     }
 
@@ -580,7 +581,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         auto horizontal_centroids_p = this->horizontal_centroids.get();
 
         size_t average_size = n_samples / n_clusters;
-        size_t threshold_size = static_cast<size_t>(static_cast<float>(average_size) * BALANCING_THRESHOLD);
+        size_t threshold_size =
+            static_cast<size_t>(static_cast<float>(average_size) * BALANCING_THRESHOLD);
         {
             SKM_PROFILE_SCOPE("consolidate/empty");
             for (size_t ci = 0; ci < n_clusters; ci++) {

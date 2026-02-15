@@ -236,7 +236,9 @@ class ADSamplingPruner {
         if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
 #endif
             // Copy input to output buffer for in-place transform
-            std::memcpy(out_buffer, rotated_vectors, static_cast<size_t>(n) * num_dimensions * sizeof(float));
+            std::memcpy(
+                out_buffer, rotated_vectors, static_cast<size_t>(n) * num_dimensions * sizeof(float)
+            );
 
             // Undo scaling (inverse of forward scaling)
             const float inv_s0 = std::sqrt(4.0f * num_dimensions);
@@ -299,7 +301,8 @@ class ADSamplingPruner {
         return static_cast<float>(
             static_cast<double>(visited_dimensions) / static_cast<double>(num_dimensions) *
             (1.0 + epsilon0 / std::sqrt(static_cast<double>(visited_dimensions))) *
-            (1.0 + epsilon0 / std::sqrt(static_cast<double>(visited_dimensions))));
+            (1.0 + epsilon0 / std::sqrt(static_cast<double>(visited_dimensions)))
+        );
     }
 };
 
