@@ -65,7 +65,7 @@ static inline constexpr uint32_t MIN_PARTIAL_D = 16;
 
 // Thresholds below which GEMM-only (no pruning) is used
 static inline constexpr size_t DIMENSION_THRESHOLD_FOR_PRUNING = 128;
-static inline constexpr size_t N_CLUSTERS_THRESHOLD_FOR_PRUNING = 512;
+static inline constexpr size_t N_CLUSTERS_THRESHOLD_FOR_PRUNING = 384;
 
 #if defined(__APPLE__)
 // AMX (used with Apple Accelerate) benefits from larger batch sizes

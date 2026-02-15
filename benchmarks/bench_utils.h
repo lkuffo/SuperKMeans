@@ -86,6 +86,7 @@ const std::unordered_map<std::string, std::pair<size_t, size_t>> DATASET_PARAMS 
     {"openai", {999000, 1536}},
     {"arxiv", {2253000, 768}},
     {"cohere", {10000000, 1024}},
+    {"cohere50m", {50000000, 1024}},
 };
 
 const std::vector<std::string> ANGULAR_DATASETS =

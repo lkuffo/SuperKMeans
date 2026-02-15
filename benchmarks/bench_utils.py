@@ -84,7 +84,8 @@ DATASET_PARAMS = {
     "gist": (1_000_000, 960),
     "openai": (999_000, 1536),
     "arxiv": (2_253_000, 768),
-    "cohere": (10_000_000, 1024)
+    "cohere": (10_000_000, 1024),
+    "cohere50m": (50_000_000, 1024)
 }
 
 # Datasets that should use angular/spherical k-means

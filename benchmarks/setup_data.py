@@ -7,6 +7,16 @@
 # ]
 # ///
 
+# Redirect all HuggingFace and temp downloads to data partition before any imports
+import os
+_data_cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', '.hf_cache')
+os.makedirs(_data_cache, exist_ok=True)
+os.environ["HF_HOME"] = _data_cache
+os.environ["HF_DATASETS_CACHE"] = _data_cache
+os.environ["TMPDIR"] = _data_cache
+os.environ["TEMP"] = _data_cache
+os.environ["TMP"] = _data_cache
+
 import argparse
 import numpy as np
 import sys
@@ -65,64 +75,106 @@ def setup_hdf5_dataset(dataset_id, raw_data_path):
     print(f"  Actual dims: {len(train[0])}")
 
 
-def setup_cohere_dataset():
+def setup_cohere_dataset(full=False):
     """Download and process Cohere Wikipedia embeddings from HuggingFace."""
     from datasets import load_dataset
 
     USE_SEPARATE_QUERIES = True  # Use separate queries subset
-    MAX_TRAIN_SAMPLES = 10_000_000
+    MAX_TRAIN_SAMPLES = 50_000_000 if full else 10_000_000
     MAX_TEST_SAMPLES = 1000
 
-    batch_size = 10000  # Fetch 10k embeddings per batch from HuggingFace
-    write_chunk_size = 100000  # Write to disk every 100k embeddings
     embedding_dim = 1024
+    # Process in chunks to avoid PyArrow list offset overflow on large streams
+    chunk_size = 10_000_000
+    cache_dir = str(DATA_DIR / ".hf_cache")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    train_file = DATA_DIR / "data_cohere.bin"
-    test_file = DATA_DIR / "data_cohere_test.bin"
+    train_file = DATA_DIR / "data_cohere50m.bin" if full else DATA_DIR / "data_cohere.bin"
+    test_file = DATA_DIR / "data_cohere50m_test.bin" if full else DATA_DIR / "data_cohere_test.bin"
 
-    print("Downloading Cohere Wikipedia embeddings from HuggingFace (this may take a few hours)...")
+    print("Downloading Cohere Wikipedia embeddings from HuggingFace...")
     print(f"  Max train samples: {MAX_TRAIN_SAMPLES:,}")
     print(f"  Max test samples:  {MAX_TEST_SAMPLES:,}")
 
     if USE_SEPARATE_QUERIES:
         print(f"\nLoading train embeddings (max {MAX_TRAIN_SAMPLES:,})...")
-        dataset_train = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "passages", split="train", streaming=True)
+
+        batch_size = 10_000
+        write_chunk_size = 100_000
 
         write_buffer = np.empty((write_chunk_size, embedding_dim), dtype=np.float32)
         buffer_idx = 0
         total_count = 0
 
-        with open(train_file, 'wb') as f_train:
-            for batch in dataset_train.iter(batch_size=batch_size):
-                print(f'Receiving train batch (total: {total_count:,}/{MAX_TRAIN_SAMPLES:,})')
-                batch_embeddings = np.array(batch['emb'], dtype=np.float32)
-                batch_len = len(batch_embeddings)
+        #ds_meta = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "passages", split="train", streaming=False)
+        #shards = ds_meta.data_files['train']
+        
+        # print('Shards: ', shards)
 
-                for i in range(batch_len):
-                    if total_count >= MAX_TRAIN_SAMPLES:
-                        break
+        shards = [
+            f"passages_parquet/msmarco_v2.1_doc_segmented_{i:02d}.parquet"
+            for i in range(0, 32)
+        ]
 
-                    write_buffer[buffer_idx] = batch_embeddings[i]
-                    buffer_idx += 1
-                    total_count += 1
+        with open(train_file, 'ab') as f_train:
 
-                    if buffer_idx >= write_chunk_size:
-                        write_buffer.tofile(f_train)
-                        print(f"Processed and wrote {total_count:,} train samples...")
-                        buffer_idx = 0
+            for shard_path in shards:
+                print(f"\nProcessing shard: {shard_path}")
+                try:
+                    # Load only this shard
+                    ds = load_dataset(
+                        "Cohere/msmarco-v2.1-embed-english-v3",
+                        "passages",
+                        split="train",
+                        data_files={"train": [shard_path]},
+                        streaming=False,
+                    )
+
+                    for batch_start in range(0, len(ds), 10000):
+                        batch = ds.select(range(batch_start, min(batch_start + 10000, len(ds))))
+                        batch_embeddings = np.array(batch['emb'], dtype=np.float32)
+
+                        for vec in batch_embeddings:
+                            if total_count >= MAX_TRAIN_SAMPLES:
+                                break
+
+                            write_buffer[buffer_idx] = vec
+                            buffer_idx += 1
+                            total_count += 1
+
+                            if buffer_idx == write_chunk_size:
+                                write_buffer.tofile(f_train)
+                                f_train.flush()
+                                buffer_idx = 0
+                                print(f"Saved {total_count:,} embeddings...")
+
+                        if total_count >= MAX_TRAIN_SAMPLES:
+                            break
+
+                except Exception as e:
+                    print('Failed shard', shard_path)
+                    print(e)
+
+                # Remove shard from cache if needed
+                import shutil
+                print('Removing cache')
+                shutil.rmtree("./data/.hf_cache/")
 
                 if total_count >= MAX_TRAIN_SAMPLES:
                     break
 
+            # Write any remaining data in buffer
             if buffer_idx > 0:
                 write_buffer[:buffer_idx].tofile(f_train)
+                f_train.flush()
+
+        print(f"Done! Total embeddings saved: {total_count:,}")
 
         train_count = total_count
         print(f"Train complete: {train_count:,} samples")
 
         print(f"\nLoading test queries from 'queries' subset (max {MAX_TEST_SAMPLES})...")
-        dataset_test = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "queries", split="test")
+        dataset_test = load_dataset("Cohere/msmarco-v2.1-embed-english-v3", "queries", split="test", cache_dir=cache_dir)
 
         test_embeddings = np.array(dataset_test['emb'], dtype=np.float32)
         test_idx = min(MAX_TEST_SAMPLES, len(test_embeddings))
@@ -217,6 +269,8 @@ Examples:
 
     if args.dataset == "cohere":
         setup_cohere_dataset()
+    elif args.dataset == "cohere50m":
+        setup_cohere_dataset(True)
     else:
         setup_hdf5_dataset(args.dataset, args.data_dir)
 
