@@ -15,7 +15,7 @@ PointerAlignment: Left
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
 AlignAfterOpenBracket: BlockIndent
-BreakTemplateDeclarations: Yes
+AlwaysBreakTemplateDeclarations: Yes
 
 # Spaces
 SpaceBeforeParens: ControlStatements
@@ -25,7 +25,7 @@ SpacesInParentheses: false
 
 BinPackParameters: false
 AllowAllParametersOfDeclarationOnNextLine: false
-BreakAfterReturnType: None
+AlwaysBreakAfterReturnType: None
 PenaltyReturnTypeOnItsOwnLine: 1024
 
 BinPackArguments: false
