@@ -61,6 +61,7 @@ compile_commands.json
 CMakeUserPresets.json
 DartConfiguration.
 __cmake_systeminformation/
+tests/cmake_test_discovery_*.json
 
 .claude/
 
