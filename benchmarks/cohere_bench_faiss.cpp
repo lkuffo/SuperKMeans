@@ -1,6 +1,6 @@
-#ifndef SMALLER_TEST
-#define SMALLER_TEST = true
-#endif
+// #ifndef SMALLER_TEST
+// #define SMALLER_TEST = true
+// #endif
 
 #include <faiss/utils/utils.h>
 

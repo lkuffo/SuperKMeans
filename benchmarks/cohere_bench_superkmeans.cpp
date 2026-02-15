@@ -2,9 +2,9 @@
 #define BENCHMARK_TIME = true
 #endif
 
-#ifndef SMALLER_TEST
-#define SMALLER_TEST = true
-#endif
+// #ifndef SMALLER_TEST
+// #define SMALLER_TEST = true
+// #endif
 
 #include <fstream>
 #include <iostream>
