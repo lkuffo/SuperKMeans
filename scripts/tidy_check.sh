@@ -9,11 +9,16 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Allow overriding the clang-tidy binary, e.g.:
+#   CLANG_TIDY=/opt/homebrew/opt/llvm@18/bin/clang-tidy ./scripts/tidy_check.sh
+CLANG_TIDY="${CLANG_TIDY:-clang-tidy}"
+
 echo "Running clang-tidy on SuperKMeans project..."
 echo "Project root: $PROJECT_ROOT"
+echo "Using: $CLANG_TIDY ($($CLANG_TIDY --version 2>&1 | head -1))"
 
-if ! command -v clang-tidy &> /dev/null; then
-    echo "Error: clang-tidy not found. Please install it first."
+if ! command -v "$CLANG_TIDY" &> /dev/null; then
+    echo "Error: $CLANG_TIDY not found. Please install it first."
     exit 1
 fi
 
@@ -52,7 +57,7 @@ for dir in "${DIRECTORIES[@]}"; do
             relative_file="${file#$PROJECT_ROOT/}"
 
             # Only check warnings from headers in include/superkmeans/
-            header_warnings=$(clang-tidy -p "$PROJECT_ROOT" "$file" 2>&1 | grep "warning:" | grep "include/superkmeans/" || true)
+            header_warnings=$($CLANG_TIDY -p "$PROJECT_ROOT" "$file" 2>&1 | grep "warning:" | grep "include/superkmeans/" || true)
             if [ -z "$header_warnings" ]; then
                 echo "  ✓ $relative_file"
             else

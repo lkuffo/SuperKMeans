@@ -265,7 +265,7 @@ class Profiler {
  */
 class ScopedTimer {
   public:
-    explicit ScopedTimer(const std::string& name) : name_(name) {
+    explicit ScopedTimer(std::string name) : name_(std::move(name)) {
         if (Profiler::Get().IsEnabled()) {
             Profiler::Get().Start(name_);
         }
