@@ -148,9 +148,10 @@ TEST_F(AssignTest, UseTrainState_MatchesBruteForce) {
         }
     }
     double match_pct = 100.0 * static_cast<double>(matches) / static_cast<double>(n);
-    EXPECT_GE(match_pct, 98.0)
-        << "use_train_state=true should match brute force at least 98% of the time, got "
-        << match_pct << "%";
+    EXPECT_GE(
+        match_pct, 98.0
+    ) << "use_train_state=true should match brute force at least 98% of the time, got "
+      << match_pct << "%";
 }
 
 /**
@@ -191,9 +192,10 @@ TEST_F(AssignTest, UseTrainState_MatchesBruteForce_Sampled) {
         }
     }
     double match_pct = 100.0 * static_cast<double>(matches) / static_cast<double>(n);
-    EXPECT_GE(match_pct, 98.0)
-        << "use_train_state=true (sampled) should match brute force at least 98%, got "
-        << match_pct << "%";
+    EXPECT_GE(
+        match_pct, 98.0
+    ) << "use_train_state=true (sampled) should match brute force at least 98%, got "
+      << match_pct << "%";
 }
 
 /**
@@ -234,9 +236,10 @@ TEST_F(AssignTest, UseTrainState_MatchesBruteForce_Hierarchical) {
         }
     }
     double match_pct = 100.0 * static_cast<double>(matches) / static_cast<double>(n);
-    EXPECT_GE(match_pct, 98.0)
-        << "HierarchicalSuperKMeans use_train_state=true should match brute force at least 98%, got "
-        << match_pct << "%";
+    EXPECT_GE(
+        match_pct, 98.0
+    ) << "HierarchicalSuperKMeans use_train_state=true should match brute force at least 98%, got "
+      << match_pct << "%";
 }
 
 /**

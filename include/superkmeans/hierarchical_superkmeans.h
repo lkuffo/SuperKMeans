@@ -180,36 +180,13 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             this->prev_centroids.get(), n_mesoclusters, this->centroid_norms.get()
         );
 
-        size_t iter_idx = 0;
-        float best_recall = 0.0f;
-        size_t iters_without_improvement = 0;
-
         // Buffers for RunIteration (needed for function signature even if unused in GEMM-only mode)
         std::vector<vector_value_t> centroids_partial_norms;
         centroids_partial_norms.reserve(this->n_clusters);
         std::vector<size_t> not_pruned_counts;
         not_pruned_counts.reserve(this->n_samples);
 
-        this->template RunIteration<true>(
-            data_to_cluster,
-            tmp_distances_buf.data(),
-            centroids_pdx_wrapper,
-            centroids_partial_norms,
-            not_pruned_counts,
-            nullptr, // queries
-            0,       // n_queries
-            this->n_samples,
-            n_mesoclusters,
-            iter_idx,
-            true, // is_first_iter
-            this->hierarchical_iteration_stats.mesoclustering_iteration_stats
-        );
-
-        iter_idx = 1;
-        best_recall = this->recall;
-
-        // Save full norms before potentially computing partial norms
-        // (needed because GEMM+PRUNING path will overwrite data_norms with partial norms)
+        // Save full norms before the loop (independent of iteration work)
         {
             SKM_PROFILE_SCOPE("allocator");
             immutable_data_norms.reset(new vector_value_t[this->n_samples]);
@@ -220,61 +197,56 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             );
         }
 
-        if (this->hierarchical_config.iters_mesoclustering > 1) {
-            //
-            // FULL GEMM on low-dimensional data or too few clusters
-            // or first 2 iterations
-            //
-            bool partial_norms_computed = false;
-            for (; iter_idx < this->hierarchical_config.iters_mesoclustering; ++iter_idx) {
-                if (iter_idx < 1 || this->d < DIMENSION_THRESHOLD_FOR_PRUNING ||
-                    this->hierarchical_config.use_blas_only ||
-                    n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-                    this->template RunIteration<true>(
-                        data_to_cluster,
-                        tmp_distances_buf.data(),
-                        centroids_pdx_wrapper,
-                        centroids_partial_norms,
-                        not_pruned_counts,
-                        nullptr, // queries
-                        0,       // n_queries
-                        this->n_samples,
-                        n_mesoclusters,
-                        iter_idx,
-                        false, // is_first_iter
-                        this->hierarchical_iteration_stats.mesoclustering_iteration_stats
-                    );
-                } else { // Rest of Iterations with GEMM+PRUNING
-                    if (!partial_norms_computed) {
-                        this->GetPartialL2NormsRowMajor(
-                            data_to_cluster,
-                            this->n_samples,
-                            this->data_norms.get(),
-                            this->partial_d
-                        );
-                        partial_norms_computed = true;
-                    }
-                    this->template RunIteration<false>(
-                        data_to_cluster,
-                        tmp_distances_buf.data(),
-                        centroids_pdx_wrapper,
-                        centroids_partial_norms,
-                        not_pruned_counts,
-                        nullptr, // queries
-                        0,       // n_queries
-                        this->n_samples,
-                        n_mesoclusters,
-                        iter_idx,
-                        false, // is_first_iter
-                        this->hierarchical_iteration_stats.mesoclustering_iteration_stats
-                    );
-                }
-                if (this->hierarchical_config.early_termination &&
-                    this->ShouldStopEarly(
-                        false, best_recall, iters_without_improvement, iter_idx
-                    )) {
-                    break;
-                }
+        bool always_gemm_only = this->d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                                this->hierarchical_config.use_blas_only ||
+                                n_mesoclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING;
+        bool partial_norms_computed = false;
+        float best_recall = 0.0f;
+        size_t iters_without_improvement = 0;
+
+        for (size_t iter_idx = 0; iter_idx < this->hierarchical_config.iters_mesoclustering;
+             ++iter_idx) {
+            bool use_gemm_only = (iter_idx == 0) || always_gemm_only;
+            if (!use_gemm_only && !partial_norms_computed) {
+                this->GetPartialL2NormsRowMajor(
+                    data_to_cluster, this->n_samples, this->data_norms.get(), this->partial_d
+                );
+                partial_norms_computed = true;
+            }
+            if (use_gemm_only) {
+                this->template RunIteration<true>(
+                    data_to_cluster,
+                    tmp_distances_buf.data(),
+                    centroids_pdx_wrapper,
+                    centroids_partial_norms,
+                    not_pruned_counts,
+                    nullptr, // queries
+                    0,       // n_queries
+                    this->n_samples,
+                    n_mesoclusters,
+                    iter_idx,
+                    iter_idx == 0,
+                    this->hierarchical_iteration_stats.mesoclustering_iteration_stats
+                );
+            } else {
+                this->template RunIteration<false>(
+                    data_to_cluster,
+                    tmp_distances_buf.data(),
+                    centroids_pdx_wrapper,
+                    centroids_partial_norms,
+                    not_pruned_counts,
+                    nullptr, // queries
+                    0,       // n_queries
+                    this->n_samples,
+                    n_mesoclusters,
+                    iter_idx,
+                    false,
+                    this->hierarchical_iteration_stats.mesoclustering_iteration_stats
+                );
+            }
+            if (this->hierarchical_config.early_termination &&
+                this->ShouldStopEarly(false, best_recall, iters_without_improvement, iter_idx)) {
+                break;
             }
         }
         timer_mesoclustering.Toc();
@@ -366,84 +338,62 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 this->prev_centroids.get(), n_fineclusters, this->centroid_norms.get()
             );
 
-            size_t fine_iter_idx = 0;
+            bool fine_always_gemm_only = this->d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                                         this->hierarchical_config.use_blas_only ||
+                                         n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING;
+            bool fine_partial_norms_computed = false;
             float fine_best_recall = 0.0f;
             iters_without_improvement = 0;
 
-            this->template RunIteration<true>(
-                mesocluster_data_to_cluster,
-                tmp_distances_buf.data(),
-                mesocluster_centroids_pdx_wrapper,
-                centroids_partial_norms,
-                not_pruned_counts,
-                nullptr, // queries
-                0,       // n_queries
-                this->n_samples,
-                n_fineclusters,
-                fine_iter_idx,
-                true, // is_first_iter
-                this->hierarchical_iteration_stats.fineclustering_iteration_stats
-            );
-
-            fine_iter_idx = 1;
-            fine_best_recall = this->recall;
-
-            if (this->hierarchical_config.iters_fineclustering > 1) {
-                //
-                // FULL GEMM on low-dimensional data or too few clusters
-                // or first 2 iterations
-                //
-                bool partial_norms_computed = false;
-                for (; fine_iter_idx < this->hierarchical_config.iters_fineclustering;
-                     ++fine_iter_idx) {
-                    if (fine_iter_idx < 1 || this->d < DIMENSION_THRESHOLD_FOR_PRUNING ||
-                        this->hierarchical_config.use_blas_only ||
-                        n_fineclusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-                        this->template RunIteration<true>(
-                            mesocluster_data_to_cluster,
-                            tmp_distances_buf.data(),
-                            mesocluster_centroids_pdx_wrapper,
-                            centroids_partial_norms,
-                            not_pruned_counts,
-                            nullptr, // queries
-                            0,       // n_queries
-                            this->n_samples,
-                            n_fineclusters,
-                            fine_iter_idx,
-                            false, // is_first_iter
-                            this->hierarchical_iteration_stats.fineclustering_iteration_stats
-                        );
-                    } else { // Rest of Iterations with GEMM+PRUNING
-                        if (!partial_norms_computed) {
-                            this->GetPartialL2NormsRowMajor(
-                                mesocluster_data_to_cluster,
-                                this->n_samples,
-                                this->data_norms.get(),
-                                this->partial_d
-                            );
-                            partial_norms_computed = true;
-                        }
-                        this->template RunIteration<false>(
-                            mesocluster_data_to_cluster,
-                            tmp_distances_buf.data(),
-                            mesocluster_centroids_pdx_wrapper,
-                            centroids_partial_norms,
-                            not_pruned_counts,
-                            nullptr, // queries
-                            0,       // n_queries
-                            this->n_samples,
-                            n_fineclusters,
-                            fine_iter_idx,
-                            false, // is_first_iter
-                            this->hierarchical_iteration_stats.fineclustering_iteration_stats
-                        );
-                    }
-                    if (this->hierarchical_config.early_termination &&
-                        this->ShouldStopEarly(
-                            false, fine_best_recall, iters_without_improvement, fine_iter_idx
-                        )) {
-                        break;
-                    }
+            for (size_t fine_iter_idx = 0;
+                 fine_iter_idx < this->hierarchical_config.iters_fineclustering;
+                 ++fine_iter_idx) {
+                bool use_gemm_only = (fine_iter_idx == 0) || fine_always_gemm_only;
+                if (!use_gemm_only && !fine_partial_norms_computed) {
+                    this->GetPartialL2NormsRowMajor(
+                        mesocluster_data_to_cluster,
+                        this->n_samples,
+                        this->data_norms.get(),
+                        this->partial_d
+                    );
+                    fine_partial_norms_computed = true;
+                }
+                if (use_gemm_only) {
+                    this->template RunIteration<true>(
+                        mesocluster_data_to_cluster,
+                        tmp_distances_buf.data(),
+                        mesocluster_centroids_pdx_wrapper,
+                        centroids_partial_norms,
+                        not_pruned_counts,
+                        nullptr, // queries
+                        0,       // n_queries
+                        this->n_samples,
+                        n_fineclusters,
+                        fine_iter_idx,
+                        fine_iter_idx == 0,
+                        this->hierarchical_iteration_stats.fineclustering_iteration_stats
+                    );
+                } else {
+                    this->template RunIteration<false>(
+                        mesocluster_data_to_cluster,
+                        tmp_distances_buf.data(),
+                        mesocluster_centroids_pdx_wrapper,
+                        centroids_partial_norms,
+                        not_pruned_counts,
+                        nullptr, // queries
+                        0,       // n_queries
+                        this->n_samples,
+                        n_fineclusters,
+                        fine_iter_idx,
+                        false,
+                        this->hierarchical_iteration_stats.fineclustering_iteration_stats
+                    );
+                }
+                if (this->hierarchical_config.early_termination &&
+                    this->ShouldStopEarly(
+                        false, fine_best_recall, iters_without_improvement, fine_iter_idx
+                    )) {
+                    break;
                 }
             }
 
@@ -508,32 +458,14 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         TicToc timer_refinement;
         timer_refinement.Tic();
 
-        // Refinement iterations GEMM+PRUNING
-        size_t refinement_iter_idx = 0;
-        if (this->hierarchical_config.iters_refinement > 0) {
-            //
-            // FULL GEMM on low-dimensional data or too few clusters
-            //
-            if (this->d < DIMENSION_THRESHOLD_FOR_PRUNING ||
-                this->n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-                for (; refinement_iter_idx < this->hierarchical_config.iters_refinement;
-                     ++refinement_iter_idx) {
-                    this->template RunIteration<true>(
-                        data_to_cluster,
-                        tmp_distances_buf.data(),
-                        final_refinement_pdx_wrapper,
-                        centroids_partial_norms,
-                        not_pruned_counts,
-                        nullptr, // queries
-                        0,       // n_queries
-                        this->n_samples,
-                        this->n_clusters,
-                        refinement_iter_idx,
-                        false, // is_first_iter
-                        this->hierarchical_iteration_stats.refinement_iteration_stats
-                    );
-                }
-            } else { // Rest of Iterations with GEMM+PRUNING
+        // Refinement iterations
+        bool refinement_always_gemm_only = this->d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                                           this->n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING;
+        bool refinement_partial_norms_computed = false;
+        for (size_t refinement_iter_idx = 0;
+             refinement_iter_idx < this->hierarchical_config.iters_refinement;
+             ++refinement_iter_idx) {
+            if (!refinement_always_gemm_only && !refinement_partial_norms_computed) {
                 // TODO(@lkuffo, high): The only reason I need to compute the data norms (again)
                 //   is because we are using the same this->data_norms.get() buffer in the
                 //   fineclustering, which replaces the norms that I already calculated before and
@@ -541,23 +473,38 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 this->GetPartialL2NormsRowMajor(
                     data_to_cluster, this->n_samples, this->data_norms.get(), this->partial_d
                 );
-                for (; refinement_iter_idx < this->hierarchical_config.iters_refinement;
-                     ++refinement_iter_idx) {
-                    this->template RunIteration<false>(
-                        data_to_cluster,
-                        tmp_distances_buf.data(),
-                        final_refinement_pdx_wrapper,
-                        centroids_partial_norms,
-                        not_pruned_counts,
-                        nullptr, // queries
-                        0,       // n_queries
-                        this->n_samples,
-                        this->n_clusters,
-                        refinement_iter_idx,
-                        false, // is_first_iter
-                        this->hierarchical_iteration_stats.refinement_iteration_stats
-                    );
-                }
+                refinement_partial_norms_computed = true;
+            }
+            if (refinement_always_gemm_only) {
+                this->template RunIteration<true>(
+                    data_to_cluster,
+                    tmp_distances_buf.data(),
+                    final_refinement_pdx_wrapper,
+                    centroids_partial_norms,
+                    not_pruned_counts,
+                    nullptr, // queries
+                    0,       // n_queries
+                    this->n_samples,
+                    this->n_clusters,
+                    refinement_iter_idx,
+                    false,
+                    this->hierarchical_iteration_stats.refinement_iteration_stats
+                );
+            } else {
+                this->template RunIteration<false>(
+                    data_to_cluster,
+                    tmp_distances_buf.data(),
+                    final_refinement_pdx_wrapper,
+                    centroids_partial_norms,
+                    not_pruned_counts,
+                    nullptr, // queries
+                    0,       // n_queries
+                    this->n_samples,
+                    this->n_clusters,
+                    refinement_iter_idx,
+                    false,
+                    this->hierarchical_iteration_stats.refinement_iteration_stats
+                );
             }
         }
         timer_refinement.Toc();

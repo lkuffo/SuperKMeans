@@ -46,9 +46,9 @@ struct SuperKMeansConfig {
     float adjustment_factor_for_partial_d = 0.20f;
 
     // Output parameters
-    bool unrotate_centroids = true;   // Whether to unrotate centroids before returning
-    bool verbose = false;             // Whether to print progress information
-    bool angular = false;             // Whether to use spherical k-means
+    bool unrotate_centroids = true; // Whether to unrotate centroids before returning
+    bool verbose = false;           // Whether to print progress information
+    bool angular = false;           // Whether to use spherical k-means
 
     bool data_already_rotated = false; // Whether input data is already rotated (skip rotation)
 };
@@ -270,44 +270,19 @@ class SuperKMeans {
             GetGTAssignmentsAndDistances(data_to_cluster, rotated_queries.data(), n_queries);
         }
 
-        //
-        // 1st iteration: FULL GEMM
-        //
-        if (config.verbose)
-            std::cout << "1st iteration..." << std::endl;
-        size_t iter_idx = 0;
+        bool always_gemm_only = d < DIMENSION_THRESHOLD_FOR_PRUNING || config.use_blas_only ||
+                                n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING;
+        bool partial_norms_computed = false;
         float best_recall = 0.0f;
         size_t iters_without_improvement = 0;
-        RunIteration<true>(
-            data_to_cluster,
-            tmp_distances_buf.data(),
-            centroids_pdx_wrapper,
-            centroids_partial_norms,
-            not_pruned_counts,
-            rotated_queries.data(),
-            n_queries,
-            n_samples,
-            n_clusters,
-            iter_idx,
-            true, // is_first_iter
-            iteration_stats
-        );
-        iter_idx = 1;
-        best_recall = recall;
-        if (config.iters <= 1) {
-            auto output_centroids = GetOutputCentroids(config.unrotate_centroids);
-            if (config.verbose) {
-                Profiler::Get().PrintHierarchical();
-            }
-            return output_centroids;
-        }
 
-        //
-        // FULL GEMM on low-dimensional data or too few clusters
-        //
-        if (d < DIMENSION_THRESHOLD_FOR_PRUNING || config.use_blas_only ||
-            n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-            for (; iter_idx < config.iters; ++iter_idx) {
+        for (size_t iter_idx = 0; iter_idx < config.iters; ++iter_idx) {
+            bool use_gemm_only = (iter_idx == 0) || always_gemm_only;
+            if (!use_gemm_only && !partial_norms_computed) {
+                GetPartialL2NormsRowMajor(data_to_cluster, n_samples, data_norms.get(), partial_d);
+                partial_norms_computed = true;
+            }
+            if (use_gemm_only) {
                 RunIteration<true>(
                     data_to_cluster,
                     tmp_distances_buf.data(),
@@ -319,43 +294,25 @@ class SuperKMeans {
                     n_samples,
                     n_clusters,
                     iter_idx,
-                    false, // is_first_iter
+                    iter_idx == 0,
                     iteration_stats
                 );
-                if (config.early_termination &&
-                    ShouldStopEarly(
-                        n_queries > 0, best_recall, iters_without_improvement, iter_idx
-                    )) {
-                    break;
-                }
+            } else {
+                RunIteration<false>(
+                    data_to_cluster,
+                    tmp_distances_buf.data(),
+                    centroids_pdx_wrapper,
+                    centroids_partial_norms,
+                    not_pruned_counts,
+                    rotated_queries.data(),
+                    n_queries,
+                    n_samples,
+                    n_clusters,
+                    iter_idx,
+                    false,
+                    iteration_stats
+                );
             }
-            trained = true;
-            auto output_centroids = GetOutputCentroids(config.unrotate_centroids);
-            if (config.verbose) {
-                Profiler::Get().PrintHierarchical();
-            }
-            return output_centroids;
-        }
-
-        //
-        // Rest of iterations with GEMM+PRUNING
-        //
-        GetPartialL2NormsRowMajor(data_to_cluster, n_samples, data_norms.get(), partial_d);
-        for (; iter_idx < config.iters; ++iter_idx) {
-            RunIteration<false>(
-                data_to_cluster,
-                tmp_distances_buf.data(),
-                centroids_pdx_wrapper,
-                centroids_partial_norms,
-                not_pruned_counts,
-                rotated_queries.data(),
-                n_queries,
-                n_samples,
-                n_clusters,
-                iter_idx,
-                false, // is_first_iter
-                iteration_stats
-            );
             if (config.early_termination &&
                 ShouldStopEarly(n_queries > 0, best_recall, iters_without_improvement, iter_idx)) {
                 break;
@@ -443,10 +400,10 @@ class SuperKMeans {
         if (!trained) {
             throw std::runtime_error("FastAssign requires SuperKMeans to be trained first");
         }
-        if (config.use_blas_only ||
-            d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+        if (config.use_blas_only || d < DIMENSION_THRESHOLD_FOR_PRUNING ||
             n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-            std::cout << "WARNING: FastAssign cannot be used, falling back to brute force Assign" << std::endl;
+            std::cout << "WARNING: FastAssign cannot be used, falling back to brute force Assign"
+                      << std::endl;
             return Assign(vectors, centroids, n_vectors, n_centroids);
         }
         if (config.verbose) {
@@ -465,15 +422,16 @@ class SuperKMeans {
         data_buffer.reserve(n_vectors * d);
         TicToc timer;
         timer.Tic();
-        RotateOrCopy(
-            vectors, data_buffer.data(), n_vectors, !config.data_already_rotated
-        );
+        RotateOrCopy(vectors, data_buffer.data(), n_vectors, !config.data_already_rotated);
         timer.Toc();
         if (config.verbose) {
-            std::cout << "Time taken for rotation: " << timer.GetMilliseconds() << " ms" << std::endl;
+            std::cout << "Time taken for rotation: " << timer.GetMilliseconds() << " ms"
+                      << std::endl;
         }
         auto data_p = data_buffer.data();
-        GetPartialL2NormsRowMajor(horizontal_centroids.get(), n_centroids, centroid_norms.get(), partial_d);
+        GetPartialL2NormsRowMajor(
+            horizontal_centroids.get(), n_centroids, centroid_norms.get(), partial_d
+        );
 
         // Consolidate was called at the end of RunIteration<true>, so we don't need to call it here
         // All the centroid-related pointers are updated with the final centroids
@@ -503,9 +461,7 @@ class SuperKMeans {
             if (config.verbose) {
                 std::cout << "Partial D: " << partial_d << std::endl;
             }
-            memcpy(
-                result_assignments.data(), assignments.get(), n_vectors * sizeof(uint32_t)
-            );
+            memcpy(result_assignments.data(), assignments.get(), n_vectors * sizeof(uint32_t));
             return result_assignments;
         } else if (config.sampling_fraction > 0.8f) {
             // Dereference the current assignments from the sampled_indices
@@ -543,7 +499,8 @@ class SuperKMeans {
             if (config.verbose) {
                 std::cout << "Partial D: " << partial_d << std::endl;
                 // for (size_t i = 0; i < n_vectors; ++i) {
-                //     std::cout << "Vector " << i << " pruned " << (not_pruned_counts[i] * 1.0f) / (n_centroids) * 100 << " vectors" << std::endl;
+                //     std::cout << "Vector " << i << " pruned " << (not_pruned_counts[i] * 1.0f) /
+                //     (n_centroids) * 100 << " vectors" << std::endl;
                 // }
             }
             return result_assignments;
@@ -562,14 +519,15 @@ class SuperKMeans {
             auto meso_centroids = tmp_kmeans.Train(centroids, n_centroids);
             timer.Reset();
             timer.Tic();
-            auto meso_assignments = tmp_kmeans.Assign(vectors, meso_centroids.data(), n_vectors, new_n_centroids);
+            auto meso_assignments =
+                tmp_kmeans.Assign(vectors, meso_centroids.data(), n_vectors, new_n_centroids);
             timer.Toc();
-            std::cout << "Time taken for initial meso-clustering assignment: " << timer.GetMilliseconds() << " ms" << std::endl;
+            std::cout << "Time taken for initial meso-clustering assignment: "
+                      << timer.GetMilliseconds() << " ms" << std::endl;
 
             // Map each meso-centroid to a single representative original centroid
-            auto centroids_to_meso = tmp_kmeans.Assign(
-                centroids, meso_centroids.data(), n_centroids, new_n_centroids
-            );
+            auto centroids_to_meso =
+                tmp_kmeans.Assign(centroids, meso_centroids.data(), n_centroids, new_n_centroids);
             std::vector<uint32_t> meso_to_original(new_n_centroids, 0);
             for (size_t c = 0; c < n_centroids; ++c) {
                 meso_to_original[centroids_to_meso[c]] = static_cast<uint32_t>(c);
@@ -607,7 +565,8 @@ class SuperKMeans {
                 not_pruned_counts.data()
             );
             timer.Toc();
-            std::cout << "Time taken for final GEMM+PRUNING assignment: " << timer.GetMilliseconds() << " ms" << std::endl;
+            std::cout << "Time taken for final GEMM+PRUNING assignment: " << timer.GetMilliseconds()
+                      << " ms" << std::endl;
             if (config.verbose) {
                 std::cout << "Partial D: " << partial_d << std::endl;
             }

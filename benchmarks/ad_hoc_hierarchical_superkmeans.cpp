@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
     const size_t n_clusters = bench_utils::get_default_n_clusters(n);
-    float sampling_fraction = 0.20;
+    float sampling_fraction = 0.5;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
     const size_t THREADS = omp_get_max_threads();
