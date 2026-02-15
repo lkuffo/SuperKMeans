@@ -421,7 +421,7 @@ class SuperKMeans {
     }
 
     /**
-     * @brief Fast assignment using GEMM+PRUNING with trained state.
+     * @brief [EXPERIMENTAL] Fast assignment using GEMM+PRUNING with trained state.
      *
      * Assumes that the vectors sent here are the same as those used in .Train().
      * Leverages the trained PDX layout, rotation, and pruning for a faster
