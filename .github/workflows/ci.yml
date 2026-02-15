@@ -78,3 +78,59 @@ jobs:
 
       - name: Run Python example
         run: python examples/simple_clustering.py 10000 128 50
+
+  sanitizers-asan-ubsan:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+
+      - name: Configure with ASan + UBSan
+        run: |
+          cmake -B build_asan -DSKMEANS_COMPILE_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+
+      - name: Build tests
+        run: cmake --build build_asan -j$(nproc) --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build_asan --output-on-failure
+
+  sanitizers-tsan:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+
+      - name: Configure with TSan
+        run: |
+          cmake -B build_tsan -DSKMEANS_COMPILE_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
+
+      - name: Build tests
+        run: cmake --build build_tsan -j$(nproc) --target tests
+
+      - name: Run tests
+        run: ctest --test-dir build_tsan --output-on-failure
