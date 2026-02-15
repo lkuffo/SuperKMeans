@@ -12,8 +12,17 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "Checking C++ formatting in SuperKMeans project..."
 echo "Project root: $PROJECT_ROOT"
 
+REQUIRED_VERSION="18.1.8"
+
 if ! command -v clang-format &> /dev/null; then
     echo "Error: clang-format not found. Please install it first."
+    exit 1
+fi
+
+CURRENT_VERSION=$(clang-format --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+if [ "$CURRENT_VERSION" != "$REQUIRED_VERSION" ]; then
+    echo "Error: clang-format version $REQUIRED_VERSION required, but found $CURRENT_VERSION"
+    echo "Install the correct version: pip install clang-format==$REQUIRED_VERSION"
     exit 1
 fi
 
