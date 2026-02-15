@@ -162,3 +162,22 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build_tsan --output-on-failure --exclude-regex "SLOW_"
+
+  ci-pass:
+    # Gate job: require this single job in branch protection settings
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - format-check
+      - tidy-check
+      - cpp-build-and-test
+      - python
+      - sanitizers-asan-ubsan
+      - sanitizers-tsan
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more jobs failed or were cancelled"
+            exit 1
+          fi
