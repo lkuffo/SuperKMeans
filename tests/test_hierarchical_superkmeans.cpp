@@ -431,7 +431,7 @@ TEST_F(HierarchicalSuperKMeansTest, EarlyTermination_Mesoclustering) {
         << "than no early termination (" << iters_without_early << " iters)";
 }
 
-TEST_F(HierarchicalSuperKMeansTest, Sampling_AffectsSpeed) {
+TEST_F(HierarchicalSuperKMeansTest, SLOW_Sampling_AffectsSpeed) {
     const size_t n = 100000;
     const size_t d = 512;
     const size_t n_clusters = 512;

@@ -315,7 +315,7 @@ TEST_F(SuperKMeansTest, EarlyTermination_Disabled_RunsAllIterations) {
  * Verifies that using sampling_fraction=0.1 is at least 2x faster than
  * training on the full dataset (sampling_fraction=1.0).
  */
-TEST_F(SuperKMeansTest, Sampling_ProvidesSpeedup) {
+TEST_F(SuperKMeansTest, SLOW_Sampling_ProvidesSpeedup) {
     const size_t n = 50000;
     const size_t d = 128;
     const size_t n_clusters = 500;
