@@ -114,7 +114,6 @@ int main(int argc, char* argv[]) {
                 config.objective_k = 100;
                 config.ann_explore_fraction = 0.01f;
                 config.unrotate_centroids = true;
-                config.perform_assignments = false;
                 config.early_termination = false;
                 config.sampling_fraction = sampling_fraction;
                 config.use_blas_only = false;
@@ -166,7 +165,6 @@ int main(int argc, char* argv[]) {
                 config_map["objective_k"] = std::to_string(config.objective_k);
                 config_map["ann_explore_fraction"] = std::to_string(config.ann_explore_fraction);
                 config_map["unrotate_centroids"] = config.unrotate_centroids ? "true" : "false";
-                config_map["perform_assignments"] = config.perform_assignments ? "true" : "false";
                 config_map["verbose"] = config.verbose ? "true" : "false";
                 config_map["min_not_pruned_pct"] = std::to_string(config.min_not_pruned_pct);
                 config_map["max_not_pruned_pct"] = std::to_string(config.max_not_pruned_pct);

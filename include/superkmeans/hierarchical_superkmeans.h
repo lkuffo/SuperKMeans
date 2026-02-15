@@ -581,11 +581,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         //   because it's using unrotated data with rotated output_centroids
         auto output_centroids =
             this->GetOutputCentroids(this->hierarchical_config.unrotate_centroids);
-        if (this->hierarchical_config.perform_assignments) {
-            // TODO(@lkuffo, high: Need a fast assign, for now we use the iter_idx-1 assignments)
-            auto assign_result = this->Assign(data, output_centroids.data(), n, this->n_clusters);
-            memcpy(this->assignments.get(), assign_result.data(), n * sizeof(uint32_t));
-        }
         if (this->hierarchical_config.verbose) {
             Profiler::Get().PrintHierarchical();
         }

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/superkmeans.h"
 
@@ -12,45 +13,6 @@ class AssignTest : public ::testing::Test {
   protected:
     void SetUp() override { omp_set_num_threads(omp_get_max_threads()); }
 };
-
-/**
- * @brief Test that Assign() produces same results as Train() assignments
- */
-TEST_F(AssignTest, AssignMatchesTrainAssignments_SyntheticClusters) {
-    const size_t n = 100000;
-    const size_t d = 128;
-    const size_t n_clusters = 1024;
-    const int n_iters = 25;
-    const float sampling_fraction = 1.0f;
-
-    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
-
-    skmeans::SuperKMeansConfig config;
-    config.iters = n_iters;
-    config.sampling_fraction = sampling_fraction;
-    config.verbose = false;
-    config.unrotate_centroids = true;
-    config.perform_assignments = true;
-
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
-
-    auto centroids = kmeans.Train(data.data(), n);
-    const auto& train_assignments = kmeans.assignments;
-    auto assign_assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
-    size_t mismatches = 0;
-    for (size_t i = 0; i < n; ++i) {
-        if (train_assignments[i] != assign_assignments[i]) {
-            ++mismatches;
-        }
-    }
-    double mismatch_pct = 100.0 * static_cast<double>(mismatches) / static_cast<double>(n);
-    EXPECT_LE(
-        mismatch_pct, 0.01
-    ) << "Synthetic clusterable data should have very low mismatch rate, got "
-      << mismatch_pct << "%";
-}
 
 /**
  * @brief Test that each point is assigned to its actual nearest centroid
@@ -145,6 +107,136 @@ TEST_F(AssignTest, EachPointAssignedToNearestCentroid_HighDim) {
     EXPECT_EQ(incorrect_assignments, 0)
         << "Found " << incorrect_assignments
         << " points not assigned to their nearest centroid (high-dim)";
+}
+
+/**
+ * @brief Test that Assign with use_train_state=true matches use_train_state=false
+ *
+ * The GEMM+PRUNING fast path should produce at least 98% identical assignments
+ * compared to the brute-force path.
+ */
+TEST_F(AssignTest, UseTrainState_MatchesBruteForce) {
+    const size_t n = 50000;
+    const size_t d = 128;
+    const size_t n_clusters = 500;
+    const int n_iters = 15;
+
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = n_iters;
+    config.sampling_fraction = 1.0f;
+    config.verbose = false;
+    config.seed = 42;
+    config.unrotate_centroids = true;
+
+    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        n_clusters, d, config
+    );
+    auto centroids = kmeans.Train(data.data(), n);
+
+    auto assignments_fast = kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters);
+    auto assignments_brute = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+
+    ASSERT_EQ(assignments_fast.size(), n);
+    ASSERT_EQ(assignments_brute.size(), n);
+
+    size_t matches = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (assignments_fast[i] == assignments_brute[i]) {
+            ++matches;
+        }
+    }
+    double match_pct = 100.0 * static_cast<double>(matches) / static_cast<double>(n);
+    EXPECT_GE(match_pct, 98.0)
+        << "use_train_state=true should match brute force at least 98% of the time, got "
+        << match_pct << "%";
+}
+
+/**
+ * @brief Test that Assign with use_train_state matches brute force when sampling
+ *
+ * With sampling_fraction=0.5 the sampled path is exercised (seeding + recompute).
+ */
+TEST_F(AssignTest, UseTrainState_MatchesBruteForce_Sampled) {
+    const size_t n = 50000;
+    const size_t d = 128;
+    const size_t n_clusters = 500;
+    const int n_iters = 15;
+
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = n_iters;
+    config.sampling_fraction = 0.5f;
+    config.verbose = false;
+    config.seed = 42;
+    config.unrotate_centroids = true;
+
+    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        n_clusters, d, config
+    );
+    auto centroids = kmeans.Train(data.data(), n);
+
+    auto assignments_fast = kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters);
+    auto assignments_brute = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+
+    ASSERT_EQ(assignments_fast.size(), n);
+    ASSERT_EQ(assignments_brute.size(), n);
+
+    size_t matches = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (assignments_fast[i] == assignments_brute[i]) {
+            ++matches;
+        }
+    }
+    double match_pct = 100.0 * static_cast<double>(matches) / static_cast<double>(n);
+    EXPECT_GE(match_pct, 98.0)
+        << "use_train_state=true (sampled) should match brute force at least 98%, got "
+        << match_pct << "%";
+}
+
+/**
+ * @brief Test that HierarchicalSuperKMeans Assign with use_train_state matches brute force
+ */
+TEST_F(AssignTest, UseTrainState_MatchesBruteForce_Hierarchical) {
+    const size_t n = 50000;
+    const size_t d = 128;
+    const size_t n_clusters = 500;
+
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+
+    skmeans::HierarchicalSuperKMeansConfig config;
+    config.iters_mesoclustering = 5;
+    config.iters_fineclustering = 5;
+    config.iters_refinement = 2;
+    config.sampling_fraction = 1.0f;
+    config.verbose = false;
+    config.seed = 42;
+    config.unrotate_centroids = true;
+
+    auto kmeans =
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            n_clusters, d, config
+        );
+    auto centroids = kmeans.Train(data.data(), n);
+
+    auto assignments_fast = kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters);
+    auto assignments_brute = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+
+    ASSERT_EQ(assignments_fast.size(), n);
+    ASSERT_EQ(assignments_brute.size(), n);
+
+    size_t matches = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (assignments_fast[i] == assignments_brute[i]) {
+            ++matches;
+        }
+    }
+    double match_pct = 100.0 * static_cast<double>(matches) / static_cast<double>(n);
+    EXPECT_GE(match_pct, 98.0)
+        << "HierarchicalSuperKMeans use_train_state=true should match brute force at least 98%, got "
+        << match_pct << "%";
 }
 
 /**
