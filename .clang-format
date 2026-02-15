@@ -23,7 +23,7 @@ SpaceAfterCStyleCast: true
 SpacesInParentheses: false
 
 
-BinPackParameters: OnePerLine
+BinPackParameters: false
 AllowAllParametersOfDeclarationOnNextLine: false
 BreakAfterReturnType: None
 PenaltyReturnTypeOnItsOwnLine: 1024
