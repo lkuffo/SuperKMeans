@@ -267,14 +267,14 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                     for (size_t ki = 0; ki < k; ++ki) {
                         if (out_distances[i_idx * k + ki] <
                             std::numeric_limits<distance_t>::max()) {
-                            candidates.push_back(
-                                {out_distances[i_idx * k + ki], out_knn[i_idx * k + ki]}
+                            candidates.emplace_back(
+                                out_distances[i_idx * k + ki], out_knn[i_idx * k + ki]
                             );
                         }
                     }
                     // Add current batch candidates
                     for (size_t c = 0; c < batch_n_y; ++c) {
-                        candidates.push_back({row_p[c], static_cast<uint32_t>(j + c)});
+                        candidates.emplace_back(row_p[c], static_cast<uint32_t>(j + c));
                     }
                     size_t actual_k = std::min(k, candidates.size());
                     std::partial_sort(
