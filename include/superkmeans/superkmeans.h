@@ -1195,7 +1195,7 @@ class SuperKMeans {
         const bool rotate
     ) {
         SKM_PROFILE_SCOPE("rotator");
-        if (rotate) {
+        if (rotate) { // NOLINT(bugprone-branch-clone)
             pruner->Rotate(in, out, n_vectors);
         } else {
             memcpy(
