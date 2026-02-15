@@ -210,8 +210,7 @@ PYBIND11_MODULE(_superkmeans, m) {
                     auto queries_info = queries.request();
 
                     if (queries_info.shape[1] != static_cast<ssize_t>(d)) {
-                        throw std::runtime_error(
-                            "queries must have the same dimensionality as data"
+                        throw std::runtime_error("queries must have the same dimensionality as data"
                         );
                     }
                     n_queries = queries_info.shape[0];
@@ -437,8 +436,7 @@ PYBIND11_MODULE(_superkmeans, m) {
                     auto queries_info = queries.request();
 
                     if (queries_info.shape[1] != static_cast<ssize_t>(d)) {
-                        throw std::runtime_error(
-                            "queries must have the same dimensionality as data"
+                        throw std::runtime_error("queries must have the same dimensionality as data"
                         );
                     }
                     n_queries = queries_info.shape[0];

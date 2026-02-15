@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  format-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install clang-format 18.1.8
+        run: pip install clang-format==18.1.8
+
+      - name: Check C++ formatting
+        run: |
+          clang-format --version
+          ./scripts/format_check.sh
+
+  cpp-build-and-test:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+
+      - name: Configure
+        run: cmake -B build -DSKMEANS_COMPILE_TESTS=ON -DSKMEANS_COMPILE_EXAMPLES=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build tests
+        run: cmake --build build -j$(nproc) --target tests
+
+      - name: Build examples
+        run: cmake --build build -j$(nproc) --target examples
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  python:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libomp-18-dev libopenblas-dev cmake
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python bindings
+        run: pip install ".[test]"
+
+      - name: Run Python tests
+        run: pytest python/tests/ -v
+
+      - name: Run Python example
+        run: python examples/simple_clustering.py 10000 128 50

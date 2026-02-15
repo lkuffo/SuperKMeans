@@ -59,7 +59,7 @@ sudo bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)" -- 18
 
 ### MacOS
 ```sh 
-brew install llvm@18
+brew install llvm
 ```
 
 ## Installing CMake
@@ -136,7 +136,7 @@ You are using GCC instead of Clang. If you installed Clang, you can set the corr
 ```sh
 export CXX="/usr/bin/clang++-18" # Linux
 
-export CXX="/opt/homebrew/opt/llvm@20/bin/clang++" # MacOS
+export CXX="/opt/homebrew/opt/llvm/bin/clang++" # MacOS
 ```
 
 

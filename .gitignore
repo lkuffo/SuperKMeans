@@ -60,6 +60,7 @@ install_manifest.txt
 compile_commands.json
 CMakeUserPresets.json
 DartConfiguration.
+__cmake_systeminformation/
 
 .claude/
 
