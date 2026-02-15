@@ -12,11 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install clang-format-18
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-format-18
-          sudo ln -sf /usr/bin/clang-format-18 /usr/bin/clang-format
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install clang-format 18.1.8
+        run: pip install clang-format==18.1.8
 
       - name: Check C++ formatting
         run: |
