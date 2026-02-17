@@ -10,6 +10,7 @@
 #include "bench_utils.h"
 #include "superkmeans/common.h"
 #include "superkmeans/superkmeans.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 
 int main(int argc, char* argv[]) {
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
@@ -21,9 +22,9 @@ int main(int argc, char* argv[]) {
     }
     const size_t n = it->second.first;
     const size_t d = it->second.second;
-    const size_t n_clusters = 10000; // bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = 22500; // bench_utils::get_default_n_clusters(n);
     int n_iters = 5;
-    float sampling_fraction = 1.0;
+    float sampling_fraction = 0.3;
     std::string filename = bench_utils::get_data_path(dataset);
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
@@ -51,9 +52,12 @@ int main(int argc, char* argv[]) {
     file.close();
 
     // --- Training ---
-    skmeans::SuperKMeansConfig config;
-    config.iters = n_iters;
-    config.verbose = true;
+    skmeans::HierarchicalSuperKMeansConfig config;
+    // config.iters = n_iters;
+    config.iters_mesoclustering = 3;
+    config.iters_fineclustering = 5;
+    config.iters_refinement = 0;
+    config.verbose = false;
     config.n_threads = THREADS;
     config.unrotate_centroids = true;
     config.early_termination = false;
@@ -68,7 +72,7 @@ int main(int argc, char* argv[]) {
         config.angular = true;
     }
 
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+    auto kmeans = skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
         n_clusters, d, config
     );
 
@@ -81,10 +85,18 @@ int main(int argc, char* argv[]) {
     // --- FastAssign (GEMM+PRUNING fast path) ---
     bench_utils::TicToc timer_fast;
     timer_fast.Tic();
-    auto assignments_fast = kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters);
+    auto assignments_fast = kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters, false);
     timer_fast.Toc();
     double fast_ms = timer_fast.GetMilliseconds();
     std::cout << "\nFastAssign: " << fast_ms << " ms" << std::endl;
+
+    // --- FastAssign approximate (GEMM+PRUNING fast path) ---
+    bench_utils::TicToc timer_fast_approximate;
+    timer_fast_approximate.Tic();
+    auto assignments_fast_approximate = kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters, true);
+    timer_fast_approximate.Toc();
+    double fast_ms_approximate = timer_fast_approximate.GetMilliseconds();
+    std::cout << "\nFastAssign (approximate): " << fast_ms_approximate << " ms" << std::endl;
 
     // --- Assign (brute force) ---
     bench_utils::TicToc timer_brute;
@@ -98,7 +110,7 @@ int main(int argc, char* argv[]) {
     double speedup = brute_ms / fast_ms;
     size_t matches = 0;
     for (size_t i = 0; i < n; ++i) {
-        if (assignments_fast[i] == assignments_brute[i]) {
+        if (assignments_fast_approximate[i] == assignments_brute[i]) {
             ++matches;
         }
     }

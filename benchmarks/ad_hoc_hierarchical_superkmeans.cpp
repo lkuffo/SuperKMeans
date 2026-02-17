@@ -28,8 +28,8 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
-    float sampling_fraction = 0.5;
+    const size_t n_clusters = 22500; //bench_utils::get_default_n_clusters(n);
+    float sampling_fraction = 0.3;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
     const size_t THREADS = omp_get_max_threads();
@@ -71,20 +71,20 @@ int main(int argc, char* argv[]) {
     skmeans::HierarchicalSuperKMeansConfig config;
     // Base SuperKMeans config parameters
     config.iters = 10;
-    config.verbose = true;
+    config.verbose = false;
     config.n_threads = THREADS;
     config.objective_k = 100;
     config.ann_explore_fraction = 0.01f;
     config.unrotate_centroids = true;
     config.early_termination = false;
-    config.sampling_fraction = 1.0; // sampling_fraction;
+    config.sampling_fraction = 0.3; // sampling_fraction;
     config.use_blas_only = false;
     config.tol = 1e-3f;
 
     // Hierarchical SuperKMeans specific parameters
     config.iters_mesoclustering = 3;
     config.iters_fineclustering = 5;
-    config.iters_refinement = 1;
+    config.iters_refinement = 0;
 
     auto is_angular = std::find(
         bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
@@ -115,7 +115,12 @@ int main(int argc, char* argv[]) {
     std::cout << "Final objective: " << final_objective << std::endl;
 
     // Compute assignments and cluster balance statistics
-    auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
+    // Time this 
+    bench_utils::TicToc timer_fast;
+    timer_fast.Tic();
+    auto assignments = kmeans_state.FastAssign(data.data(), centroids.data(), n, n_clusters, true);
+    timer_fast.Toc();
+    std::cout << "Time taken for FastAssign: " << timer_fast.GetMilliseconds() << " ms" << std::endl;
     auto balance_stats = skmeans::HierarchicalSuperKMeans<
         skmeans::Quantization::f32,
         skmeans::DistanceFunction::l2>::GetClustersBalanceStats(assignments.data(), n, n_clusters);

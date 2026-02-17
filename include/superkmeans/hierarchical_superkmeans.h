@@ -535,6 +535,137 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
     }
 
     /**
+     * @brief [EXPERIMENTAL] Fast assignment using GEMM+PRUNING with trained state.
+     *
+     * Assumes that the vectors sent here are the same as those used in .Train().
+     * Leverages the trained PDX layout, rotation, and pruning for a faster
+     * assignment than brute force Assign().
+     *
+     * @param vectors The data matrix (row-major, n_vectors x d)
+     * @param centroids The centroids matrix (row-major, n_centroids x d)
+     * @param n_vectors Number of vectors
+     * @param n_centroids Number of centroids
+     * @return std::vector<uint32_t> Assignment for each vector (index of nearest centroid)
+     */
+     [[nodiscard]] std::vector<uint32_t> FastAssign(
+        const vector_value_t* SKM_RESTRICT vectors,
+        const vector_value_t* SKM_RESTRICT centroids,
+        const size_t n_vectors,
+        const size_t n_centroids,
+        bool approximate = false
+    ) {
+        SKM_PROFILE_SCOPE("fast_assign");
+        if (!this->trained) {
+            throw std::runtime_error("FastAssign requires SuperKMeans to be trained first");
+        }
+
+        // Approximate path: meso-cluster centroids, then brute-force per partition.
+        // No rotation/PDX needed — uses plain GEMM via Assign().
+        if (approximate) {
+            std::vector<uint32_t> result_assignments(n_vectors);
+            TicToc timer;
+
+            // Reuse training assignments for sampled vectors
+            std::vector<bool> is_sampled(n_vectors, false);
+            for (size_t i = 0; i < this->n_samples; ++i) {
+                size_t orig_idx = this->sampled_indices[i];
+                is_sampled[orig_idx] = true;
+                result_assignments[orig_idx] = this->assignments[i];
+            }
+
+            // Cluster centroids into meso-clusters
+            HierarchicalSuperKMeansConfig tmp_config;
+            tmp_config.iters_mesoclustering = 3;
+            tmp_config.iters_fineclustering = 5;
+            tmp_config.iters_refinement = 0;
+            tmp_config.sampling_fraction = 1.0f;
+            tmp_config.use_blas_only = false;
+            tmp_config.verbose = this->hierarchical_config.verbose;
+            auto new_n_centroids = 10;
+            HierarchicalSuperKMeans tmp_kmeans(new_n_centroids, this->d, tmp_config);
+            auto meso_centroids = tmp_kmeans.Train(centroids, n_centroids);
+
+            timer.Tic();
+            auto meso_assignments =
+                tmp_kmeans.Assign(vectors, meso_centroids.data(), n_vectors, new_n_centroids);
+            timer.Toc();
+            std::cout << "Time taken for initial meso-clustering assignment: "
+                      << timer.GetMilliseconds() << " ms" << std::endl;
+
+            auto centroids_to_meso =
+                tmp_kmeans.Assign(centroids, meso_centroids.data(), n_centroids, new_n_centroids);
+
+            // Build per-mesocentroid index lists (only non-sampled vectors)
+            std::vector<std::vector<size_t>> meso_vector_indices(new_n_centroids);
+            std::vector<std::vector<uint32_t>> meso_centroid_indices(new_n_centroids);
+
+            for (size_t i = 0; i < n_vectors; ++i) {
+                if (!is_sampled[i]) {
+                    meso_vector_indices[meso_assignments[i]].push_back(i);
+                }
+            }
+            for (size_t c = 0; c < n_centroids; ++c) {
+                meso_centroid_indices[centroids_to_meso[c]].push_back(static_cast<uint32_t>(c));
+            }
+
+            // Find max sizes for reusable buffers
+            size_t max_vecs = 0;
+            size_t max_cents = 0;
+            for (size_t m = 0; m < new_n_centroids; ++m) {
+                max_vecs = std::max(max_vecs, meso_vector_indices[m].size());
+                max_cents = std::max(max_cents, meso_centroid_indices[m].size());
+            }
+
+            // Allocate reusable gather buffers (no zero-init)
+            auto vector_buf =
+                std::unique_ptr<vector_value_t[]>(new vector_value_t[max_vecs * this->d]);
+            auto centroid_buf =
+                std::unique_ptr<vector_value_t[]>(new vector_value_t[max_cents * this->d]);
+
+            timer.Reset();
+            timer.Tic();
+            for (size_t m = 0; m < new_n_centroids; ++m) {
+                const auto& vec_indices = meso_vector_indices[m];
+                const auto& cent_indices = meso_centroid_indices[m];
+                if (vec_indices.empty() || cent_indices.empty()) continue;
+
+                size_t n_vecs = vec_indices.size();
+                size_t n_cents = cent_indices.size();
+
+                // Gather vectors and centroids for this mesocentroid
+                for (size_t i = 0; i < n_vecs; ++i) {
+                    memcpy(
+                        vector_buf.get() + i * this->d,
+                        vectors + vec_indices[i] * this->d,
+                        this->d * sizeof(vector_value_t)
+                    );
+                }
+                for (size_t i = 0; i < n_cents; ++i) {
+                    memcpy(
+                        centroid_buf.get() + i * this->d,
+                        centroids + cent_indices[i] * this->d,
+                        this->d * sizeof(vector_value_t)
+                    );
+                }
+
+                // Brute-force assign within this partition
+                auto local_assignments =
+                    this->Assign(vector_buf.get(), centroid_buf.get(), n_vecs, n_cents);
+
+                // Map local assignments back to global centroid indices
+                for (size_t i = 0; i < n_vecs; ++i) {
+                    result_assignments[vec_indices[i]] = cent_indices[local_assignments[i]];
+                }
+            }
+            timer.Toc();
+            std::cout << "Time taken for approximate per-mesocentroid assignment: "
+                      << timer.GetMilliseconds() << " ms" << std::endl;
+            return result_assignments;
+        }
+        return this->Assign(vectors, centroids, n_vectors, n_centroids);
+    }
+
+    /**
      * @brief Calculate the number of mesoclusters for a given number of clusters
      *
      * @param n_clusters Total number of clusters
