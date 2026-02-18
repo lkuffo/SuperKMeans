@@ -9,8 +9,8 @@
 
 #include "bench_utils.h"
 #include "superkmeans/common.h"
-#include "superkmeans/superkmeans.h"
 #include "superkmeans/hierarchical_superkmeans.h"
+#include "superkmeans/superkmeans.h"
 
 int main(int argc, char* argv[]) {
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
@@ -72,9 +72,10 @@ int main(int argc, char* argv[]) {
         config.angular = true;
     }
 
-    auto kmeans = skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
+    auto kmeans =
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            n_clusters, d, config
+        );
 
     bench_utils::TicToc timer_train;
     timer_train.Tic();
@@ -93,7 +94,8 @@ int main(int argc, char* argv[]) {
     // --- FastAssign approximate (GEMM+PRUNING fast path) ---
     bench_utils::TicToc timer_fast_approximate;
     timer_fast_approximate.Tic();
-    auto assignments_fast_approximate = kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters, true);
+    auto assignments_fast_approximate =
+        kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters, true);
     timer_fast_approximate.Toc();
     double fast_ms_approximate = timer_fast_approximate.GetMilliseconds();
     std::cout << "\nFastAssign (approximate): " << fast_ms_approximate << " ms" << std::endl;

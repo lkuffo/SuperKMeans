@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters = 22500; //bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = 22500; // bench_utils::get_default_n_clusters(n);
     float sampling_fraction = 0.3;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
@@ -115,12 +115,13 @@ int main(int argc, char* argv[]) {
     std::cout << "Final objective: " << final_objective << std::endl;
 
     // Compute assignments and cluster balance statistics
-    // Time this 
+    // Time this
     bench_utils::TicToc timer_fast;
     timer_fast.Tic();
     auto assignments = kmeans_state.FastAssign(data.data(), centroids.data(), n, n_clusters, true);
     timer_fast.Toc();
-    std::cout << "Time taken for FastAssign: " << timer_fast.GetMilliseconds() << " ms" << std::endl;
+    std::cout << "Time taken for FastAssign: " << timer_fast.GetMilliseconds() << " ms"
+              << std::endl;
     auto balance_stats = skmeans::HierarchicalSuperKMeans<
         skmeans::Quantization::f32,
         skmeans::DistanceFunction::l2>::GetClustersBalanceStats(assignments.data(), n, n_clusters);

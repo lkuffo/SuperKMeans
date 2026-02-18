@@ -27,13 +27,13 @@ int main() {
     const std::string filename = "./data/data_openai.bin";
     const std::string filename_queries = "./data/data_openai_test.bin";
 #else
-    const std::string dataset = "cohere50m";
-    const size_t n = 50000000;
+    const std::string dataset = "cohere";
+    const size_t n = 10000000;
     const size_t n_queries = 1000;
     const size_t d = 1024;
-    const size_t n_clusters = 200000;
-    const std::string filename = "./data/data_cohere50m.bin";
-    const std::string filename_queries = "./data/data_cohere50m_test.bin";
+    const size_t n_clusters = 40000;
+    const std::string filename = "./data/data_cohere.bin";
+    const std::string filename_queries = "./data/data_cohere_test.bin";
 #endif
 
     const float sampling_fraction = 0.3f;

@@ -58,11 +58,11 @@ int main() {
 
     skmeans::HierarchicalSuperKMeansConfig config;
     config.verbose = true;
-    config.sampling_fraction = 0.3;
+    config.sampling_fraction = 1.0;
     config.use_blas_only = false;
     config.iters_mesoclustering = 3;
     config.iters_fineclustering = 5;
-    config.iters_refinement = 1;
+    config.iters_refinement = 0;
 
     std::cout << "=== Running SuperKMeans on Cohere 10M dataset ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
@@ -84,15 +84,9 @@ int main() {
 
     timer.Reset();
     timer.Tic();
-    // auto assignments_tmp = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
-    timer.Toc();
-    double assignment_time_ms_tmp = timer.GetMilliseconds();
-    std::cout << "Assignment completed in " << assignment_time_ms_tmp << " ms" << std::endl;
-
-    timer.Reset();
-    timer.Tic();
-    auto assignments = kmeans_state.FastAssign(data.data(), centroids.data(), n, n_clusters, false);
-    //std::vector<uint32_t> assignments(kmeans_state.final_assignments.get(), kmeans_state.final_assignments.get() + n);
+    auto assignments = kmeans_state.FastAssign(data.data(), centroids.data(), n, n_clusters);
+    // std::vector<uint32_t> assignments(kmeans_state.final_assignments.get(),
+    // kmeans_state.final_assignments.get() + n);
     timer.Toc();
     double assignment_time_ms = timer.GetMilliseconds();
     std::cout << "Fast Assignment completed in " << assignment_time_ms << " ms" << std::endl;
