@@ -49,6 +49,7 @@ struct SuperKMeansConfig {
     bool unrotate_centroids = true; // Whether to unrotate centroids before returning
     bool verbose = false;           // Whether to print progress information
     bool angular = false;           // Whether to use spherical k-means
+    bool suppress_warnings = false; // Whether to suppress warnings
 
     bool data_already_rotated = false; // Whether input data is already rotated (skip rotation)
 };
@@ -406,8 +407,10 @@ class SuperKMeans {
 
         if (config.use_blas_only || d < DIMENSION_THRESHOLD_FOR_PRUNING ||
             n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-            std::cout << "WARNING: FastAssign cannot be used, falling back to brute force Assign"
-                      << std::endl;
+            if (!config.suppress_warnings) {
+                std::cout << "WARNING: FastAssign cannot be used, falling back to brute force Assign"
+                          << std::endl;
+            }
             return Assign(vectors, centroids, n_vectors, n_centroids);
         }
         if (config.verbose) {

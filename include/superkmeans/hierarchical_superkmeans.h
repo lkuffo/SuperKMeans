@@ -53,10 +53,12 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         static_cast<SuperKMeansConfig&>(hierarchical_config) = this->config;
 
         if (n_clusters <= 128) {
+            if (!this->hierarchical_config.suppress_warnings) {
             std::cout
-                << "WARNING: n_clusters <= 128 is not recommended for HierarchicalSuperKMeans. "
-                   "Consider using at least 128 clusters."
-                << std::endl;
+                    << "WARNING: n_clusters <= 128 is not recommended for HierarchicalSuperKMeans. "
+                       "Consider using at least 128 clusters."
+                    << std::endl;
+            }
         }
     }
 
@@ -87,9 +89,11 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             throw std::runtime_error("The clustering has already been trained");
         }
         if (n_queries > 0) {
-            std::cout << "WARNING: Early Termination by Recall is not supported in "
-                         "HierarchicalSuperKMeans"
-                      << std::endl;
+            if (!this->hierarchical_config.suppress_warnings) {
+                std::cout << "WARNING: Early Termination by Recall is not supported in "
+                            "HierarchicalSuperKMeans"
+                        << std::endl;
+            }
         }
         n_mesoclusters = GetNMesoclusters(this->n_clusters);
         hierarchical_iteration_stats.fineclustering_iteration_stats.clear();

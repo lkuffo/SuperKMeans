@@ -85,8 +85,6 @@ int main() {
     timer.Reset();
     timer.Tic();
     auto assignments = kmeans_state.FastAssign(data.data(), centroids.data(), n, n_clusters);
-    // std::vector<uint32_t> assignments(kmeans_state.final_assignments.get(),
-    // kmeans_state.final_assignments.get() + n);
     timer.Toc();
     double assignment_time_ms = timer.GetMilliseconds();
     std::cout << "Fast Assignment completed in " << assignment_time_ms << " ms" << std::endl;

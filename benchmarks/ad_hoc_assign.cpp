@@ -86,19 +86,10 @@ int main(int argc, char* argv[]) {
     // --- FastAssign (GEMM+PRUNING fast path) ---
     bench_utils::TicToc timer_fast;
     timer_fast.Tic();
-    auto assignments_fast = kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters, false);
+    auto assignments_fast = kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters);
     timer_fast.Toc();
     double fast_ms = timer_fast.GetMilliseconds();
     std::cout << "\nFastAssign: " << fast_ms << " ms" << std::endl;
-
-    // --- FastAssign approximate (GEMM+PRUNING fast path) ---
-    bench_utils::TicToc timer_fast_approximate;
-    timer_fast_approximate.Tic();
-    auto assignments_fast_approximate =
-        kmeans.FastAssign(data.data(), centroids.data(), n, n_clusters, true);
-    timer_fast_approximate.Toc();
-    double fast_ms_approximate = timer_fast_approximate.GetMilliseconds();
-    std::cout << "\nFastAssign (approximate): " << fast_ms_approximate << " ms" << std::endl;
 
     // --- Assign (brute force) ---
     bench_utils::TicToc timer_brute;
@@ -112,7 +103,7 @@ int main(int argc, char* argv[]) {
     double speedup = brute_ms / fast_ms;
     size_t matches = 0;
     for (size_t i = 0; i < n; ++i) {
-        if (assignments_fast_approximate[i] == assignments_brute[i]) {
+        if (assignments_fast[i] == assignments_brute[i]) {
             ++matches;
         }
     }
