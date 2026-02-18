@@ -71,7 +71,7 @@ int main(int argc, char* argv[]) {
     skmeans::HierarchicalSuperKMeansConfig config;
     // Base SuperKMeans config parameters
     config.iters = 10;
-    config.verbose = false;
+    config.verbose = true;
     config.n_threads = THREADS;
     config.objective_k = 100;
     config.ann_explore_fraction = 0.01f;
@@ -115,7 +115,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Final objective: " << final_objective << std::endl;
 
     // Compute assignments and cluster balance statistics
-    // Time this
     bench_utils::TicToc timer_fast;
     timer_fast.Tic();
     auto assignments = kmeans_state.FastAssign(data.data(), centroids.data(), n, n_clusters);

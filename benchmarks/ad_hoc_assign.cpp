@@ -53,7 +53,6 @@ int main(int argc, char* argv[]) {
 
     // --- Training ---
     skmeans::HierarchicalSuperKMeansConfig config;
-    // config.iters = n_iters;
     config.iters_mesoclustering = 3;
     config.iters_fineclustering = 5;
     config.iters_refinement = 0;
