@@ -27,13 +27,13 @@ int main() {
     const std::string filename = "./data/data_openai.bin";
     const std::string filename_queries = "./data/data_openai_test.bin";
 #else
-    const std::string dataset = "cohere50m";
-    const size_t n = 50000000;
+    const std::string dataset = "cohere";
+    const size_t n = 10000000;
     const size_t n_queries = 1000;
     const size_t d = 1024;
-    const size_t n_clusters = 200000;
-    const std::string filename = "./data/data_cohere50m.bin";
-    const std::string filename_queries = "./data/data_cohere50m_test.bin";
+    const size_t n_clusters = 40000;
+    const std::string filename = "./data/data_cohere.bin";
+    const std::string filename_queries = "./data/data_cohere_test.bin";
 #endif
 
     std::vector<float> data;
@@ -64,7 +64,7 @@ int main() {
     config.iters_fineclustering = 5;
     config.iters_refinement = 1;
 
-    std::cout << "=== Running SuperKMeans on Cohere 50M dataset ===" << std::endl;
+    std::cout << "=== Running SuperKMeans on Cohere 10M dataset ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "n_clusters=" << n_clusters << " sampling_fraction=" << config.sampling_fraction
               << "\n";
@@ -84,14 +84,15 @@ int main() {
 
     timer.Reset();
     timer.Tic();
-    auto assignments_tmp = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
+    // auto assignments_tmp = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
     timer.Toc();
     double assignment_time_ms_tmp = timer.GetMilliseconds();
     std::cout << "Assignment completed in " << assignment_time_ms_tmp << " ms" << std::endl;
 
     timer.Reset();
     timer.Tic();
-    auto assignments = kmeans_state.FastAssign(data.data(), centroids.data(), n, n_clusters);
+    auto assignments = kmeans_state.FastAssign(data.data(), centroids.data(), n, n_clusters, false);
+    //std::vector<uint32_t> assignments(kmeans_state.final_assignments.get(), kmeans_state.final_assignments.get() + n);
     timer.Toc();
     double assignment_time_ms = timer.GetMilliseconds();
     std::cout << "Fast Assignment completed in " << assignment_time_ms << " ms" << std::endl;
