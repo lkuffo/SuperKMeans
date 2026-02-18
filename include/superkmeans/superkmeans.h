@@ -408,8 +408,9 @@ class SuperKMeans {
         if (config.use_blas_only || d < DIMENSION_THRESHOLD_FOR_PRUNING ||
             n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
             if (!config.suppress_warnings) {
-                std::cout << "WARNING: FastAssign cannot be used, falling back to brute force Assign"
-                          << std::endl;
+                std::cout
+                    << "WARNING: FastAssign cannot be used, falling back to brute force Assign"
+                    << std::endl;
             }
             return Assign(vectors, centroids, n_vectors, n_centroids);
         }

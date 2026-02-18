@@ -22,9 +22,9 @@ int main(int argc, char* argv[]) {
     }
     const size_t n = it->second.first;
     const size_t d = it->second.second;
-    const size_t n_clusters = 22500; // bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = 40000; // bench_utils::get_default_n_clusters(n);
     int n_iters = 5;
-    float sampling_fraction = 0.3;
+    float sampling_fraction = 1.0;
     std::string filename = bench_utils::get_data_path(dataset);
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);

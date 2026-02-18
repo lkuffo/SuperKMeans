@@ -84,6 +84,14 @@ int main() {
 
     timer.Reset();
     timer.Tic();
+    auto assignments_brute = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
+    timer.Toc();
+    double assignment_time_ms_brute = timer.GetMilliseconds();
+    std::cout << "Brute Force Assignment completed in " << assignment_time_ms_brute << " ms"
+              << std::endl;
+
+    timer.Reset();
+    timer.Tic();
     auto assignments = kmeans_state.FastAssign(data.data(), centroids.data(), n, n_clusters);
     timer.Toc();
     double assignment_time_ms = timer.GetMilliseconds();
@@ -128,7 +136,7 @@ int main() {
         config_map["verbose"] = config.verbose ? "true" : "false";
         config_map["training_time"] = std::to_string(construction_time_ms);
         config_map["assignment_time"] = std::to_string(assignment_time_ms);
-        config_map["assignment_time_naive"] = std::to_string(assignment_time_ms_tmp);
+        config_map["assignment_time_naive"] = std::to_string(assignment_time_ms_brute);
 
         bench_utils::write_results_to_csv(
             experiment_name,

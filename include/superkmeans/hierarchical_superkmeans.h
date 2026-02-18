@@ -54,7 +54,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
 
         if (n_clusters <= 128) {
             if (!this->hierarchical_config.suppress_warnings) {
-            std::cout
+                std::cout
                     << "WARNING: n_clusters <= 128 is not recommended for HierarchicalSuperKMeans. "
                        "Consider using at least 128 clusters."
                     << std::endl;
@@ -91,8 +91,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         if (n_queries > 0) {
             if (!this->hierarchical_config.suppress_warnings) {
                 std::cout << "WARNING: Early Termination by Recall is not supported in "
-                            "HierarchicalSuperKMeans"
-                        << std::endl;
+                             "HierarchicalSuperKMeans"
+                          << std::endl;
             }
         }
         n_mesoclusters = GetNMesoclusters(this->n_clusters);
