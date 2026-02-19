@@ -36,7 +36,7 @@ int main() {
     const std::string filename_queries = "./data/data_cohere_test.bin";
 #endif
 
-    const float sampling_fraction = 0.3f;
+    const float sampling_fraction = 1.0f;
     const int max_points_per_centroid = static_cast<int>((n * sampling_fraction) / n_clusters);
 
     const size_t threads = omp_get_max_threads();
@@ -72,7 +72,7 @@ int main() {
     // Build IVFFlat index
     faiss::IndexFlatL2 quantizer(d);
     faiss::IndexIVFFlat index(&quantizer, d, n_clusters);
-    index.cp.max_points_per_centroid = max_points_per_centroid;
+    // index.cp.max_points_per_centroid = max_points_per_centroid;
     index.cp.verbose = true;
 
     // Train (k-means on sampled data)
