@@ -12,7 +12,7 @@
 </h3>
 
 <p align="center">
-        <img src="./benchmarks/results/plots/github_1.png" height=220 alt="SuperKMeans vs FAISS and Scikit Learn" style="{max-height: 100px}">
+        <img src="./benchmarks/results/plots/github_1.png" height=260 alt="SuperKMeans vs FAISS and Scikit Learn" style="{max-height: 250px}">
 </p>
 
 > [!IMPORTANT]
