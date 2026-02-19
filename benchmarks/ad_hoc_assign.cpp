@@ -9,6 +9,7 @@
 
 #include "bench_utils.h"
 #include "superkmeans/common.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/superkmeans.h"
 
 int main(int argc, char* argv[]) {
@@ -21,7 +22,7 @@ int main(int argc, char* argv[]) {
     }
     const size_t n = it->second.first;
     const size_t d = it->second.second;
-    const size_t n_clusters = 10000; // bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = 40000; // bench_utils::get_default_n_clusters(n);
     int n_iters = 5;
     float sampling_fraction = 1.0;
     std::string filename = bench_utils::get_data_path(dataset);
@@ -51,9 +52,11 @@ int main(int argc, char* argv[]) {
     file.close();
 
     // --- Training ---
-    skmeans::SuperKMeansConfig config;
-    config.iters = n_iters;
-    config.verbose = true;
+    skmeans::HierarchicalSuperKMeansConfig config;
+    config.iters_mesoclustering = 3;
+    config.iters_fineclustering = 5;
+    config.iters_refinement = 0;
+    config.verbose = false;
     config.n_threads = THREADS;
     config.unrotate_centroids = true;
     config.early_termination = false;
@@ -68,9 +71,10 @@ int main(int argc, char* argv[]) {
         config.angular = true;
     }
 
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
+    auto kmeans =
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            n_clusters, d, config
+        );
 
     bench_utils::TicToc timer_train;
     timer_train.Tic();

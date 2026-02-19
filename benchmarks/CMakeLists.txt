@@ -116,6 +116,12 @@ target_link_libraries(microbenchmark_flip_sign.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(microbenchmark_horizontal_kernels.out microbenchmarks/microbenchmark_horizontal_kernels.cpp)
 target_link_libraries(microbenchmark_horizontal_kernels.out PRIVATE ${BENCH_COMMON_LIBS})
 
+add_executable(cohere_bench_superkmeans.out cohere_bench_superkmeans.cpp)
+target_link_libraries(cohere_bench_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
+add_executable(cohere_bench_faiss.out cohere_bench_faiss.cpp)
+target_link_libraries(cohere_bench_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
+
 add_custom_target(benchmarks
     DEPENDS
         end_to_end_superkmeans.out
@@ -136,4 +142,6 @@ add_custom_target(benchmarks
         microbenchmark_init_positions_array.out
         microbenchmark_flip_sign.out
         microbenchmark_horizontal_kernels.out
+        cohere_bench_superkmeans.out
+        cohere_bench_faiss.out
 )

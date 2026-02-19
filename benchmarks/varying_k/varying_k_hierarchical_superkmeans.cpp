@@ -26,7 +26,7 @@ int main(int argc, char* argv[]) {
     const size_t d = it->second.second;
     const int iters_meso = 3;
     const int iters_fine = 5;
-    const int iters_refine = 1;
+    const int iters_refine = 0;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
     const size_t THREADS = omp_get_max_threads();

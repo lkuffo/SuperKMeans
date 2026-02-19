@@ -49,6 +49,7 @@ struct SuperKMeansConfig {
     bool unrotate_centroids = true; // Whether to unrotate centroids before returning
     bool verbose = false;           // Whether to print progress information
     bool angular = false;           // Whether to use spherical k-means
+    bool suppress_warnings = false; // Whether to suppress warnings
 
     bool data_already_rotated = false; // Whether input data is already rotated (skip rotation)
 };
@@ -403,10 +404,14 @@ class SuperKMeans {
         if (!trained) {
             throw std::runtime_error("FastAssign requires SuperKMeans to be trained first");
         }
+
         if (config.use_blas_only || d < DIMENSION_THRESHOLD_FOR_PRUNING ||
             n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
-            std::cout << "WARNING: FastAssign cannot be used, falling back to brute force Assign"
-                      << std::endl;
+            if (!config.suppress_warnings) {
+                std::cout
+                    << "WARNING: FastAssign cannot be used, falling back to brute force Assign"
+                    << std::endl;
+            }
             return Assign(vectors, centroids, n_vectors, n_centroids);
         }
         if (config.verbose) {
@@ -423,14 +428,10 @@ class SuperKMeans {
         std::fill(not_pruned_counts.data(), not_pruned_counts.data() + n_vectors, 0);
         std::vector<vector_value_t> data_buffer;
         data_buffer.reserve(n_vectors * d);
-        TicToc timer;
-        timer.Tic();
+
+        // TODO(@lkuffo, med): Double rotating the data seems wasteful, especially if
+        // sample_fraction is 1.0
         RotateOrCopy(vectors, data_buffer.data(), n_vectors, !config.data_already_rotated);
-        timer.Toc();
-        if (config.verbose) {
-            std::cout << "Time taken for rotation: " << timer.GetMilliseconds() << " ms"
-                      << std::endl;
-        }
         auto data_p = data_buffer.data();
         GetPartialL2NormsRowMajor(
             horizontal_centroids.get(), n_centroids, centroid_norms.get(), partial_d
@@ -461,9 +462,6 @@ class SuperKMeans {
                 partial_d,
                 not_pruned_counts.data()
             );
-            if (config.verbose) {
-                std::cout << "Partial D: " << partial_d << std::endl;
-            }
             memcpy(result_assignments.data(), assignments.get(), n_vectors * sizeof(uint32_t));
             return result_assignments;
         } else if (config.sampling_fraction > 0.8f) {
@@ -499,13 +497,6 @@ class SuperKMeans {
                 partial_d,
                 not_pruned_counts.data()
             );
-            if (config.verbose) {
-                std::cout << "Partial D: " << partial_d << std::endl;
-                // for (size_t i = 0; i < n_vectors; ++i) {
-                //     std::cout << "Vector " << i << " pruned " << (not_pruned_counts[i] * 1.0f) /
-                //     (n_centroids) * 100 << " vectors" << std::endl;
-                // }
-            }
             return result_assignments;
         } else {
             // When sampling_fraction is very low we don't have good initial assignments.
@@ -513,20 +504,15 @@ class SuperKMeans {
             // sqrt(n_centroids) meso-clusters, then map each vector's meso-assignment
             // back to a representative original centroid for seeding.
             SuperKMeansConfig tmp_config;
-            tmp_config.iters = 3;
+            tmp_config.iters = 10;
             tmp_config.sampling_fraction = 1.0f;
             tmp_config.use_blas_only = false;
             tmp_config.verbose = config.verbose;
             auto new_n_centroids = static_cast<size_t>(std::sqrt(n_centroids));
             SuperKMeans tmp_kmeans(new_n_centroids, d, tmp_config);
             auto meso_centroids = tmp_kmeans.Train(centroids, n_centroids);
-            timer.Reset();
-            timer.Tic();
             auto meso_assignments =
                 tmp_kmeans.Assign(vectors, meso_centroids.data(), n_vectors, new_n_centroids);
-            timer.Toc();
-            std::cout << "Time taken for initial meso-clustering assignment: "
-                      << timer.GetMilliseconds() << " ms" << std::endl;
 
             // Map each meso-centroid to a single representative original centroid
             auto centroids_to_meso =
@@ -550,8 +536,6 @@ class SuperKMeans {
             data_norms.reset(new vector_value_t[n_vectors]);
             GetPartialL2NormsRowMajor(data_p, n_vectors, data_norms.get(), partial_d);
 
-            timer.Reset();
-            timer.Tic();
             batch_computer::FindNearestNeighborWithPruning(
                 data_p,
                 horizontal_centroids.get(),
@@ -567,12 +551,6 @@ class SuperKMeans {
                 partial_d,
                 not_pruned_counts.data()
             );
-            timer.Toc();
-            std::cout << "Time taken for final GEMM+PRUNING assignment: " << timer.GetMilliseconds()
-                      << " ms" << std::endl;
-            if (config.verbose) {
-                std::cout << "Partial D: " << partial_d << std::endl;
-            }
             return result_assignments;
         }
     }
