@@ -20,7 +20,7 @@
 
 ## Why Super K-Means?
 - **100x faster clustering** than FAISS of vector embeddings (Cohere, OpenAI, MXBAI, CLIP, MiniLM).
-- Index 10M embeddings of 1024 dimensions **in less than a minute** on a single CPU.
+- Index 10M embeddings of 1024 dimensions [**in less than a minute**](https://www.lkuffo.com/superkmeans/) on a single CPU.
 - Faster **without compromising clustering quality**.
 - Efficient in **CPUs** (ARM and x86) and **GPUs**.
 
