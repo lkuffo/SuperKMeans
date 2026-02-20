@@ -37,7 +37,7 @@ class SuperKMeans:
         Number of mesoclustering iterations (only for hierarchical mode).
     iters_fineclustering : int, optional (default=5)
         Number of fineclustering iterations (only for hierarchical mode).
-    iters_refinement : int, optional (default=1)
+    iters_refinement : int, optional (default=0)
         Number of refinement iterations (only for hierarchical mode).
     sampling_fraction : float, optional (default=0.3)
         Fraction of data to sample, must be in (0.0, 1.0].
@@ -85,7 +85,7 @@ class SuperKMeans:
         iters: int = 10,
         iters_mesoclustering: int = 3,
         iters_fineclustering: int = 5,
-        iters_refinement: int = 1,
+        iters_refinement: int = 0,
         sampling_fraction: float = 0.3,
         max_points_per_cluster: int = 256,
         n_threads: int = 0,
