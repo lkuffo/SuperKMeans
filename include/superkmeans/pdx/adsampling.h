@@ -154,8 +154,8 @@ class ADSamplingPruner {
      * @param n Number of vectors to rotate
      */
     void Rotate(
-        const value_t* SKM_RESTRICT vectors,
-        value_t* SKM_RESTRICT out_buffer,
+        const float* SKM_RESTRICT vectors,
+        float* SKM_RESTRICT out_buffer,
         const uint32_t n
     ) {
         Eigen::Map<const MatrixR> vectors_matrix(vectors, n, num_dimensions);

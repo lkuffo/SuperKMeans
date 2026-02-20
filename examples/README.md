@@ -14,7 +14,7 @@ These examples demonstrate how to use our clustering library.
 
 ## C++: Hierarchical Clustering example
 
-Absurdly faster while preserving quality. Recommended when n > 100K.
+Extremely fast while preserving quality. Recommended when n > 100K.
 
 **File:** [`hierarchical_clustering.cpp`](./simple_clustering.cpp)   
 **Compile:** `make hierarchical_clustering.out`   

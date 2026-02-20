@@ -11,7 +11,7 @@ namespace skmeans {
 struct HierarchicalSuperKMeansConfig : SuperKMeansConfig {
     uint32_t iters_mesoclustering = 3;
     uint32_t iters_fineclustering = 5;
-    uint32_t iters_refinement = 1;
+    uint32_t iters_refinement = 0; // Refinement iteration is not needed to achieve good recall
 };
 
 /**
