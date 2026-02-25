@@ -508,6 +508,10 @@ class SuperKMeans {
             tmp_config.sampling_fraction = 1.0f;
             tmp_config.use_blas_only = false;
             tmp_config.verbose = config.verbose;
+            tmp_config.suppress_warnings = config.suppress_warnings;
+            tmp_config.seed = config.seed;
+            tmp_config.angular = config.angular;
+            tmp_config.data_already_rotated = config.data_already_rotated;
             auto new_n_centroids = static_cast<size_t>(std::sqrt(n_centroids));
             SuperKMeans tmp_kmeans(new_n_centroids, d, tmp_config);
             auto meso_centroids = tmp_kmeans.Train(centroids, n_centroids);

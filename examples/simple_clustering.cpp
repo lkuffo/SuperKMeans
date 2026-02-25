@@ -50,5 +50,10 @@ int main(int argc, char* argv[]) {
     std::cout << "Index built in: " << construction_time_ms << " ms" << std::endl;
 
     // Get assignments
+    timer.Reset();
+    timer.Tic();
     std::vector<uint32_t> assignments = kmeans.Assign(data.data(), centroids.data(), n, k);
+    timer.Toc();
+    double assignment_time_ms = timer.GetMilliseconds();
+    std::cout << "Assignment time: " << assignment_time_ms << " ms" << std::endl;
 }

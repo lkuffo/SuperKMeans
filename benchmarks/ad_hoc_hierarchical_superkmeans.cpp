@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
     config.ann_explore_fraction = 0.01f;
     config.unrotate_centroids = true;
     config.early_termination = false;
-    config.sampling_fraction = 0.3; // sampling_fraction;
+    config.sampling_fraction = 1.0f; // sampling_fraction;
     config.use_blas_only = false;
     config.tol = 1e-3f;
 
