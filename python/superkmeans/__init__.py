@@ -39,8 +39,9 @@ class SuperKMeans:
         Number of fineclustering iterations (only for hierarchical mode).
     iters_refinement : int, optional (default=0)
         Number of refinement iterations (only for hierarchical mode).
-    sampling_fraction : float, optional (default=0.3)
+    sampling_fraction : float, optional (default=None)
         Fraction of data to sample, must be in (0.0, 1.0].
+        If None, uses 0.3 for flat mode and 1.0 for hierarchical mode.
     max_points_per_cluster : int, optional (default=256)
         Maximum number of points per cluster to sample (FAISS style).
     n_threads : int, optional (default=0)
@@ -86,7 +87,7 @@ class SuperKMeans:
         iters_mesoclustering: int = 3,
         iters_fineclustering: int = 5,
         iters_refinement: int = 0,
-        sampling_fraction: float = 0.3,
+        sampling_fraction: Optional[float] = None,
         max_points_per_cluster: int = 256,
         n_threads: int = 0,
         seed: int = 42,
@@ -105,7 +106,7 @@ class SuperKMeans:
             raise ValueError("n_clusters must be positive")
         if dimensionality <= 0:
             raise ValueError("dimensionality must be positive")
-        if not 0.0 < sampling_fraction <= 1.0:
+        if sampling_fraction is not None and not 0.0 < sampling_fraction <= 1.0:
             raise ValueError("sampling_fraction must be in (0.0, 1.0]")
 
         self._n_clusters = n_clusters
@@ -203,7 +204,8 @@ class SuperKMeans:
                 config = _SuperKMeansConfigCpp()
                 config.iters = self._config_params['iters']
 
-            config.sampling_fraction = self._config_params['sampling_fraction']
+            if self._config_params['sampling_fraction'] is not None:
+                config.sampling_fraction = self._config_params['sampling_fraction']
             config.max_points_per_cluster = self._config_params['max_points_per_cluster']
             config.n_threads = self._config_params['n_threads']
             config.seed = self._config_params['seed']
@@ -236,6 +238,7 @@ class SuperKMeans:
         self,
         vectors: NDArray[np.float32],
         centroids: NDArray[np.float32],
+        fast: Optional[bool] = None,
     ) -> NDArray[np.uint32]:
         """
         Assign vectors to their nearest centroid.
@@ -246,6 +249,10 @@ class SuperKMeans:
             Vectors to assign. Must be C-contiguous.
         centroids : ndarray of shape (n_clusters, dimensionality), dtype=float32
             Cluster centroids. Must be C-contiguous.
+        fast : bool, optional (default=None)
+            Whether to use FastAssign. If None, automatically uses FastAssign
+            when the model is trained and sampling_fraction > 0.5.
+            Pass True/False to override.
 
         Returns
         -------
@@ -266,7 +273,7 @@ class SuperKMeans:
                 f"got {vectors.shape[1]} and {centroids.shape[1]}"
             )
 
-        return self._cpp_skmeans_obj.assign(vectors, centroids)
+        return self._cpp_skmeans_obj.assign(vectors, centroids, fast)
 
     # Alias for assign() to match FAISS API
     add = assign
