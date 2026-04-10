@@ -1,0 +1,119 @@
+#
+# SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load(
+    "//:kai_defs.bzl",
+    "kai_cpu_bf16",
+    "kai_cpu_fp16",
+    "kai_cpu_neon",
+    "kai_cpu_sme",
+    "kai_cxx_library",
+    "kai_cxxopts",
+)
+
+package(default_testonly = 1)
+
+kai_cxx_library(
+    name = "common",
+    srcs = glob(
+        [
+            "common/*.cpp",
+            "common/*.S",
+        ],
+        exclude = ["common/sme.cpp"],
+    ),
+    hdrs = glob(
+        ["common/*.hpp"],
+        exclude = ["common/sme.hpp"],
+    ),
+    # compare.cpp requires fp16 and bf16 support
+    cpu_uarch = kai_cpu_bf16() + kai_cpu_fp16(),
+    textual_hdrs = [
+        "common/assembly.h",
+    ],
+    deps = ["@com_google_googletest//:gtest"],
+)
+
+kai_cxx_library(
+    name = "common_sme",
+    srcs = ["common/sme.cpp"],
+    hdrs = ["common/sme.hpp"],
+    # compare.cpp requires fp16 and bf16 support
+    cpu_uarch = kai_cpu_sme(),
+    deps = [
+        ":common",
+    ],
+)
+
+kai_cxx_library(
+    name = "reference",
+    srcs = glob(["reference/*.cpp"]),
+    hdrs = glob(["reference/*.hpp"]),
+    cpu_uarch = kai_cpu_neon(),
+    deps = [
+        ":common",
+    ],
+)
+
+kai_cxx_library(
+    name = "nextgen",
+    srcs = glob(
+        [
+            "nextgen/**/*.cpp",
+        ],
+        exclude = [
+            "nextgen/tests/*.cpp",
+            "nextgen/main.cpp",
+        ],
+    ),
+    hdrs = glob(["nextgen/**/*.hpp"]),
+    cpu_uarch = kai_cpu_neon(),
+    deps = [
+        ":common",
+        ":common_sme",
+        ":reference",
+        "//:kleidiai",
+    ],
+)
+
+cc_test(
+    name = "kleidiai_test",
+    srcs = glob([
+        "tests/*.cpp",
+        "nextgen/tests/*.cpp",
+    ]) + [
+        "nextgen/main.cpp",
+    ],
+    copts = kai_cxxopts(kai_cpu_neon()),
+    includes = [],
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":nextgen",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+[cc_test(
+    # Remove prefix tests/ and suffix .cpp
+    name = test_file.split("/")[-1][:-4],
+    srcs = [
+        test_file,
+        "nextgen/main.cpp",
+    ],
+    copts = kai_cxxopts(kai_cpu_neon()),
+    includes = [],
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":nextgen",
+        "@com_google_googletest//:gtest",
+    ],
+) for test_file in glob([
+    "tests/*.cpp",
+    "nextgen/tests/*.cpp",
+])]

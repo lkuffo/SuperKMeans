@@ -1,0 +1,53 @@
+{
+  "tests": 7,
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "SQ8QuantizerTest",
+      "tests": 3,
+      "testsuite": [
+        {
+          "name": "FitEncodeDecode_Roundtrip",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_quantized.cpp",
+          "line": 33
+        },
+        {
+          "name": "Norms_ConsistentWithDistances",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_quantized.cpp",
+          "line": 55
+        },
+        {
+          "name": "FindNearestNeighbor_MatchesBruteForce",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_quantized.cpp",
+          "line": 85
+        }
+      ]
+    },
+    {
+      "name": "SuperKMeansU8Test",
+      "tests": 4,
+      "testsuite": [
+        {
+          "name": "BasicTraining",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_quantized.cpp",
+          "line": 144
+        },
+        {
+          "name": "AllClustersUsed",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_quantized.cpp",
+          "line": 164
+        },
+        {
+          "name": "WCSSReasonable",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_quantized.cpp",
+          "line": 187
+        },
+        {
+          "name": "RerankingMatchesOrImproves",
+          "file": "\/Users\/lxkr\/Desktop\/PHD\/repositories\/SuperKMeans\/tests\/test_quantized.cpp",
+          "line": 234
+        }
+      ]
+    }
+  ]
+}

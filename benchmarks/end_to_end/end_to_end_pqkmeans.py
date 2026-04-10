@@ -79,6 +79,13 @@ if __name__ == "__main__":
     centroid_pqcodes = np.array(kmeans.cluster_centers_, dtype=encoder.code_dtype)
     centroids = encoder.inverse_transform(centroid_pqcodes).astype(np.float32)
 
+    # Reconstruct exact f32 centroids as mean of assigned vectors
+    # centroids = np.zeros((num_centroids, num_dimensions), dtype=np.float32)
+    # for c in range(num_centroids):
+    #     mask = assignments == c
+    #     if np.any(mask):
+    #         centroids[c] = data[mask].mean(axis=0)
+
     # pqkmeans does not report actual iterations or inertia — compute manually
     actual_iterations = n_iter
     diffs = data - centroids[assignments]

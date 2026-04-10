@@ -46,6 +46,7 @@ Thumbs.db
 
 # Cmake and Build
 build/
+pqkmeans/
 .cache/
 cmake-build-*/
 out/
