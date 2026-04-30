@@ -462,6 +462,8 @@ void RunPipeline(
                 refit_cfg.use_blas_only = true;
                 refit_cfg.verbose = false;
                 refit_cfg.quantizer_type = config.quantizer_type;
+                refit_cfg.data_already_rotated = true; // skip rotation so quantizer fits unrotated data
+                refit_cfg.sampling_fraction = 1.0f;    // use all data for quantizer fitting
 
                 auto kmeans_refit = SKM(n_clusters, d, refit_cfg);
                 kmeans_refit.Train(data.data(), n);
@@ -488,7 +490,12 @@ void RunPipeline(
             );
 
             // Recompute full-d centroids from original vectors
+            // This is a hidden design decision we must mention: it depends
+            // on whether you want to materialize the index in full-d or projected space
+            // We assume here we materialize the centroids in full-d
             std::vector<float> recomputed_centroids(n_clusters * d);
+            // That why we must average again in full-d using the projected assignments
+            // We only do the averaging: O(N), no argmin search here since we keep the same centroids as Train
             RecomputeFullDCentroids(
                 data.data(), projected_assignments,
                 recomputed_centroids.data(), n, d, n_clusters
@@ -500,6 +507,7 @@ void RunPipeline(
             );
 
             // QuantizedAssign in projected space (if quantizer available)
+            // The quantizedAssign never looks at the full-d data
             std::vector<uint32_t> q_assignments;
             if (has_quantizer) {
                 q_assignments = kmeans.QuantizedAssign(

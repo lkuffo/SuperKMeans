@@ -643,8 +643,10 @@ class SuperKMeans {
         // quantized_data and quantized_centroids (+ PDXified buffers) are all in the
         // rotated domain from Train/ConsolidateCentroids — we reuse them directly
         // rather than re-encoding from the caller's (potentially unrotated) arguments.
+        // Skip when use_blas_only: the caller may pass different centroids than training.
         if constexpr (q != Quantization::f32) {
-            if (config.sampling_fraction >= 1.0f && quantizer->SupportsPruning()) {
+            if (config.sampling_fraction >= 1.0f && quantizer->SupportsPruning()
+                && !config.use_blas_only) {
                 std::vector<uint32_t> result_assignments(
                     assignments.get(), assignments.get() + n_vectors);
                 std::vector<distance_t> result_distances(n_vectors,
@@ -684,11 +686,27 @@ class SuperKMeans {
         std::vector<distance_t> result_distances(n_vectors);
         std::unique_ptr<distance_t[]> tmp_distances_buf(new distance_t[X_BATCH_SIZE * Y_BATCH_SIZE]);
 
+        // Rotate input data to match the domain the quantizer was fitted on 
+        // We cannot just simply retrain the quantizer on the new data because
+        // some quantization schemes may need rotation
+        const float* encode_vectors = vectors;
+        const float* encode_centroids = centroids;
+        std::unique_ptr<float[]> rotated_vectors_buf;
+        std::unique_ptr<float[]> rotated_centroids_buf;
+        if (!config.data_already_rotated) {
+            rotated_vectors_buf.reset(new float[n_vectors * d]);
+            rotated_centroids_buf.reset(new float[n_centroids * d]);
+            RotateOrCopy(vectors, rotated_vectors_buf.get(), n_vectors, true);
+            RotateOrCopy(centroids, rotated_centroids_buf.get(), n_centroids, true);
+            encode_vectors = rotated_vectors_buf.get();
+            encode_centroids = rotated_centroids_buf.get();
+        }
+
         const size_t cs = quantizer->CodeSize(d);
         std::vector<vector_value_t> q_vectors(n_vectors * cs);
         std::vector<vector_value_t> q_centroids(n_centroids * cs);
-        quantizer->Encode(vectors, q_vectors.data(), n_vectors, d);
-        quantizer->Encode(centroids, q_centroids.data(), n_centroids, d);
+        quantizer->Encode(encode_vectors, q_vectors.data(), n_vectors, d);
+        quantizer->Encode(encode_centroids, q_centroids.data(), n_centroids, d);
 
         std::vector<float> v_norms(n_vectors);
         std::vector<float> c_norms(n_centroids);
@@ -699,8 +717,8 @@ class SuperKMeans {
             quantizer->FindNearestNeighborWithReranking(
                 q_vectors.data(),
                 q_centroids.data(),
-                vectors,
-                centroids,
+                encode_vectors,
+                encode_centroids,
                 n_vectors,
                 n_centroids,
                 d,
@@ -715,8 +733,8 @@ class SuperKMeans {
             quantizer->FindNearestNeighbor(
                 q_vectors.data(),
                 q_centroids.data(),
-                vectors,
-                centroids,
+                encode_vectors,
+                encode_centroids,
                 n_vectors,
                 n_centroids,
                 d,
