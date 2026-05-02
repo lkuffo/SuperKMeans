@@ -173,6 +173,37 @@ class IQuantizer {
     virtual bool SupportsPruning() const { return false; }
 
     /**
+     * @brief Whether this quantizer uses sparse voting for centroid updates.
+     * When true, the k-means loop calls SparseVotingUpdate instead of
+     * UpdateCentroidsQuantized + AverageCentroids.
+     */
+    virtual bool UsesSparseVoting() const { return false; }
+
+    /**
+     * @brief Update centroids via sparse voting in the quantized code domain.
+     *
+     * For each cluster and each subspace, builds a frequency histogram of codes
+     * assigned to that cluster, then selects the codeword that minimizes the
+     * weighted sum of distances to all members.
+     *
+     * @param codes Encoded data vectors (n × code_size)
+     * @param assignments Cluster assignment for each vector (n)
+     * @param out_centroids Output centroid codes (n_clusters × code_size)
+     * @param out_cluster_sizes Output cluster sizes (n_clusters)
+     * @param n Number of data vectors
+     * @param n_clusters Number of clusters
+     * @param d Dimensionality (used to determine code_size)
+     */
+    virtual void SparseVotingUpdate(
+        const quantized_t* codes, const uint32_t* assignments,
+        quantized_t* out_centroids, uint32_t* out_cluster_sizes,
+        size_t n, size_t n_clusters, size_t d
+    ) const {
+        (void) codes; (void) assignments; (void) out_centroids;
+        (void) out_cluster_sizes; (void) n; (void) n_clusters; (void) d;
+    }
+
+    /**
      * @brief Cache partial L2 squared norms for data vectors.
      *
      * Precomputes norms over the first partial_d dimensions of the data.

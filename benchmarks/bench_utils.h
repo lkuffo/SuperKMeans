@@ -122,6 +122,9 @@ const std::vector<int> FAISS_EARLY_TERM_ITERS = {10};
 const int SCIKIT_EARLY_TERM_MAX_ITERS = 300;
 const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
+// PQ subspace counts to sweep over
+const std::vector<uint32_t> PQ_M_VALUES = {8, 16, 32, 64, 96, 128};
+
 // Target dimensionalities for PCA/JLT preprocessing (multiples of 64 up to 2048)
 const std::vector<size_t> TARGET_D_VALUES = {
     32, 64, 128, 192, 256, 320, 

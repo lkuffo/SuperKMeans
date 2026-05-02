@@ -21,6 +21,8 @@
 #include "superkmeans/quantizers/sq8.h"
 #ifdef HAS_FAISS
 #include "superkmeans/quantizers/rabitq.h"
+#include "superkmeans/quantizers/pq8.h"
+#include "superkmeans/quantizers/pq4.h"
 #endif
 
 namespace skmeans {
@@ -42,6 +44,7 @@ struct SuperKMeansConfig {
     bool use_blas_only = false; // Use BLAS-only computation for all iterations
     QuantizerType quantizer_type = QuantizerType::none; // Quantization method
     int32_t rerank_k = -1; // Reranking candidates: -1 = quantizer default, 0 = none, >0 = override
+    uint32_t pq_m = 16; // Number of PQ subspaces (d must be divisible by pq_m). Ignored if not PQ.
 
     // Convergence parameters
     float tol = 1e-4f;                  // Tolerance for shift-based early termination
@@ -329,6 +332,9 @@ class SuperKMeans {
             if (config.quantized_centroid_update) {
                 if (config.quantizer_type == QuantizerType::rabitq) {
                     decoded_data_buffer.reset(new float[n_samples * d]);
+                } else if (config.quantizer_type == QuantizerType::pq8
+                        || config.quantizer_type == QuantizerType::pq4) {
+                    // PQ uses sparse voting — no extra buffers needed
                 } else {
                     quantized_centroid_accumulators.reset(new uint32_t[n_clusters * d]);
                 }
@@ -389,6 +395,10 @@ class SuperKMeans {
 #ifdef HAS_FAISS
             } else if (config.quantizer_type == QuantizerType::rabitq) {
                 quantizer = std::make_unique<RaBitQQuantizer>();
+            } else if (config.quantizer_type == QuantizerType::pq8) {
+                quantizer = std::make_unique<PQ8Quantizer>(config.pq_m);
+            } else if (config.quantizer_type == QuantizerType::pq4) {
+                quantizer = std::make_unique<PQ4Quantizer>(config.pq_m);
 #endif
             } else {
                 throw std::invalid_argument("Unsupported quantizer type for non-f32 quantization");
@@ -705,6 +715,10 @@ class SuperKMeans {
         const size_t cs = quantizer->CodeSize(d);
         std::vector<vector_value_t> q_vectors(n_vectors * cs);
         std::vector<vector_value_t> q_centroids(n_centroids * cs);
+        // TODO(@lkuffo, high): As the code is now, there is a round-trip of 
+        // encode()->decode()->encode() when pruning is not used. 
+        // This only leads to small floating-point rounding errors. Nothing to be 
+        // worried about, but we could avoid the round trip in the future.
         quantizer->Encode(encode_vectors, q_vectors.data(), n_vectors, d);
         quantizer->Encode(encode_centroids, q_centroids.data(), n_centroids, d);
 
@@ -1284,11 +1298,13 @@ class SuperKMeans {
                 );
             }
             if constexpr (q != Quantization::f32) {
-                if (config.quantized_centroid_update && !decoded_data_buffer) {
+                if (config.quantized_centroid_update && !decoded_data_buffer
+                    && !quantizer->UsesSparseVoting()) {
                     ResetQuantizedCentroids(n_clusters);
-                } else {
+                } else if (!quantizer->UsesSparseVoting()) {
                     ResetCentroids(n_clusters);
                 }
+                // Sparse voting resets internally — nothing to do here
             } else {
                 ResetCentroids(n_clusters);
             }
@@ -1307,9 +1323,10 @@ class SuperKMeans {
                 centroids_pdx_wrapper, partial_d, not_pruned_counts.data()
             );
             if constexpr (q != Quantization::f32) {
-                if (config.quantized_centroid_update && !decoded_data_buffer) {
+                if (config.quantized_centroid_update && !decoded_data_buffer
+                    && !quantizer->UsesSparseVoting()) {
                     ResetQuantizedCentroids(n_clusters);
-                } else {
+                } else if (!quantizer->UsesSparseVoting()) {
                     ResetCentroids(n_clusters);
                 }
             } else {
@@ -1328,7 +1345,18 @@ class SuperKMeans {
 
         if constexpr (q != Quantization::f32) {
             if (config.quantized_centroid_update) {
-                if (decoded_data_buffer) {
+                if (quantizer->UsesSparseVoting()) {
+                    // PQ: sparse voting produces quantized_centroids + cluster_sizes directly
+                    quantizer->SparseVotingUpdate(
+                        encoded_data_p, assignments.get(),
+                        quantized_centroids.get(), cluster_sizes.get(),
+                        n_samples, n_clusters, d
+                    );
+                    // Decode to float for shift computation and empty cluster handling
+                    quantizer->Decode(
+                        quantized_centroids.get(), horizontal_centroids.get(), n_clusters, d
+                    );
+                } else if (decoded_data_buffer) {
                     // RaBitQ: decode all quantized data to float, then accumulate floats
                     quantizer->Decode(encoded_data_p, decoded_data_buffer.get(), n_samples, d);
                     UpdateCentroids(decoded_data_buffer.get(), n_samples, n_clusters);
@@ -1467,17 +1495,21 @@ class SuperKMeans {
             if (config.quantized_centroid_update && !decoded_data_buffer) {
                 {
                     SKM_PROFILE_SCOPE("consolidate/splitting");
-                    // Average in quantized domain: uint32 accumulators → quantized_centroids
-                    quantizer->AverageCentroids(
-                        quantized_centroid_accumulators.get(),
-                        cluster_sizes.get(),
-                        quantized_centroids.get(),
-                        n_clusters, d
-                    );
-                    // Decode to float for auxiliary operations (shift, split, angular)
-                    quantizer->Decode(
-                        quantized_centroids.get(), horizontal_centroids.get(), n_clusters, d
-                    );
+                    if (!quantizer->UsesSparseVoting()) {
+                        // SQ: average uint32 accumulators → quantized_centroids
+                        quantizer->AverageCentroids(
+                            quantized_centroid_accumulators.get(),
+                            cluster_sizes.get(),
+                            quantized_centroids.get(),
+                            n_clusters, d
+                        );
+                        // Decode to float for auxiliary operations (shift, split, angular)
+                        quantizer->Decode(
+                            quantized_centroids.get(), horizontal_centroids.get(), n_clusters, d
+                        );
+                    }
+                    // For sparse voting: quantized_centroids and horizontal_centroids
+                    // are already set by SparseVotingUpdate + Decode in the update step
                     SplitClusters(n_samples, n_clusters);
                 }
                 {

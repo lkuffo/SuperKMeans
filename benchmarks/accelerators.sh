@@ -171,6 +171,19 @@ for DATASET in "${DATASETS[@]}"; do
     run "jlt / rabitq / quant-update / blas-only"                   "$DATASET" jlt rabitq true false true
     run "jlt / rabitq / quant-update + full-prec-final / blas-only" "$DATASET" jlt rabitq true true true
 
+    # ==================================================================
+    #  PQ (Product Quantization — raw only, sparse voting, blas-only)
+    #  M values iterated internally: {8, 16, 32, 64, 96, 128}
+    # ==================================================================
+
+    # ── raw + pq8 (8-bit PQ, Ks=256, scalar SDC) ──
+    run "raw / pq8 / sparse-voting / blas-only / M sweep"                        "$DATASET" raw pq8 true false true
+    run "raw / pq8 / sparse-voting + full-prec-final / blas-only / M sweep"      "$DATASET" raw pq8 true true true
+
+    # ── raw + pq4 (4-bit PQ, Ks=16, FastScan SIMD) ──
+    run "raw / pq4 / sparse-voting / blas-only / M sweep"                        "$DATASET" raw pq4 true false true
+    run "raw / pq4 / sparse-voting + full-prec-final / blas-only / M sweep"      "$DATASET" raw pq4 true true true
+
 done
 
 echo ""

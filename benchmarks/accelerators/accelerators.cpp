@@ -107,6 +107,7 @@ static std::unordered_map<std::string, std::string> BuildConfigDict(
     c["quantized_centroid_update"] = cfg.quantized_centroid_update ? "true" : "false";
     c["full_precision_final_centroids"] = cfg.full_precision_final_centroids ? "true" : "false";
     c["angular"] = cfg.angular ? "true" : "false";
+    c["pq_m"] = std::to_string(cfg.pq_m);
     return c;
 }
 
@@ -121,9 +122,12 @@ void RunPipeline(
     const std::string& quantizer_name,
     bool quantized_centroid_update,
     bool full_precision_final_centroids,
-    bool use_blas_only
+    bool use_blas_only,
+    uint32_t pq_m = 16
 ) {
     using SKM = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>;
+
+    skmeans::Profiler::Get().Reset();
 
     // ── Dataset params ──
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
@@ -141,14 +145,18 @@ void RunPipeline(
 
     const bool has_quantizer = (quantizer_name != "f32");
     const bool is_raw = (dim_reduction == "raw");
+    const bool is_pq = (quantizer_name == "pq8" || quantizer_name == "pq4");
     const std::string experiment_name =
-        "accelerators_" + dim_reduction + "_" + quantizer_name;
+        "accelerators_" + dim_reduction + "_" + quantizer_name
+        + (is_pq ? "_m" + std::to_string(pq_m) : "");
     const std::string algorithm = "superkmeans";
 
     std::cout << "=== Accelerators Benchmark ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")" << std::endl;
     std::cout << "Dim reduction: " << dim_reduction
-              << ", Quantizer: " << quantizer_name << std::endl;
+              << ", Quantizer: " << quantizer_name;
+    if (is_pq) std::cout << " (M=" << pq_m << ")";
+    std::cout << std::endl;
     std::cout << "quantized_centroid_update=" << quantized_centroid_update
               << " full_precision_final_centroids=" << full_precision_final_centroids
               << " use_blas_only=" << use_blas_only << std::endl;
@@ -282,6 +290,7 @@ void RunPipeline(
         if (wcss_q_assign >= 0.0) {
             config_dict["wcss_quantized_assign"] = std::to_string(wcss_q_assign);
         }
+        config_dict["profiler"] = skmeans::Profiler::Get().ToJson();
 
         // Build human-readable run label (matches accelerators.sh echo strings)
         std::string dim_label = is_raw ? "raw" : dim_reduction;
@@ -382,6 +391,16 @@ void RunPipeline(
             config.quantizer_type = skmeans::QuantizerType::sq4;
         else if (quantizer_name == "rabitq")
             config.quantizer_type = skmeans::QuantizerType::rabitq;
+        else if (quantizer_name == "pq8")
+            config.quantizer_type = skmeans::QuantizerType::pq8;
+        else if (quantizer_name == "pq4")
+            config.quantizer_type = skmeans::QuantizerType::pq4;
+
+        // PQ relies on subspace dimension structure — skip DCT rotation
+        if (is_pq) {
+            config.data_already_rotated = true;
+            config.pq_m = pq_m;
+        }
 
         if (is_angular) {
             std::cout << "Using spherical k-means" << std::endl;
@@ -533,7 +552,7 @@ void RunPipeline(
 int main(int argc, char* argv[]) {
     if (argc < 7) {
         std::cerr << "Usage: " << argv[0]
-                  << " <dataset> <pca|jlt|raw> <f32|sq8|sq4|rabitq>"
+                  << " <dataset> <pca|jlt|raw> <f32|sq8|sq4|rabitq|pq8|pq4>"
                   << " <quantized_centroid_update=true|false>"
                   << " <full_precision_final_centroids=true|false>"
                   << " <use_blas_only=true|false>"
@@ -576,9 +595,24 @@ int main(int argc, char* argv[]) {
             dataset, dim_reduction, quantizer,
             quantized_centroid_update, full_precision_final_centroids, use_blas_only
         );
+    } else if (quantizer == "pq8" || quantizer == "pq4") {
+        auto dit = bench_utils::DATASET_PARAMS.find(dataset);
+        size_t d = (dit != bench_utils::DATASET_PARAMS.end()) ? dit->second.second : 0;
+        for (uint32_t m : bench_utils::PQ_M_VALUES) {
+            if (d % m != 0) {
+                std::cout << "Skipping M=" << m << " (d=" << d
+                          << " not divisible by M)" << std::endl;
+                continue;
+            }
+            RunPipeline<skmeans::Quantization::u8>(
+                dataset, dim_reduction, quantizer,
+                quantized_centroid_update, full_precision_final_centroids, use_blas_only,
+                m
+            );
+        }
     } else {
         std::cerr << "Invalid quantizer: " << quantizer
-                  << " (expected: f32, sq8, sq4, rabitq)\n";
+                  << " (expected: f32, sq8, sq4, rabitq, pq8, pq4)\n";
         return 1;
     }
 
