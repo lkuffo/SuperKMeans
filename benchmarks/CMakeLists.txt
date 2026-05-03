@@ -30,14 +30,16 @@ set(BENCH_COMMON_LIBS superkmeans)
 set(FAISS_COMMON_LIBS faiss)
 
 # Link architecture-specific FAISS library based on FAISS_OPT_LEVEL
+# PREPEND so arch-specific lib is linked BEFORE base faiss — ensures
+# undispatched symbols (e.g. accumulate_to_mem) resolve to the SIMD version.
 if(FAISS_OPT_LEVEL STREQUAL "avx512_spr")
-    list(APPEND FAISS_COMMON_LIBS faiss_avx512_spr)
+    list(PREPEND FAISS_COMMON_LIBS faiss_avx512_spr)
 elseif(FAISS_OPT_LEVEL STREQUAL "avx512")
-    list(APPEND FAISS_COMMON_LIBS faiss_avx512)
+    list(PREPEND FAISS_COMMON_LIBS faiss_avx512)
 elseif(FAISS_OPT_LEVEL STREQUAL "avx2")
-    list(APPEND FAISS_COMMON_LIBS faiss_avx2)
+    list(PREPEND FAISS_COMMON_LIBS faiss_avx2)
 elseif(FAISS_OPT_LEVEL STREQUAL "sve")
-    list(APPEND FAISS_COMMON_LIBS faiss_sve)
+    list(PREPEND FAISS_COMMON_LIBS faiss_sve)
 endif()
 
 # Add benchmarks directory to include path for bench_utils.h

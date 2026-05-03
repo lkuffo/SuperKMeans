@@ -1,3 +1,7 @@
+#ifndef BENCHMARK_TIME
+#define BENCHMARK_TIME = true
+#endif
+
 #include <algorithm>
 #include <cstring>
 #include <fstream>
