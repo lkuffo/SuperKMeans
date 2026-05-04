@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
     config.tol = 1e-3f;
     config.quantizer_type = skmeans::QuantizerType::rabitq;
     config.quantized_centroid_update = true;
-    config.full_precision_final_centroids = true;
+    config.full_precision_final_centroids = false;
 
     auto is_angular = std::find(
         bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset

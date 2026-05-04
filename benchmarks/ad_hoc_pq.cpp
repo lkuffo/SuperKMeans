@@ -81,7 +81,7 @@ int main(int argc, char* argv[]) {
     config.quantizer_type = (pq_variant == "pq8")
         ? skmeans::QuantizerType::pq8
         : skmeans::QuantizerType::pq4;
-    config.full_precision_final_centroids = true;
+    config.full_precision_final_centroids = false;
 
     auto is_angular = std::find(
         bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
@@ -110,16 +110,35 @@ int main(int argc, char* argv[]) {
     auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     auto q_assignments = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
 
+    // Internal assignments from last iteration (no re-encoding round-trip)
+    std::vector<uint32_t> internal_assignments(
+        kmeans.assignments.get(), kmeans.assignments.get() + n
+    );
+
     double wcss_assign = SKM::ComputeWCSS(
         data.data(), centroids.data(), assignments.data(), n, d
     );
     double wcss_q_assign = SKM::ComputeWCSS(
         data.data(), centroids.data(), q_assignments.data(), n, d
     );
+    double wcss_internal = SKM::ComputeWCSS(
+        data.data(), centroids.data(), internal_assignments.data(), n, d
+    );
     std::cout << "WCSS (f32, Assign):          " << std::fixed << std::setprecision(2)
               << wcss_assign << std::endl;
     std::cout << "WCSS (f32, QuantizedAssign): " << std::fixed << std::setprecision(2)
               << wcss_q_assign << std::endl;
+    std::cout << "WCSS (f32, InternalAssign):  " << std::fixed << std::setprecision(2)
+              << wcss_internal << std::endl;
+
+    // Compare QuantizedAssign vs InternalAssign (should be identical if no round-trip error)
+    size_t n_differ = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (q_assignments[i] != internal_assignments[i]) ++n_differ;
+    }
+    std::cout << "QuantizedAssign vs InternalAssign differ: " << n_differ
+              << " / " << n << " (" << std::setprecision(4)
+              << (100.0 * n_differ / n) << "%)" << std::endl;
 
     std::cout << "\n--- Assign() cluster balance ---" << std::endl;
     SKM::GetClustersBalanceStats(assignments.data(), n, n_clusters).print();
@@ -161,6 +180,17 @@ int main(int argc, char* argv[]) {
             gt_map, q_assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
         );
         bench_utils::print_recall_results(q_results_100, 100);
+
+        std::cout << "\n  [InternalAssign() — last iteration, no re-encoding]" << std::endl;
+        auto i_results_10 = bench_utils::compute_recall(
+            gt_map, internal_assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
+        );
+        bench_utils::print_recall_results(i_results_10, 10);
+
+        auto i_results_100 = bench_utils::compute_recall(
+            gt_map, internal_assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
+        );
+        bench_utils::print_recall_results(i_results_100, 100);
     } else {
         if (!gt_file.good())
             std::cout << "\nGround truth file not found: " << gt_filename << std::endl;

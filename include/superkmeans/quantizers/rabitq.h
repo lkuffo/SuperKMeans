@@ -118,13 +118,14 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
         const uint8_t* x_codes = reinterpret_cast<const uint8_t*>(x);
 
-        // Precompute per-code factors
-        std::vector<uint32_t> sum_q(n_x);
-        std::vector<float> or_c_l2sqr(n_x);
-        std::vector<float> dp_mult(n_x);
-        PrecomputeCodeFactors(x_codes, n_x, sum_q.data(), or_c_l2sqr.data(), dp_mult.data());
+        // Cache per-data-point factors (depend only on x, reused across iterations)
+        EnsureCodeFactorsCache(x_codes, n_x);
+        EnsureTransposedBlocksCache(x_codes, n_x);
+        const uint32_t* sum_q = cached_sum_q_.data();
+        const float* or_c_l2sqr = cached_or_c_l2sqr_.data();
+        const float* dp_mult = cached_dp_mult_.data();
 
-        // Quantize centroids and build LUTs
+        // Quantize centroids and build LUTs (changes every iteration)
         const size_t n_sub = 2 * binary_bytes_; // 2 sub-quantizers per byte position
         std::vector<float> c1(n_y), c2(n_y), c34(n_y), qr_to_c_l2sqr(n_y);
         std::vector<uint8_t> all_luts(n_y * n_sub * 16);
@@ -134,7 +135,8 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         );
 
         const size_t lut_stride = n_sub * 16;
-        const size_t n_blocks = (n_x + FastScanComputer::kBlockSize - 1) / FastScanComputer::kBlockSize;
+        const size_t block_bytes = FastScanComputer::kBlockSize * binary_bytes_;
+        const size_t n_blocks = cached_n_blocks_;
 
         std::fill_n(out_distances, n_x, std::numeric_limits<float>::max());
         std::fill_n(out_knn, n_x, 0u);
@@ -146,9 +148,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 const size_t blk_start = blk * FastScanComputer::kBlockSize;
                 const size_t blk_count = std::min(FastScanComputer::kBlockSize, n_x - blk_start);
 
-                // Byte-transpose this block's binary codes
-                std::unique_ptr<uint8_t[]> packed(new uint8_t[FastScanComputer::kBlockSize * binary_bytes_]);
-                TransposeBlock(x_codes, blk_start, blk_count, packed.get());
+                const uint8_t* packed = cached_transposed_.get() + blk * block_bytes;
 
                 float best_dist[FastScanComputer::kBlockSize];
                 uint32_t best_idx[FastScanComputer::kBlockSize];
@@ -158,7 +158,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 for (size_t j = 0; j < n_y; ++j) {
                     uint16_t dot_qo[FastScanComputer::kBlockSize];
                     FastScanComputer::ScanBlock(
-                        packed.get(), all_luts.data() + j * lut_stride,
+                        packed, all_luts.data() + j * lut_stride,
                         binary_bytes_, dot_qo, blk_count
                     );
 
@@ -214,13 +214,14 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
         const uint8_t* x_codes = reinterpret_cast<const uint8_t*>(x_quantized);
 
-        // Precompute per-code factors
-        std::vector<uint32_t> sum_q(n_x);
-        std::vector<float> or_c_l2sqr(n_x);
-        std::vector<float> dp_mult(n_x);
-        PrecomputeCodeFactors(x_codes, n_x, sum_q.data(), or_c_l2sqr.data(), dp_mult.data());
+        // Cache per-data-point factors (depend only on x, reused across iterations)
+        EnsureCodeFactorsCache(x_codes, n_x);
+        EnsureTransposedBlocksCache(x_codes, n_x);
+        const uint32_t* sum_q = cached_sum_q_.data();
+        const float* or_c_l2sqr = cached_or_c_l2sqr_.data();
+        const float* dp_mult = cached_dp_mult_.data();
 
-        // Quantize centroids and build LUTs
+        // Quantize centroids and build LUTs (changes every iteration)
         const size_t n_sub = 2 * binary_bytes_;
         std::vector<float> c1(n_y), c2(n_y), c34(n_y), qr_to_c_l2sqr(n_y);
         std::vector<uint8_t> all_luts(n_y * n_sub * 16);
@@ -230,7 +231,8 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         );
 
         const size_t lut_stride = n_sub * 16;
-        const size_t n_blocks = (n_x + FastScanComputer::kBlockSize - 1) / FastScanComputer::kBlockSize;
+        const size_t block_bytes = FastScanComputer::kBlockSize * binary_bytes_;
+        const size_t n_blocks = cached_n_blocks_;
 
         // Per-query top-k from quantized distances
         std::vector<float> topk_distances(n_x * rerank_k, std::numeric_limits<float>::max());
@@ -243,8 +245,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 const size_t blk_start = blk * FastScanComputer::kBlockSize;
                 const size_t blk_count = std::min(FastScanComputer::kBlockSize, n_x - blk_start);
 
-                std::unique_ptr<uint8_t[]> packed(new uint8_t[FastScanComputer::kBlockSize * binary_bytes_]);
-                TransposeBlock(x_codes, blk_start, blk_count, packed.get());
+                const uint8_t* packed = cached_transposed_.get() + blk * block_bytes;
 
                 // Per-point candidate heaps (small vectors on stack)
                 std::vector<std::pair<float, uint32_t>> candidates[FastScanComputer::kBlockSize];
@@ -255,7 +256,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 for (size_t j = 0; j < n_y; ++j) {
                     uint16_t dot_qo[FastScanComputer::kBlockSize];
                     FastScanComputer::ScanBlock(
-                        packed.get(), all_luts.data() + j * lut_stride,
+                        packed, all_luts.data() + j * lut_stride,
                         binary_bytes_, dot_qo, blk_count
                     );
 
@@ -457,6 +458,22 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
+    /// Cache PrecomputeCodeFactors results (depend only on x, not centroids).
+    void EnsureCodeFactorsCache(const uint8_t* x_codes, size_t n_x) const {
+        SKM_PROFILE_SCOPE("RaBitQ::EnsureCodeFactorsCache");
+        if (cached_x_ptr_ == x_codes && cached_n_x_ == n_x) return;
+
+        cached_sum_q_.resize(n_x);
+        cached_or_c_l2sqr_.resize(n_x);
+        cached_dp_mult_.resize(n_x);
+        PrecomputeCodeFactors(
+            x_codes, n_x,
+            cached_sum_q_.data(), cached_or_c_l2sqr_.data(), cached_dp_mult_.data()
+        );
+        cached_x_ptr_ = x_codes;
+        cached_n_x_ = n_x;
+    }
+
     int qb_ = 4;
     size_t d_ = 0;
     size_t binary_bytes_ = 0;
@@ -464,6 +481,35 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     std::vector<float> centroid_;
     std::unique_ptr<faiss::RaBitQuantizer> faiss_quantizer_;
     bool fitted_ = false;
+
+    // Cached per-data-point factors (reused across iterations)
+    mutable const uint8_t* cached_x_ptr_ = nullptr;
+    mutable size_t cached_n_x_ = 0;
+    mutable std::vector<uint32_t> cached_sum_q_;
+    mutable std::vector<float> cached_or_c_l2sqr_;
+    mutable std::vector<float> cached_dp_mult_;
+
+    // Cached transposed blocks (reused across iterations)
+    mutable std::unique_ptr<uint8_t[]> cached_transposed_;
+    mutable size_t cached_n_blocks_ = 0;
+
+    /// Transpose all data blocks once and cache for reuse across iterations.
+    void EnsureTransposedBlocksCache(const uint8_t* x_codes, size_t n_x) const {
+        SKM_PROFILE_SCOPE("RaBitQ::EnsureTransposedBlocksCache");
+        // Piggyback on the same pointer check as code factors
+        if (cached_n_blocks_ > 0 && cached_x_ptr_ == x_codes && cached_n_x_ == n_x) return;
+
+        const size_t block_bytes = FastScanComputer::kBlockSize * binary_bytes_;
+        cached_n_blocks_ = (n_x + FastScanComputer::kBlockSize - 1) / FastScanComputer::kBlockSize;
+        cached_transposed_.reset(new uint8_t[cached_n_blocks_ * block_bytes]);
+
+#pragma omp parallel for num_threads(g_n_threads)
+        for (size_t blk = 0; blk < cached_n_blocks_; ++blk) {
+            const size_t blk_start = blk * FastScanComputer::kBlockSize;
+            const size_t blk_count = std::min(FastScanComputer::kBlockSize, n_x - blk_start);
+            TransposeBlock(x_codes, blk_start, blk_count, cached_transposed_.get() + blk * block_bytes);
+        }
+    }
 };
 
 } // namespace skmeans
