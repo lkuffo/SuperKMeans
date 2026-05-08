@@ -467,18 +467,31 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     out_not_pruned_counts[i] = 0;
                 }
 
-                // ── Pass 1: FastScan + checkpoint 1 ──
+                // ── Pass 1a: FastScan all centroids ──
+                // Buffer: all_partial_dots[j * kBlockSize + k] = partial dot for (centroid j, point k)
+                std::vector<uint16_t> all_partial_dots(n_y * FastScanComputer::kBlockSize);
+
+                {
+                    SKM_PROFILE_SCOPE("RaBitQ::PrunedScan/fastscan");
+                    for (size_t j = 0; j < n_y; ++j) {
+                        FastScanComputer::ScanBlock(
+                            packed, all_luts.data() + j * lut_stride,
+                            front_bytes,
+                            all_partial_dots.data() + j * FastScanComputer::kBlockSize,
+                            blk_count
+                        );
+                    }
+                }
+
+                // ── Pass 1b: checkpoint 1 pruning ──
                 std::vector<Survivor> survivors;
                 survivors.reserve(blk_count * n_y / 16); // ~6% estimate
 
                 {
-                    SKM_PROFILE_SCOPE("RaBitQ::PrunedScan/front");
+                    SKM_PROFILE_SCOPE("RaBitQ::PrunedScan/checkpoint1");
                     for (size_t j = 0; j < n_y; ++j) {
-                        uint16_t partial_dot_qo[FastScanComputer::kBlockSize];
-                        FastScanComputer::ScanBlock(
-                            packed, all_luts.data() + j * lut_stride,
-                            front_bytes, partial_dot_qo, blk_count
-                        );
+                        const uint16_t* partial_dot_qo =
+                            all_partial_dots.data() + j * FastScanComputer::kBlockSize;
 
                         const float c1j = c1[j];
                         const float c2j = c2[j];
