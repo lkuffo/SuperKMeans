@@ -375,6 +375,74 @@ class SIMDFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
 
+    /**
+     * @brief NEON-accelerated RaBitQ partial L2 for a 32-point block.
+     *
+     * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
+     * Processes 4 floats per NEON iteration (8 iterations for kBlockSize=32).
+     */
+    template<bool U32Dot = false>
+    static void RabitQCorrection(
+        const void* partial_dot,
+        float c1j, float c2j, float c34j, float qr_j,
+        const uint32_t* sum_q,
+        const float* or_c_l2sqr,
+        const float* dp_mult,
+        float* out_partial_l2,
+        size_t blk_count
+    ) {
+        const float32x4_t v_c1j = vdupq_n_f32(c1j);
+        const float32x4_t v_c2j = vdupq_n_f32(c2j);
+        const float32x4_t v_c34j = vdupq_n_f32(c34j);
+        const float32x4_t v_qr_j = vdupq_n_f32(qr_j);
+        const float32x4_t v_neg2 = vdupq_n_f32(-2.0f);
+
+        const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
+        const auto* pd_u32 = static_cast<const uint32_t*>(partial_dot);
+
+        size_t k = 0;
+        for (; k + 4 <= blk_count; k += 4) {
+            // Load partial dots and convert to f32
+            float32x4_t v_pd;
+            if constexpr (U32Dot) {
+                v_pd = vcvtq_f32_u32(vld1q_u32(pd_u32 + k));
+            } else {
+                v_pd = vcvtq_f32_u32(vmovl_u16(vld1_u16(pd_u16 + k)));
+            }
+
+            // Load sum_q[k..k+3] as u32, convert to f32
+            float32x4_t v_sq = vcvtq_f32_u32(vld1q_u32(sum_q + k));
+
+            // fdt = c1j * pd + c2j * sq - c34j
+            float32x4_t fdt = vmlaq_f32(
+                vmlaq_f32(vnegq_f32(v_c34j), v_c1j, v_pd),
+                v_c2j, v_sq
+            );
+
+            // partial_l2 = (or + qr) + (-2) * dp * fdt
+            float32x4_t v_or = vld1q_f32(or_c_l2sqr + k);
+            float32x4_t v_dp = vld1q_f32(dp_mult + k);
+            float32x4_t or_plus_qr = vaddq_f32(v_or, v_qr_j);
+            float32x4_t result = vmlaq_f32(or_plus_qr, v_neg2, vmulq_f32(v_dp, fdt));
+
+            vst1q_f32(out_partial_l2 + k, result);
+        }
+        // Scalar remainder
+        for (; k < blk_count; ++k) {
+            float dot_f;
+            if constexpr (U32Dot) {
+                dot_f = static_cast<float>(pd_u32[k]);
+            } else {
+                dot_f = static_cast<float>(pd_u16[k]);
+            }
+            const float fdt = c1j * dot_f
+                            + c2j * static_cast<float>(sum_q[k])
+                            - c34j;
+            out_partial_l2[k] = or_c_l2sqr[k] + qr_j
+                              - 2.0f * dp_mult[k] * fdt;
+        }
+    }
+
     template<bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,

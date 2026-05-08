@@ -263,6 +263,40 @@ class ScalarFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
 
+    /**
+     * @brief Compute RaBitQ partial L2 distances for a block of points against one centroid.
+     *
+     * For each point k in [0, blk_count):
+     *   fdt = c1j * float(partial_dot[k]) + c2j * float(sum_q[k]) - c34j
+     *   out[k] = or_c_l2sqr[k] + qr_j - 2 * dp_mult[k] * fdt
+     *
+     * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
+     */
+    template<bool U32Dot = false>
+    static void RabitQCorrection(
+        const void* partial_dot,
+        float c1j, float c2j, float c34j, float qr_j,
+        const uint32_t* sum_q,
+        const float* or_c_l2sqr,
+        const float* dp_mult,
+        float* out_partial_l2,
+        size_t blk_count
+    ) {
+        for (size_t k = 0; k < blk_count; ++k) {
+            float dot_f;
+            if constexpr (U32Dot) {
+                dot_f = static_cast<float>(static_cast<const uint32_t*>(partial_dot)[k]);
+            } else {
+                dot_f = static_cast<float>(static_cast<const uint16_t*>(partial_dot)[k]);
+            }
+            const float fdt = c1j * dot_f
+                            + c2j * static_cast<float>(sum_q[k])
+                            - c34j;
+            out_partial_l2[k] = or_c_l2sqr[k] + qr_j
+                              - 2.0f * dp_mult[k] * fdt;
+        }
+    }
+
     template<bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,

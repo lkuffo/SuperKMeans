@@ -471,6 +471,71 @@ class SIMDFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
 
+    /**
+     * @brief AVX-512-accelerated RaBitQ partial L2 for a 32-point block.
+     *
+     * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
+     * Processes 16 floats per AVX-512 iteration (2 iterations for kBlockSize=32).
+     */
+    template<bool U32Dot = false>
+    static void RabitQCorrection(
+        const void* partial_dot,
+        float c1j, float c2j, float c34j, float qr_j,
+        const uint32_t* sum_q,
+        const float* or_c_l2sqr,
+        const float* dp_mult,
+        float* out_partial_l2,
+        size_t blk_count
+    ) {
+        const __m512 v_c1j = _mm512_set1_ps(c1j);
+        const __m512 v_c2j = _mm512_set1_ps(c2j);
+        const __m512 v_c34j = _mm512_set1_ps(c34j);
+        const __m512 v_qr_j = _mm512_set1_ps(qr_j);
+        const __m512 v_neg2 = _mm512_set1_ps(-2.0f);
+
+        const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
+        const auto* pd_u32 = static_cast<const uint32_t*>(partial_dot);
+
+        size_t k = 0;
+        for (; k + 16 <= blk_count; k += 16) {
+            __m512 v_pd;
+            if constexpr (U32Dot) {
+                __m512i u32 = _mm512_loadu_si512(pd_u32 + k);
+                v_pd = _mm512_cvtepi32_ps(u32);
+            } else {
+                __m256i u16 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16 + k));
+                v_pd = _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(u16));
+            }
+
+            __m512i sq_u32 = _mm512_loadu_si512(sum_q + k);
+            __m512 v_sq = _mm512_cvtepi32_ps(sq_u32);
+
+            __m512 fdt = _mm512_fmadd_ps(v_c2j, v_sq,
+                         _mm512_fmsub_ps(v_c1j, v_pd, v_c34j));
+
+            __m512 v_or = _mm512_loadu_ps(or_c_l2sqr + k);
+            __m512 v_dp = _mm512_loadu_ps(dp_mult + k);
+
+            __m512 or_plus_qr = _mm512_add_ps(v_or, v_qr_j);
+            __m512 result = _mm512_fmadd_ps(v_neg2, _mm512_mul_ps(v_dp, fdt), or_plus_qr);
+
+            _mm512_storeu_ps(out_partial_l2 + k, result);
+        }
+        for (; k < blk_count; ++k) {
+            float dot_f;
+            if constexpr (U32Dot) {
+                dot_f = static_cast<float>(pd_u32[k]);
+            } else {
+                dot_f = static_cast<float>(pd_u16[k]);
+            }
+            const float fdt = c1j * dot_f
+                            + c2j * static_cast<float>(sum_q[k])
+                            - c34j;
+            out_partial_l2[k] = or_c_l2sqr[k] + qr_j
+                              - 2.0f * dp_mult[k] * fdt;
+        }
+    }
+
     template<bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,

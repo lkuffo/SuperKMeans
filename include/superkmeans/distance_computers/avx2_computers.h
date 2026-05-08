@@ -484,6 +484,71 @@ class SIMDFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
 
+    /**
+     * @brief AVX2-accelerated RaBitQ partial L2 for a 32-point block.
+     *
+     * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
+     * Processes 8 floats per AVX2 iteration (4 iterations for kBlockSize=32).
+     */
+    template<bool U32Dot = false>
+    static void RabitQCorrection(
+        const void* partial_dot,
+        float c1j, float c2j, float c34j, float qr_j,
+        const uint32_t* sum_q,
+        const float* or_c_l2sqr,
+        const float* dp_mult,
+        float* out_partial_l2,
+        size_t blk_count
+    ) {
+        const __m256 v_c1j = _mm256_set1_ps(c1j);
+        const __m256 v_c2j = _mm256_set1_ps(c2j);
+        const __m256 v_c34j = _mm256_set1_ps(c34j);
+        const __m256 v_qr_j = _mm256_set1_ps(qr_j);
+        const __m256 v_neg2 = _mm256_set1_ps(-2.0f);
+
+        const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
+        const auto* pd_u32 = static_cast<const uint32_t*>(partial_dot);
+
+        size_t k = 0;
+        for (; k + 8 <= blk_count; k += 8) {
+            __m256 v_pd;
+            if constexpr (U32Dot) {
+                __m256i u32 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u32 + k));
+                v_pd = _mm256_cvtepi32_ps(u32);
+            } else {
+                __m128i u16 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(pd_u16 + k));
+                v_pd = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(u16));
+            }
+
+            __m256i sq_u32 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(sum_q + k));
+            __m256 v_sq = _mm256_cvtepi32_ps(sq_u32);
+
+            __m256 fdt = _mm256_fmadd_ps(v_c2j, v_sq,
+                         _mm256_fmsub_ps(v_c1j, v_pd, v_c34j));
+
+            __m256 v_or = _mm256_loadu_ps(or_c_l2sqr + k);
+            __m256 v_dp = _mm256_loadu_ps(dp_mult + k);
+
+            __m256 or_plus_qr = _mm256_add_ps(v_or, v_qr_j);
+            __m256 result = _mm256_fmadd_ps(v_neg2, _mm256_mul_ps(v_dp, fdt), or_plus_qr);
+
+            _mm256_storeu_ps(out_partial_l2 + k, result);
+        }
+        for (; k < blk_count; ++k) {
+            float dot_f;
+            if constexpr (U32Dot) {
+                dot_f = static_cast<float>(pd_u32[k]);
+            } else {
+                dot_f = static_cast<float>(pd_u16[k]);
+            }
+            const float fdt = c1j * dot_f
+                            + c2j * static_cast<float>(sum_q[k])
+                            - c34j;
+            out_partial_l2[k] = or_c_l2sqr[k] + qr_j
+                              - 2.0f * dp_mult[k] * fdt;
+        }
+    }
+
     template<bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,

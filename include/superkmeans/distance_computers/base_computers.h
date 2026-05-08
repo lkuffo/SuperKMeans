@@ -97,6 +97,8 @@ class FastScanComputer {
     static constexpr size_t kBlockSize = computer::kBlockSize;
     constexpr static auto ScanBlock = computer::ScanBlock<false>;
     constexpr static auto ScanBlockWide = computer::ScanBlock<true>;
+    constexpr static auto RabitQCorrection = computer::RabitQCorrection<false>;
+    constexpr static auto RabitQCorrectionU32 = computer::RabitQCorrection<true>;
 };
 
 } // namespace skmeans
