@@ -263,6 +263,7 @@ class ScalarFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
 
+    template<bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -270,6 +271,8 @@ class ScalarFastScanComputer {
         uint16_t* out_dot,
         size_t blk_count
     ) {
+        // Scalar path is already safe (casts to u16 before adding).
+        (void)sizeof(WideAdd);
         std::memset(out_dot, 0, kBlockSize * sizeof(uint16_t));
         for (size_t b = 0; b < binary_bytes; ++b) {
             const uint8_t* lut_lo = lut + (2 * b) * 16;

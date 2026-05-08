@@ -95,7 +95,8 @@ class FastScanComputer {
 
   public:
     static constexpr size_t kBlockSize = computer::kBlockSize;
-    constexpr static auto ScanBlock = computer::ScanBlock;
+    constexpr static auto ScanBlock = computer::ScanBlock<false>;
+    constexpr static auto ScanBlockWide = computer::ScanBlock<true>;
 };
 
 } // namespace skmeans

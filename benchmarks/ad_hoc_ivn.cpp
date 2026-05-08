@@ -69,6 +69,7 @@ static void ComputeMedianCentroids(
 int main(int argc, char* argv[]) {
     const std::string algorithm = "superkmeans_ivn";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
+    bool blas_only = !(argc > 2 && std::string(argv[2]) == "pruning");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -117,7 +118,7 @@ int main(int argc, char* argv[]) {
     config.unrotate_centroids = true;
     config.early_termination = false;
     config.sampling_fraction = sampling_fraction;
-    config.use_blas_only = false;
+    config.use_blas_only = blas_only;
     config.tol = 1e-3f;
 
     auto is_angular = std::find(

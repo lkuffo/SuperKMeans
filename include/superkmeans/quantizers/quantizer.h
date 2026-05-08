@@ -173,6 +173,15 @@ class IQuantizer {
     virtual bool SupportsPruning() const { return false; }
 
     /**
+     * @brief Whether this quantizer needs a PDXLayout for pruning.
+     *
+     * SQ quantizers return true (use PDXearch). RaBitQ returns false
+     * (uses a custom pruning loop with ADSampling). Default: same as
+     * SupportsPruning().
+     */
+    virtual bool NeedsPDXLayout() const { return SupportsPruning(); }
+
+    /**
      * @brief Whether this quantizer uses sparse voting for centroid updates.
      * When true, the k-means loop calls SparseVotingUpdate instead of
      * UpdateCentroidsQuantized + AverageCentroids.

@@ -15,6 +15,7 @@ int main(int argc, char* argv[]) {
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("mxbai");
     std::string pq_variant = (argc > 2) ? std::string(argv[2]) : std::string("pq8");
     uint32_t pq_m = (argc > 3) ? static_cast<uint32_t>(std::stoi(argv[3])) : 16;
+    bool blas_only = (argc > 4) ? std::string(argv[4]) != "pruning" : true;
 
     if (pq_variant != "pq8" && pq_variant != "pq4") {
         std::cerr << "Invalid PQ variant '" << pq_variant << "' (expected: pq8, pq4)\n";
@@ -74,7 +75,7 @@ int main(int argc, char* argv[]) {
     config.early_termination = false;
     config.sampling_fraction = 1.0f;
     config.tol = 1e-3f;
-    config.use_blas_only = true;
+    config.use_blas_only = blas_only;
     config.quantized_centroid_update = true;
     config.data_already_rotated = true;
     config.pq_m = pq_m;

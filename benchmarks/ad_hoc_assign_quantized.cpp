@@ -13,6 +13,7 @@
 
 int main(int argc, char* argv[]) {
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
+    bool blas_only = !(argc > 2 && std::string(argv[2]) == "pruning");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -63,7 +64,7 @@ int main(int argc, char* argv[]) {
     config_f32.unrotate_centroids = true;
     config_f32.early_termination = false;
     config_f32.sampling_fraction = sampling_fraction;
-    config_f32.use_blas_only = false;
+    config_f32.use_blas_only = blas_only;
     config_f32.tol = 1e-3f;
     if (is_angular != bench_utils::ANGULAR_DATASETS.end()) {
         config_f32.angular = true;

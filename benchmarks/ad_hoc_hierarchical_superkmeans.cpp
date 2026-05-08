@@ -18,7 +18,7 @@
 int main(int argc, char* argv[]) {
     const std::string algorithm = "hierarchical_superkmeans";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
-    std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
+    bool blas_only = !(argc > 2 && std::string(argv[2]) == "pruning");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
     config.unrotate_centroids = true;
     config.early_termination = false;
     config.sampling_fraction = 1.0f; // sampling_fraction;
-    config.use_blas_only = false;
+    config.use_blas_only = blas_only;
     config.tol = 1e-3f;
 
     // Hierarchical SuperKMeans specific parameters

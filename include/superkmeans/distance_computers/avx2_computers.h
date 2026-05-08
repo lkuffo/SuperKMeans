@@ -484,6 +484,7 @@ class SIMDFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
 
+    template<bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -492,13 +493,14 @@ class SIMDFastScanComputer {
         size_t blk_count
     ) {
         if (blk_count == kBlockSize) {
-            ScanBlockAVX2(packed, lut, binary_bytes, out_dot);
+            ScanBlockAVX2<WideAdd>(packed, lut, binary_bytes, out_dot);
             return;
         }
-        ScalarFastScanComputer::ScanBlock(packed, lut, binary_bytes, out_dot, blk_count);
+        ScalarFastScanComputer::ScanBlock<WideAdd>(packed, lut, binary_bytes, out_dot, blk_count);
     }
 
   private:
+    template<bool WideAdd = false>
     static void ScanBlockAVX2(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -527,13 +529,20 @@ class SIMDFastScanComputer {
             __m256i res_lo = _mm256_shuffle_epi8(lut_lo_vec, lo_idx);
             __m256i res_hi = _mm256_shuffle_epi8(lut_hi_vec, hi_idx);
 
-            __m256i partial = _mm256_add_epi8(res_lo, res_hi);
-
-            __m256i lo16 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(partial));
-            __m256i hi16 = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(partial, 1));
-
-            acc0 = _mm256_add_epi16(acc0, lo16);
-            acc1 = _mm256_add_epi16(acc1, hi16);
+            if constexpr (WideAdd) {
+                __m256i lo16_a = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(res_lo));
+                __m256i hi16_a = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(res_lo, 1));
+                __m256i lo16_b = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(res_hi));
+                __m256i hi16_b = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(res_hi, 1));
+                acc0 = _mm256_add_epi16(acc0, _mm256_add_epi16(lo16_a, lo16_b));
+                acc1 = _mm256_add_epi16(acc1, _mm256_add_epi16(hi16_a, hi16_b));
+            } else {
+                __m256i partial = _mm256_add_epi8(res_lo, res_hi);
+                __m256i lo16 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(partial));
+                __m256i hi16 = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(partial, 1));
+                acc0 = _mm256_add_epi16(acc0, lo16);
+                acc1 = _mm256_add_epi16(acc1, hi16);
+            }
         }
 
         _mm256_storeu_si256(reinterpret_cast<__m256i*>(out_dot), acc0);

@@ -47,7 +47,7 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
         dsub_ = d / M_;
 
         faiss_pq_ = std::make_unique<faiss::ProductQuantizer>(d, M_, 8);
-        faiss_pq_->verbose = false;
+        faiss_pq_->verbose = true;
         faiss_pq_->train(n, data);
         faiss_pq_->compute_sdc_table();
 
@@ -86,11 +86,11 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
     }
 
     /**
-     * @brief Find top-1 nearest neighbor using SDC (Symmetric Distance Computation).
+     * @brief Find top-1 nearest neighbor using exact SDC with contiguous flat LUT.
      *
-     * For each data point (query), precomputes M subtable pointers for O(1) lookups,
-     * then scans all centroids (references) accumulating per-subspace distances.
-     * OMP parallelized over data points.
+     * Per data point, builds a contiguous M × 256 float LUT in L1 cache,
+     * then scans centroids with 4-way unrolling (FAISS gather pattern).
+     * Distances are exact (no quantization or approximation).
      */
     void FindNearestNeighbor(
         const quantized_t* x,
@@ -109,34 +109,63 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
         SKM_PROFILE_SCOPE("search");
         assert(fitted);
 
-#pragma omp parallel for schedule(dynamic, 256) num_threads(g_n_threads)
-        for (size_t i = 0; i < n_x; ++i) {
-            const quantized_t* xi = x + i * M_;
+#pragma omp parallel num_threads(g_n_threads)
+        {
+            // Per-thread contiguous LUT: M × 256 floats (fits in L1 for typical M)
+            std::vector<float> flat_lut(M_ * Ks);
 
-            // Precompute subtable pointers for this data point's codes
-            const float* sub[128]; // M_ <= 128 in practice
-            assert(M_ <= 128);
-            for (size_t m = 0; m < M_; ++m) {
-                sub[m] = sdc_table_.data() + m * Ks * Ks + xi[m] * Ks;
-            }
+#pragma omp for schedule(dynamic, 256)
+            for (size_t i = 0; i < n_x; ++i) {
+                const quantized_t* xi = x + i * M_;
 
-            float best_dist = std::numeric_limits<float>::max();
-            uint32_t best_j = 0;
-
-            for (size_t j = 0; j < n_y; ++j) {
-                const quantized_t* yj = y + j * M_;
-                float dist = 0.0f;
+                // Build contiguous flat LUT from scattered SDC rows
                 for (size_t m = 0; m < M_; ++m) {
-                    dist += sub[m][yj[m]];
+                    std::memcpy(
+                        flat_lut.data() + m * Ks,
+                        sdc_table_.data() + m * Ks * Ks + xi[m] * Ks,
+                        Ks * sizeof(float)
+                    );
                 }
-                if (dist < best_dist) {
-                    best_dist = dist;
-                    best_j = static_cast<uint32_t>(j);
-                }
-            }
 
-            out_knn[i] = best_j;
-            out_distances[i] = best_dist;
+                float best_dist = std::numeric_limits<float>::max();
+                uint32_t best_j = 0;
+
+                // 4-way unrolled centroid scan
+                const size_t n_y4 = n_y - (n_y % 4);
+                for (size_t j = 0; j < n_y4; j += 4) {
+                    const quantized_t* y0 = y + (j + 0) * M_;
+                    const quantized_t* y1 = y + (j + 1) * M_;
+                    const quantized_t* y2 = y + (j + 2) * M_;
+                    const quantized_t* y3 = y + (j + 3) * M_;
+                    float d0 = 0.0f, d1 = 0.0f, d2 = 0.0f, d3 = 0.0f;
+                    for (size_t m = 0; m < M_; ++m) {
+                        const float* lut_m = flat_lut.data() + m * Ks;
+                        d0 += lut_m[y0[m]];
+                        d1 += lut_m[y1[m]];
+                        d2 += lut_m[y2[m]];
+                        d3 += lut_m[y3[m]];
+                    }
+                    if (d0 < best_dist) { best_dist = d0; best_j = static_cast<uint32_t>(j + 0); }
+                    if (d1 < best_dist) { best_dist = d1; best_j = static_cast<uint32_t>(j + 1); }
+                    if (d2 < best_dist) { best_dist = d2; best_j = static_cast<uint32_t>(j + 2); }
+                    if (d3 < best_dist) { best_dist = d3; best_j = static_cast<uint32_t>(j + 3); }
+                }
+                // Remainder
+                for (size_t j = n_y4; j < n_y; ++j) {
+                    const quantized_t* yj = y + j * M_;
+                    float dist = 0.0f;
+                    for (size_t m = 0; m < M_; ++m) {
+                        dist += flat_lut[m * Ks + yj[m]];
+                    }
+                    if (dist < best_dist) {
+                        best_dist = dist;
+                        best_j = static_cast<uint32_t>(j);
+                    }
+                }
+
+                out_knn[i] = best_j;
+                out_distances[i] = best_dist;
+            }
         }
     }
 

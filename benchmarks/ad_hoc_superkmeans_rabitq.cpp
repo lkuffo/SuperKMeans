@@ -15,7 +15,7 @@
 int main(int argc, char* argv[]) {
     const std::string algorithm = "superkmeans_rabitq";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
-    std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
+    bool blas_only = !(argc > 2 && std::string(argv[2]) == "pruning");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -79,6 +79,10 @@ int main(int argc, char* argv[]) {
     config.quantizer_type = skmeans::QuantizerType::rabitq;
     config.quantized_centroid_update = true;
     config.full_precision_final_centroids = false;
+    config.use_blas_only = blas_only;
+    if (blas_only) {
+        std::cout << "BLAS-only mode (no pruning)" << std::endl;
+    }
 
     auto is_angular = std::find(
         bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset

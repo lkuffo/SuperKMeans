@@ -81,6 +81,7 @@ skmeans_add_benchmark(ad_hoc_ivn.out ad_hoc_ivn.cpp)
 skmeans_add_faiss_benchmark(accelerators.out accelerators/accelerators.cpp)
 skmeans_add_faiss_benchmark(ad_hoc_superkmeans_rabitq.out ad_hoc_superkmeans_rabitq.cpp)
 skmeans_add_faiss_benchmark(ad_hoc_pq.out ad_hoc_pq.cpp)
+skmeans_add_benchmark(ad_hoc_lvq4.out ad_hoc_lvq4.cpp)
 skmeans_add_benchmark(ad_hoc_assign_quantized.out ad_hoc_assign_quantized.cpp)
 skmeans_add_benchmark(sweet_pruning_spot_superkmeans.out sweet_pruning_spot_superkmeans.cpp)
 skmeans_add_benchmark(microbenchmark_init_positions_array.out microbenchmarks/microbenchmark_init_positions_array.cpp)
@@ -213,6 +214,7 @@ add_custom_target(benchmarks
         ad_hoc_superkmeans_sq8.out
         ad_hoc_superkmeans_sq4.out
         ad_hoc_superkmeans_rabitq.out
+        ad_hoc_lvq4.out
         ad_hoc_assign_quantized.out
         sweet_pruning_spot_superkmeans.out
         microbenchmark_init_positions_array.out

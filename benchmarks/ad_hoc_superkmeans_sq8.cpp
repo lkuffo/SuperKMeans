@@ -15,7 +15,7 @@
 int main(int argc, char* argv[]) {
     const std::string algorithm = "superkmeans_sq8";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
-    std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("end_to_end");
+    bool blas_only = !(argc > 2 && std::string(argv[2]) == "pruning");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
     config.sampling_fraction = sampling_fraction;
     config.tol = 1e-3f;
     config.quantizer_type = skmeans::QuantizerType::sq8;
-    config.use_blas_only = false;
+    config.use_blas_only = blas_only;
     config.quantized_centroid_update = true;
 
     auto is_angular = std::find(

@@ -375,6 +375,7 @@ class SIMDFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
 
+    template<bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -383,7 +384,7 @@ class SIMDFastScanComputer {
         size_t blk_count
     ) {
         if (blk_count == kBlockSize) {
-            ScanBlockNeon(packed, lut, binary_bytes, out_dot);
+            ScanBlockNeon<WideAdd>(packed, lut, binary_bytes, out_dot);
             return;
         }
         ScanBlockScalar(packed, lut, binary_bytes, out_dot, blk_count);
@@ -410,6 +411,7 @@ class SIMDFastScanComputer {
         }
     }
 
+    template<bool WideAdd = false>
     static void ScanBlockNeon(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -432,10 +434,19 @@ class SIMDFastScanComputer {
 
                 uint8x16_t res_lo = vqtbl1q_u8(lut_lo_vec, lo_idx);
                 uint8x16_t res_hi = vqtbl1q_u8(lut_hi_vec, hi_idx);
-                uint8x16_t partial = vaddq_u8(res_lo, res_hi);
 
-                acc_lo = vaddw_u8(acc_lo, vget_low_u8(partial));
-                acc_hi = vaddw_u8(acc_hi, vget_high_u8(partial));
+                if constexpr (WideAdd) {
+                    // Widen each to u16 before adding — safe for LUT entries > 127
+                    acc_lo = vaddw_u8(acc_lo, vget_low_u8(res_lo));
+                    acc_lo = vaddw_u8(acc_lo, vget_low_u8(res_hi));
+                    acc_hi = vaddw_u8(acc_hi, vget_high_u8(res_lo));
+                    acc_hi = vaddw_u8(acc_hi, vget_high_u8(res_hi));
+                } else {
+                    // Add in u8 first (safe when LUT entries ≤ 127, e.g. RaBitQ)
+                    uint8x16_t partial = vaddq_u8(res_lo, res_hi);
+                    acc_lo = vaddw_u8(acc_lo, vget_low_u8(partial));
+                    acc_hi = vaddw_u8(acc_hi, vget_high_u8(partial));
+                }
             }
 
             vst1q_u16(out_dot + half * 16, acc_lo);
