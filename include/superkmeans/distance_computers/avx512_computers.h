@@ -836,7 +836,7 @@ class SIMDRaBitQCodec {
             norm_acc = _mm512_fmadd_ps(res, res, norm_acc);
             abs_acc = _mm512_add_ps(abs_acc, _mm512_andnot_ps(sign_mask, res));
 
-            __mmask16 signs = _mm512_cmpgt_ps_mask(res, zero);
+            __mmask16 signs = _mm512_cmp_ps_mask(res, zero, _CMP_GT_OQ);
             *(uint16_t*)(code + byte_off) = static_cast<uint16_t>(signs);
         }
 
