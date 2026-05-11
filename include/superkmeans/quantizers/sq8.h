@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include <Eigen/Dense>
 #include "ruy/ruy.h"
 
 namespace skmeans {
@@ -220,8 +221,10 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                     }
                 }
 
-                // Convert dots to L2² distances (vectorizable), then find min
+                // Convert dots to L2² and find nearest neighbor per row
                 // L2²(x,y) = ||x||² + ||y||² - 2·inv_scale²·dot(x,y)
+                using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+                Eigen::Map<MatrixR> dists_matrix(tmp_buf, batch_n_x, batch_n_y);
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const size_t idx = i + r;
@@ -235,17 +238,12 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                             - 2.0f * inv_scale_sq * static_cast<float>(dots_row[c]);
                     }
 
-                    // Find min in this row
-                    float best = out_distances[idx];
-                    uint32_t best_idx = out_knn[idx];
-                    for (size_t c = 0; c < batch_n_y; ++c) {
-                        if (dists_row[c] < best) {
-                            best = dists_row[c];
-                            best_idx = static_cast<uint32_t>(j + c);
-                        }
+                    uint32_t knn_idx;
+                    float batch_top_1 = dists_matrix.row(r).minCoeff(&knn_idx);
+                    if (batch_top_1 < out_distances[idx]) {
+                        out_distances[idx] = std::max(0.0f, batch_top_1);
+                        out_knn[idx] = static_cast<uint32_t>(j + knn_idx);
                     }
-                    out_distances[idx] = best;
-                    out_knn[idx] = best_idx;
                 }
             }
         }
