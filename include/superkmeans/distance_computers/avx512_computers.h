@@ -481,18 +481,16 @@ class SIMDFastScanComputer {
         size_t n_vectors,
         size_t& n_survivors,
         uint32_t* survivor_positions,
-        float adsampling_ratio,
         const float* partial_l2,
-        const float* best_dist
+        const float* threshold
     ) {
         n_survivors = 0;
         size_t k = 0;
         constexpr size_t k_simd_width = 16;
         const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
-        __m512 v_ratio = _mm512_set1_ps(adsampling_ratio);
         const __m512i offsets = _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
         for (; k < n_vectors_simd; k += k_simd_width) {
-            __m512 thresh = _mm512_mul_ps(_mm512_loadu_ps(best_dist + k), v_ratio);
+            __m512 thresh = _mm512_loadu_ps(threshold + k);
             __m512 dists = _mm512_loadu_ps(partial_l2 + k);
             __mmask16 cmp_mask = _mm512_cmp_ps_mask(dists, thresh, _CMP_LE_OQ);
             if (SKM_UNLIKELY(cmp_mask)) {
@@ -505,7 +503,7 @@ class SIMDFastScanComputer {
         }
         for (; k < n_vectors; ++k) {
             survivor_positions[n_survivors] = static_cast<uint32_t>(k);
-            n_survivors += partial_l2[k] <= best_dist[k] * adsampling_ratio;
+            n_survivors += partial_l2[k] <= threshold[k];
         }
     }
 
@@ -519,7 +517,7 @@ class SIMDFastScanComputer {
     static void RabitQCorrection(
         const void* partial_dot,
         float c1j, float c2j, float c34j, float qr_j,
-        const uint32_t* sum_q,
+        const float* sum_q_f32,
         const float* or_c_l2sqr,
         const float* dp_mult,
         float* out_partial_l2,
@@ -545,8 +543,7 @@ class SIMDFastScanComputer {
                 v_pd = _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(u16));
             }
 
-            __m512i sq_u32 = _mm512_loadu_si512(sum_q + k);
-            __m512 v_sq = _mm512_cvtepi32_ps(sq_u32);
+            __m512 v_sq = _mm512_loadu_ps(sum_q_f32 + k);
 
             __m512 fdt = _mm512_fmadd_ps(v_c2j, v_sq,
                          _mm512_fmsub_ps(v_c1j, v_pd, v_c34j));
@@ -567,7 +564,7 @@ class SIMDFastScanComputer {
                 dot_f = static_cast<float>(pd_u16[k]);
             }
             const float fdt = c1j * dot_f
-                            + c2j * static_cast<float>(sum_q[k])
+                            + c2j * sum_q_f32[k]
                             - c34j;
             out_partial_l2[k] = or_c_l2sqr[k] + qr_j
                               - 2.0f * dp_mult[k] * fdt;

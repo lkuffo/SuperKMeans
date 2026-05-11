@@ -264,20 +264,21 @@ class ScalarFastScanComputer {
     static constexpr size_t kBlockSize = 32;
 
     /**
-     * @brief Compact surviving positions where partial_l2[k] <= best_dist[k] * ratio.
+     * @brief Compact surviving positions where partial_l2[k] <= threshold[k].
+     *
+     * Caller precomputes threshold[k] = best_dist[k] * adsampling_ratio.
      */
     static void RabitQCompactSurvivors(
         size_t n_vectors,
         size_t& n_survivors,
         uint32_t* survivor_positions,
-        float adsampling_ratio,
         const float* partial_l2,
-        const float* best_dist
+        const float* threshold
     ) {
         n_survivors = 0;
         for (size_t k = 0; k < n_vectors; ++k) {
             survivor_positions[n_survivors] = static_cast<uint32_t>(k);
-            n_survivors += partial_l2[k] <= best_dist[k] * adsampling_ratio;
+            n_survivors += partial_l2[k] <= threshold[k];
         }
     }
 
@@ -290,11 +291,17 @@ class ScalarFastScanComputer {
      *
      * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
      */
+    /**
+     * @brief Compute RaBitQ partial L2 distances for a block of points against one centroid.
+     *
+     * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
+     * @param sum_q_f32 Pre-converted float array (caller converts uint32_t→float once per block).
+     */
     template<bool U32Dot = false>
     static void RabitQCorrection(
         const void* partial_dot,
         float c1j, float c2j, float c34j, float qr_j,
-        const uint32_t* sum_q,
+        const float* sum_q_f32,
         const float* or_c_l2sqr,
         const float* dp_mult,
         float* out_partial_l2,
@@ -307,9 +314,7 @@ class ScalarFastScanComputer {
             } else {
                 dot_f = static_cast<float>(static_cast<const uint16_t*>(partial_dot)[k]);
             }
-            const float fdt = c1j * dot_f
-                            + c2j * static_cast<float>(sum_q[k])
-                            - c34j;
+            const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
             out_partial_l2[k] = or_c_l2sqr[k] + qr_j
                               - 2.0f * dp_mult[k] * fdt;
         }

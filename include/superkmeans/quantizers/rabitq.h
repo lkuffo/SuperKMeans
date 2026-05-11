@@ -157,6 +157,12 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
                 float dist_buf[FastScanComputer::kBlockSize];
 
+                // Precompute sum_q as float once per block (avoids u32→f32 per centroid)
+                float sum_q_f32[FastScanComputer::kBlockSize];
+                for (size_t k = 0; k < blk_count; ++k) {
+                    sum_q_f32[k] = static_cast<float>(sum_q[blk_start + k]);
+                }
+
                 for (size_t j = 0; j < n_y; ++j) {
                     uint16_t dot_qo[FastScanComputer::kBlockSize];
                     FastScanComputer::ScanBlock(
@@ -167,7 +173,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     FastScanComputer::RabitQCorrection(
                         dot_qo,
                         c1[j], c2[j], c34[j], qr_to_c_l2sqr[j],
-                        sum_q + blk_start,
+                        sum_q_f32,
                         or_c_l2sqr + blk_start,
                         dp_mult + blk_start,
                         dist_buf,
@@ -212,108 +218,6 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         (void)norms_x;
         (void)norms_y;
         (void)tmp_buf;
-
-        using f32_computer = DistanceComputer<DistanceFunction::l2, Quantization::f32>;
-
-        const uint8_t* x_codes = reinterpret_cast<const uint8_t*>(x_quantized);
-
-        // Cache per-data-point factors (depend only on x, reused across iterations)
-        EnsureCodeFactorsCache(x_codes, n_x);
-        EnsureTransposedBlocksCache(x_codes, n_x);
-        const uint32_t* sum_q = cached_sum_q_.data();
-        const float* or_c_l2sqr = cached_or_c_l2sqr_.data();
-        const float* dp_mult = cached_dp_mult_.data();
-
-        // Quantize centroids and build LUTs (changes every iteration)
-        const size_t n_sub = 2 * binary_bytes_;
-        std::vector<float> c1(n_y), c2(n_y), c34(n_y), qr_to_c_l2sqr(n_y);
-        std::vector<uint8_t> all_luts(n_y * n_sub * 16);
-        QuantizeCentroidsAndBuildLUTs(
-            y_float, n_y, d,
-            all_luts.data(), c1.data(), c2.data(), c34.data(), qr_to_c_l2sqr.data()
-        );
-
-        const size_t lut_stride = n_sub * 16;
-        const size_t block_bytes = FastScanComputer::kBlockSize * binary_bytes_;
-        const size_t n_blocks = cached_n_blocks_;
-
-        // Per-query top-k from quantized distances
-        std::vector<float> topk_distances(n_x * rerank_k, std::numeric_limits<float>::max());
-        std::vector<uint32_t> topk_indices(n_x * rerank_k, static_cast<uint32_t>(-1));
-
-        {
-            SKM_PROFILE_SCOPE("RaBitQ::FastScanDistance");
-#pragma omp parallel for num_threads(g_n_threads)
-            for (size_t blk = 0; blk < n_blocks; ++blk) {
-                const size_t blk_start = blk * FastScanComputer::kBlockSize;
-                const size_t blk_count = std::min(FastScanComputer::kBlockSize, n_x - blk_start);
-
-                const uint8_t* packed = cached_transposed_.get() + blk * block_bytes;
-
-                // Per-point candidate heaps (small vectors on stack)
-                std::vector<std::pair<float, uint32_t>> candidates[FastScanComputer::kBlockSize];
-                for (size_t k = 0; k < blk_count; ++k) {
-                    candidates[k].reserve(n_y);
-                }
-
-                for (size_t j = 0; j < n_y; ++j) {
-                    uint16_t dot_qo[FastScanComputer::kBlockSize];
-                    FastScanComputer::ScanBlock(
-                        packed, all_luts.data() + j * lut_stride,
-                        binary_bytes_, dot_qo, blk_count
-                    );
-
-                    for (size_t k = 0; k < blk_count; ++k) {
-                        const size_t i = blk_start + k;
-                        const float final_dot =
-                            c1[j] * static_cast<float>(dot_qo[k]) +
-                            c2[j] * static_cast<float>(sum_q[i]) -
-                            c34[j];
-                        const float dist =
-                            or_c_l2sqr[i] + qr_to_c_l2sqr[j] -
-                            2.0f * dp_mult[i] * final_dot;
-                        candidates[k].push_back({dist, static_cast<uint32_t>(j)});
-                    }
-                }
-
-                for (size_t k = 0; k < blk_count; ++k) {
-                    const size_t i = blk_start + k;
-                    size_t actual_k = std::min(rerank_k, n_y);
-                    std::partial_sort(
-                        candidates[k].begin(),
-                        candidates[k].begin() + actual_k,
-                        candidates[k].end()
-                    );
-                    for (size_t ki = 0; ki < actual_k; ++ki) {
-                        topk_distances[i * rerank_k + ki] = candidates[k][ki].first;
-                        topk_indices[i * rerank_k + ki] = candidates[k][ki].second;
-                    }
-                }
-            }
-        }
-
-        // F32 reranking
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t i = 0; i < n_x; ++i) {
-            float best_dist = std::numeric_limits<float>::max();
-            uint32_t best_idx = 0;
-
-            for (size_t ki = 0; ki < rerank_k; ++ki) {
-                const uint32_t cand_idx = topk_indices[i * rerank_k + ki];
-                if (cand_idx == static_cast<uint32_t>(-1)) break;
-
-                const float dist =
-                    f32_computer::Horizontal(x_float + i * d, y_float + cand_idx * d, d);
-
-                if (dist < best_dist) {
-                    best_dist = dist;
-                    best_idx = cand_idx;
-                }
-            }
-
-            out_knn[i] = best_idx;
-            out_distances[i] = best_dist;
-        }
     }
 
     size_t CodeSize(size_t d) const override {
@@ -481,6 +385,14 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 // ── Pass 1b: SIMD correction + checkpoint 1 compaction ──
                 float partial_l2_buf[FastScanComputer::kBlockSize];
 
+                // Precompute per-block buffers (avoids redundant ops per centroid j)
+                float sum_q_front_f32[FastScanComputer::kBlockSize];
+                float threshold_buf[FastScanComputer::kBlockSize];
+                for (size_t k = 0; k < blk_count; ++k) {
+                    sum_q_front_f32[k] = static_cast<float>(sum_q_front[blk_start + k]);
+                    threshold_buf[k] = best_dist[k] * adsampling_ratio_front;
+                }
+
                 // Flat survivor buffers: separate k and j arrays
                 const size_t max_survivors = blk_count * n_y;
                 std::unique_ptr<uint32_t[]> survivor_ks(new uint32_t[max_survivors]);
@@ -497,7 +409,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         FastScanComputer::RabitQCorrection(
                             partial_dot_qo,
                             c1[j], c2[j], c34_front[j], qr_to_c_l2sqr_front[j],
-                            sum_q_front + blk_start,
+                            sum_q_front_f32,
                             or_c_l2sqr_front + blk_start,
                             dp_mult + blk_start,
                             partial_l2_buf,
@@ -509,8 +421,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         FastScanComputer::RabitQCompactSurvivors(
                             blk_count, n_new,
                             survivor_ks.get() + total_survivors,
-                            adsampling_ratio_front,
-                            partial_l2_buf, best_dist
+                            partial_l2_buf, threshold_buf
                         );
 
                         std::fill_n(survivor_js.get() + total_survivors, n_new, static_cast<uint32_t>(j));
@@ -528,6 +439,14 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     SKM_PROFILE_SCOPE("RaBitQ::PrunedScan/remaining");
                     uint32_t accumulated_dots[FastScanComputer::kBlockSize];
                     float correction_buf[FastScanComputer::kBlockSize];
+
+                    // Precompute sum_q as float once per block
+                    float sum_q_mid_f32[FastScanComputer::kBlockSize];
+                    float sum_q_f32[FastScanComputer::kBlockSize];
+                    for (size_t k = 0; k < blk_count; ++k) {
+                        sum_q_mid_f32[k] = static_cast<float>(sum_q_mid[blk_start + k]);
+                        sum_q_f32[k] = static_cast<float>(sum_q[blk_start + k]);
+                    }
 
                     size_t s = 0;
                     while (s < total_survivors) {
@@ -567,7 +486,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             FastScanComputer::RabitQCorrectionU32(
                                 accumulated_dots,
                                 c1[j], c2[j], c34_mid[j], qr_to_c_l2sqr_mid[j],
-                                sum_q_mid + blk_start,
+                                sum_q_mid_f32,
                                 or_c_l2sqr_mid + blk_start,
                                 dp_mult + blk_start,
                                 correction_buf,
@@ -608,7 +527,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         FastScanComputer::RabitQCorrectionU32(
                             accumulated_dots,
                             c1[j], c2[j], c34[j], qr_to_c_l2sqr[j],
-                            sum_q + blk_start,
+                            sum_q_f32,
                             or_c_l2sqr + blk_start,
                             dp_mult + blk_start,
                             correction_buf,

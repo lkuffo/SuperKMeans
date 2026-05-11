@@ -380,21 +380,24 @@ class SIMDFastScanComputer {
      *
      * Survives where partial_l2[k] <= best_dist[k] * adsampling_ratio.
      */
+    /**
+     * @brief NEON-accelerated compaction where partial_l2[k] <= threshold[k].
+     *
+     * Caller precomputes threshold[k] = best_dist[k] * adsampling_ratio.
+     */
     static void RabitQCompactSurvivors(
         size_t n_vectors,
         size_t& n_survivors,
         uint32_t* survivor_positions,
-        float adsampling_ratio,
         const float* partial_l2,
-        const float* best_dist
+        const float* threshold
     ) {
         n_survivors = 0;
         size_t k = 0;
         constexpr size_t k_simd_width = 4;
         const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
-        float32x4_t v_ratio = vdupq_n_f32(adsampling_ratio);
         for (; k < n_vectors_simd; k += k_simd_width) {
-            float32x4_t thresh = vmulq_f32(vld1q_f32(best_dist + k), v_ratio);
+            float32x4_t thresh = vld1q_f32(threshold + k);
             float32x4_t dists = vld1q_f32(partial_l2 + k);
             uint32x4_t cmp_result = vcleq_f32(dists, thresh);
             uint32_t any_passed = vmaxvq_u32(cmp_result);
@@ -409,7 +412,7 @@ class SIMDFastScanComputer {
         }
         for (; k < n_vectors; ++k) {
             survivor_positions[n_survivors] = static_cast<uint32_t>(k);
-            n_survivors += partial_l2[k] <= best_dist[k] * adsampling_ratio;
+            n_survivors += partial_l2[k] <= threshold[k];
         }
     }
 
@@ -419,11 +422,15 @@ class SIMDFastScanComputer {
      * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
      * Processes 4 floats per NEON iteration (8 iterations for kBlockSize=32).
      */
+    /**
+     * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
+     * @param sum_q_f32 Pre-converted float array (caller converts uint32_t→float once per block).
+     */
     template<bool U32Dot = false>
     static void RabitQCorrection(
         const void* partial_dot,
         float c1j, float c2j, float c34j, float qr_j,
-        const uint32_t* sum_q,
+        const float* sum_q_f32,
         const float* or_c_l2sqr,
         const float* dp_mult,
         float* out_partial_l2,
@@ -440,7 +447,6 @@ class SIMDFastScanComputer {
 
         size_t k = 0;
         for (; k + 4 <= blk_count; k += 4) {
-            // Load partial dots and convert to f32
             float32x4_t v_pd;
             if constexpr (U32Dot) {
                 v_pd = vcvtq_f32_u32(vld1q_u32(pd_u32 + k));
@@ -448,16 +454,13 @@ class SIMDFastScanComputer {
                 v_pd = vcvtq_f32_u32(vmovl_u16(vld1_u16(pd_u16 + k)));
             }
 
-            // Load sum_q[k..k+3] as u32, convert to f32
-            float32x4_t v_sq = vcvtq_f32_u32(vld1q_u32(sum_q + k));
+            float32x4_t v_sq = vld1q_f32(sum_q_f32 + k);
 
-            // fdt = c1j * pd + c2j * sq - c34j
             float32x4_t fdt = vmlaq_f32(
                 vmlaq_f32(vnegq_f32(v_c34j), v_c1j, v_pd),
                 v_c2j, v_sq
             );
 
-            // partial_l2 = (or + qr) + (-2) * dp * fdt
             float32x4_t v_or = vld1q_f32(or_c_l2sqr + k);
             float32x4_t v_dp = vld1q_f32(dp_mult + k);
             float32x4_t or_plus_qr = vaddq_f32(v_or, v_qr_j);
@@ -465,7 +468,6 @@ class SIMDFastScanComputer {
 
             vst1q_f32(out_partial_l2 + k, result);
         }
-        // Scalar remainder
         for (; k < blk_count; ++k) {
             float dot_f;
             if constexpr (U32Dot) {
@@ -473,9 +475,7 @@ class SIMDFastScanComputer {
             } else {
                 dot_f = static_cast<float>(pd_u16[k]);
             }
-            const float fdt = c1j * dot_f
-                            + c2j * static_cast<float>(sum_q[k])
-                            - c34j;
+            const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
             out_partial_l2[k] = or_c_l2sqr[k] + qr_j
                               - 2.0f * dp_mult[k] * fdt;
         }
