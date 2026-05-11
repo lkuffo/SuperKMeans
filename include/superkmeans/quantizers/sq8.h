@@ -165,6 +165,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         float* tmp_buf
     ) const override {
         SKM_PROFILE_SCOPE("search");
+        SKM_PROFILE_SCOPE("search/1st_blas");
         assert(fitted);
         (void)x_float;
         (void)y_float;
@@ -183,7 +184,6 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
                 // Compute dot products via ruy (OMP-parallelized)
                 {
-                    SKM_PROFILE_SCOPE("search/blas");
 #pragma omp parallel for num_threads(g_n_threads) schedule(static)
                     for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
                         const size_t row_start = t * batch_n_x / g_n_threads;
