@@ -265,123 +265,9 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     ) const override {
         SKM_PROFILE_SCOPE("search");
         SKM_PROFILE_SCOPE("search/rerank");
-        assert(fitted);
         (void)norms_x;
         (void)norms_y;
         (void)tmp_buf;
-
-        using f32_computer = DistanceComputer<DistanceFunction::l2, Quantization::f32>;
-
-        // Per-thread candidate buffers for top-k merge
-        const size_t max_candidates = rerank_k + Y_BATCH_SIZE;
-        const uint32_t num_threads = g_n_threads;
-        std::vector<std::vector<std::pair<float, uint32_t>>> thread_candidates(num_threads);
-        for (auto& tc : thread_candidates) {
-            tc.reserve(max_candidates);
-        }
-
-        // Per-query top-k: (distance, index) for each query × rerank_k
-        std::vector<float> topk_distances(n_x * rerank_k, std::numeric_limits<float>::max());
-        std::vector<uint32_t> topk_indices(n_x * rerank_k, static_cast<uint32_t>(-1));
-
-        for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
-            const size_t batch_n_x = std::min(X_BATCH_SIZE, n_x - i);
-
-            for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
-                const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
-
-                const size_t packed_size = nk_dots_packed_size_u8(batch_n_y, d);
-                if (packed_size > packed_buf.size()) packed_buf.resize(packed_size);
-                nk_dots_pack_u8(y_quantized + j * d, batch_n_y, d, d, packed_buf.data());
-
-                const size_t batch_r_stride = batch_n_y * sizeof(float);
-
-#pragma omp parallel num_threads(g_n_threads)
-                {
-                    nk_configure_thread(nk_capabilities());
-                    int tid = omp_get_thread_num();
-                    int nt = omp_get_num_threads();
-                    size_t rows_per_t = (batch_n_x + nt - 1) / nt;
-                    size_t start = tid * rows_per_t;
-                    size_t count = std::min(rows_per_t, batch_n_x - start);
-                    if (start < batch_n_x && count > 0) {
-                        nk_euclideans_packed_u8(
-                            x_quantized + (i + start) * d,
-                            packed_buf.data(),
-                            nn_dists_buf.data() + start * batch_n_y,
-                            count,
-                            batch_n_y,
-                            d,
-                            d,
-                            batch_r_stride
-                        );
-                    }
-                }
-
-                // Merge candidates into per-query top-k
-#pragma omp parallel for num_threads(g_n_threads)
-                for (size_t r = 0; r < batch_n_x; ++r) {
-                    const size_t idx = i + r;
-                    const float* dists_row = nn_dists_buf.data() + r * batch_n_y;
-
-                    auto& candidates = thread_candidates[omp_get_thread_num()];
-                    candidates.clear();
-
-                    // Add previous top-k
-                    for (size_t ki = 0; ki < rerank_k; ++ki) {
-                        if (topk_distances[idx * rerank_k + ki] <
-                            std::numeric_limits<float>::max()) {
-                            candidates.emplace_back(
-                                topk_distances[idx * rerank_k + ki],
-                                topk_indices[idx * rerank_k + ki]
-                            );
-                        }
-                    }
-                    // Add current batch candidates
-                    for (size_t c = 0; c < batch_n_y; ++c) {
-                        candidates.emplace_back(dists_row[c], static_cast<uint32_t>(j + c));
-                    }
-
-                    size_t actual_k = std::min(rerank_k, candidates.size());
-                    std::partial_sort(
-                        candidates.begin(), candidates.begin() + actual_k, candidates.end()
-                    );
-
-                    for (size_t ki = 0; ki < actual_k; ++ki) {
-                        topk_distances[idx * rerank_k + ki] = candidates[ki].first;
-                        topk_indices[idx * rerank_k + ki] = candidates[ki].second;
-                    }
-                    for (size_t ki = actual_k; ki < rerank_k; ++ki) {
-                        topk_distances[idx * rerank_k + ki] =
-                            std::numeric_limits<float>::max();
-                        topk_indices[idx * rerank_k + ki] = static_cast<uint32_t>(-1);
-                    }
-                }
-            }
-        }
-
-        // F32 reranking: compute exact L2² to top-k candidates, keep best
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t i = 0; i < n_x; ++i) {
-            float best_dist = std::numeric_limits<float>::max();
-            uint32_t best_idx = 0;
-
-            for (size_t ki = 0; ki < rerank_k; ++ki) {
-                const uint32_t cand_idx = topk_indices[i * rerank_k + ki];
-                if (cand_idx == static_cast<uint32_t>(-1)) break;
-
-                const float dist =
-                    f32_computer::Horizontal(x_float + i * d, y_float + cand_idx * d, d);
-
-                if (dist < best_dist) {
-                    best_dist = dist;
-                    best_idx = cand_idx;
-                }
-            }
-
-            out_knn[i] = best_idx;
-            out_distances[i] = best_dist;
-        }
     }
 
     bool IsFitted() const override { return fitted; }
@@ -469,6 +355,21 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             const size_t batch_n_x = std::min(X_BATCH_SIZE, n_x - i);
 
+            // Pack query vectors once per x-batch: extract first partial_d
+            // bytes contiguously. Reused across all centroid batches.
+            {
+                const size_t qp_size = batch_n_x * partial_d;
+                if (q_partial_buf.size() < qp_size) q_partial_buf.resize(qp_size);
+#pragma omp parallel for num_threads(g_n_threads) schedule(static)
+                for (size_t r = 0; r < batch_n_x; ++r) {
+                    std::memcpy(
+                        q_partial_buf.data() + r * partial_d,
+                        x + (i + r) * d,
+                        partial_d
+                    );
+                }
+            }
+
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
 
@@ -492,13 +393,13 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                         size_t count = std::min(rows_per_t, batch_n_x - start);
                         if (start < batch_n_x && count > 0) {
                             nk_dots_packed_u8(
-                                x + (i + start) * d,
+                                q_partial_buf.data() + start * partial_d,
                                 packed_buf.data(),
                                 pruning_dots_buf.data() + start * batch_n_y,
                                 count,
                                 batch_n_y,
                                 partial_d,
-                                d,
+                                partial_d,
                                 c_stride
                             );
                         }
@@ -592,6 +493,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     mutable std::vector<float> nn_dists_buf;
     mutable std::vector<uint32_t> pruning_dots_buf;
     mutable std::vector<char> packed_buf;
+    mutable std::vector<uint8_t> q_partial_buf;
 };
 
 } // namespace skmeans
