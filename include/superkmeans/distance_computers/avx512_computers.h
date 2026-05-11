@@ -253,6 +253,40 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::b8> {
         );
 #endif
     };
+
+    static uint32_t HorizontalMultiPlane(
+        const data_t* SKM_RESTRICT data,
+        const data_t* planes_base,
+        size_t plane_stride,
+        size_t num_bytes,
+        int qb
+    ) {
+#ifdef __AVX512VPOPCNTDQ__
+        __m512i acc = _mm512_setzero_si512();
+        size_t i = 0;
+        for (; i + 64 <= num_bytes; i += 64) {
+            __m512i x = _mm512_loadu_si512(data + i);
+            for (int bp = 0; bp < qb; ++bp) {
+                __m512i p = _mm512_loadu_si512(planes_base + bp * plane_stride + i);
+                __m512i popcnt = _mm512_popcnt_epi64(_mm512_and_si512(x, p));
+                acc = _mm512_add_epi64(acc, _mm512_slli_epi64(popcnt, bp));
+            }
+        }
+        uint32_t result = static_cast<uint32_t>(_mm512_reduce_add_epi64(acc));
+        // Scalar tail
+        for (; i < num_bytes; ++i) {
+            for (int bp = 0; bp < qb; ++bp) {
+                result += static_cast<uint32_t>(
+                    __builtin_popcount(data[i] & (planes_base + bp * plane_stride)[i])) << bp;
+            }
+        }
+        return result;
+#else
+        return ScalarComputer<DistanceFunction::l2, Quantization::b8>::HorizontalMultiPlane(
+            data, planes_base, plane_stride, num_bytes, qb
+        );
+#endif
+    }
 };
 
 template <Quantization q>

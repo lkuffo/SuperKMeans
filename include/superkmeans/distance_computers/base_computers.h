@@ -69,6 +69,7 @@ class DistanceComputer<DistanceFunction::l2, Quantization::b8> {
 
   public:
     constexpr static auto Horizontal = computer::Horizontal;
+    constexpr static auto HorizontalMultiPlane = computer::HorizontalMultiPlane;
 };
 
 template <Quantization q>

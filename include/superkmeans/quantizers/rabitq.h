@@ -471,16 +471,12 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                                 const size_t k = survivor_ks[si];
                                 const size_t i = blk_start + k;
                                 const uint8_t* data_code = x_codes + i * faiss_code_size_;
-                                uint32_t gap_dot = 0;
-                                for (int bp = 0; bp < qb_; ++bp) {
-                                    const uint8_t* plane = centroid_planes.data() +
-                                        (bp * n_y + j) * binary_bytes_ + front_bytes;
-                                    gap_dot +=
-                                        b8_computer::Horizontal(
-                                            data_code + front_bytes, plane, gap_bytes
-                                        ) << bp;
-                                }
-                                accumulated_dots[k] += gap_dot;
+                                const uint8_t* plane0 = centroid_planes.data() +
+                                    j * binary_bytes_ + front_bytes;
+                                accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
+                                    data_code + front_bytes, plane0,
+                                    n_y * binary_bytes_, gap_bytes, qb_
+                                );
                             }
 
                             // SIMD correction for mid checkpoint (full block)
@@ -512,16 +508,12 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             const size_t k = survivor_ks[si];
                             const size_t i = blk_start + k;
                             const uint8_t* data_code = x_codes + i * faiss_code_size_;
-                            uint32_t remaining_dot_qo = 0;
-                            for (int bp = 0; bp < qb_; ++bp) {
-                                const uint8_t* plane = centroid_planes.data() +
-                                    (bp * n_y + j) * binary_bytes_ + phase3_start;
-                                remaining_dot_qo +=
-                                    b8_computer::Horizontal(
-                                        data_code + phase3_start, plane, phase3_bytes
-                                    ) << bp;
-                            }
-                            accumulated_dots[k] += remaining_dot_qo;
+                            const uint8_t* plane0 = centroid_planes.data() +
+                                j * binary_bytes_ + phase3_start;
+                            accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
+                                data_code + phase3_start, plane0,
+                                n_y * binary_bytes_, phase3_bytes, qb_
+                            );
                         }
 
                         // SIMD correction for final distance (full block)

@@ -288,6 +288,49 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
         }
         return count;
     };
+
+    static uint32_t HorizontalMultiPlane(
+        const data_t* SKM_RESTRICT data,
+        const data_t* planes_base,
+        size_t plane_stride,
+        size_t num_bytes,
+        int qb
+    ) {
+        const __m256i lookup = _mm256_setr_epi8(
+            0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4,
+            0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4
+        );
+        const __m256i nibble_mask = _mm256_set1_epi8(0x0F);
+        const __m256i zero = _mm256_setzero_si256();
+        __m256i acc = zero;
+        size_t i = 0;
+        for (; i + 32 <= num_bytes; i += 32) {
+            __m256i x = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data + i));
+            for (int bp = 0; bp < qb; ++bp) {
+                __m256i p = _mm256_loadu_si256(
+                    reinterpret_cast<const __m256i*>(planes_base + bp * plane_stride + i));
+                __m256i v = _mm256_and_si256(x, p);
+                __m256i lo = _mm256_shuffle_epi8(lookup, _mm256_and_si256(v, nibble_mask));
+                __m256i hi = _mm256_shuffle_epi8(
+                    lookup, _mm256_and_si256(_mm256_srli_epi16(v, 4), nibble_mask));
+                __m256i byte_cnt = _mm256_add_epi8(lo, hi);
+                __m256i popcnt64 = _mm256_sad_epu8(byte_cnt, zero);
+                acc = _mm256_add_epi64(acc, _mm256_slli_epi64(popcnt64, bp));
+            }
+        }
+        __m128i lo128 = _mm256_castsi256_si128(acc);
+        __m128i hi128 = _mm256_extracti128_si256(acc, 1);
+        __m128i sum128 = _mm_add_epi64(lo128, hi128);
+        __m128i hi64 = _mm_unpackhi_epi64(sum128, sum128);
+        uint32_t result = static_cast<uint32_t>(_mm_cvtsi128_si64(_mm_add_epi64(sum128, hi64)));
+        for (; i < num_bytes; ++i) {
+            for (int bp = 0; bp < qb; ++bp) {
+                result += static_cast<uint32_t>(
+                    __builtin_popcount(data[i] & (planes_base + bp * plane_stride)[i])) << bp;
+            }
+        }
+        return result;
+    }
 };
 
 template <Quantization q>
