@@ -418,7 +418,11 @@ class SuperKMeans {
         if constexpr (q != Quantization::f32) {
             if (quantizer->SupportsPruning() && !quantizer->NeedsPDXLayout()) {
                 vertical_d = d;
-                partial_d = std::max<uint32_t>(MIN_PARTIAL_D, ((d / 8) + 7) & ~7u);
+                if (quantizer->UsesFixedPartialD()) {
+                    partial_d = d / 8;  // Fixed 12.5% (mid is 25% in rabitq.h)
+                } else {
+                    partial_d = std::max<uint32_t>(MIN_PARTIAL_D, ((d / 8) + 7) & ~7u);
+                }
                 if (config.verbose) {
                     std::cout << "Custom pruning: Front dimensions (d') = " << partial_d
                               << std::endl;
@@ -1395,11 +1399,13 @@ class SuperKMeans {
         float avg_not_pruned_pct = -1.0f;
         uint32_t old_partial_d = partial_d;
         if constexpr (!GEMM_ONLY) {
-            bool partial_d_changed = false;
-            avg_not_pruned_pct =
-                TunePartialD(not_pruned_counts.data(), n_samples, n_clusters, partial_d_changed);
-            if (partial_d_changed) {
-                quantizer->CacheDataPartialNorms(encoded_data_p, n_samples, d, partial_d);
+            if (!quantizer->UsesFixedPartialD()) {
+                bool partial_d_changed = false;
+                avg_not_pruned_pct =
+                    TunePartialD(not_pruned_counts.data(), n_samples, n_clusters, partial_d_changed);
+                if (partial_d_changed) {
+                    quantizer->CacheDataPartialNorms(encoded_data_p, n_samples, d, partial_d);
+                }
             }
         }
 

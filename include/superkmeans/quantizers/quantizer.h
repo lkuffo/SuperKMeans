@@ -182,6 +182,12 @@ class IQuantizer {
     virtual bool NeedsPDXLayout() const { return SupportsPruning(); }
 
     /**
+     * @brief Whether partial_d should be locked to a fixed percentage of d.
+     * RaBitQ uses fixed 12.5% front / 25% mid for cache-aligned bitplane layout.
+     */
+    virtual bool UsesFixedPartialD() const { return false; }
+
+    /**
      * @brief Whether this quantizer uses sparse voting for centroid updates.
      * When true, the k-means loop calls SparseVotingUpdate instead of
      * UpdateCentroidsQuantized + AverageCentroids.

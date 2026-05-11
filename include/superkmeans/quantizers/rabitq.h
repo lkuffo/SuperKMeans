@@ -228,6 +228,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     bool IsFitted() const override { return fitted_; }
     bool SupportsPruning() const override { return true; }
     bool NeedsPDXLayout() const override { return false; }
+    bool UsesFixedPartialD() const override { return true; }
 
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t /*d*/, uint32_t partial_d
