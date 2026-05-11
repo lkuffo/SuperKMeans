@@ -628,6 +628,20 @@ class SIMDFastScanComputer {
         ScalarFastScanComputer::ScanBlock<WideAdd>(packed, lut, binary_bytes, out_dot, blk_count);
     }
 
+    /**
+     * @brief Multi-block ScanBlock: process NBlocks data blocks against one shared LUT.
+     * Amortizes LUT loads across multiple blocks of 32 X points.
+     */
+    template<int NBlocks>
+    static void ScanBlockMulti(
+        const uint8_t* const* packed,
+        const uint8_t* lut,
+        size_t binary_bytes,
+        uint16_t* const* out_dot
+    ) {
+        ScanBlockAVX512Multi<NBlocks>(packed, lut, binary_bytes, out_dot);
+    }
+
   private:
     /**
      * @brief AVX-512 FastScan for nibble-split kPerm0-packed data.
@@ -705,6 +719,88 @@ class SIMDFastScanComputer {
         );
 
         _mm512_storeu_si512(out_dot, ret);
+    }
+
+    /// Reduce 4 interleaved accumulators → 32 uint16 and store.
+    static SKM_ALWAYS_INLINE void ReduceAndStore(
+        __m512i a0, __m512i a1, __m512i a2, __m512i a3, uint16_t* out
+    ) {
+        a0 = _mm512_sub_epi16(a0, _mm512_slli_epi16(a1, 8));
+        a2 = _mm512_sub_epi16(a2, _mm512_slli_epi16(a3, 8));
+        __m512i r1 = _mm512_add_epi16(
+            _mm512_mask_blend_epi64(0b11110000, a0, a1),
+            _mm512_shuffle_i64x2(a0, a1, 0b01001110));
+        __m512i r2 = _mm512_add_epi16(
+            _mm512_mask_blend_epi64(0b11110000, a2, a3),
+            _mm512_shuffle_i64x2(a2, a3, 0b01001110));
+        _mm512_storeu_si512(out, _mm512_add_epi16(
+            _mm512_shuffle_i64x2(r1, r2, 0b10001000),
+            _mm512_shuffle_i64x2(r1, r2, 0b11011101)));
+    }
+
+    /**
+     * @brief Multi-block AVX-512 FastScan: load LUT once, apply to NBlocks data blocks.
+     * NBlocks is a compile-time constant (1-4) so the compiler fully unrolls the block loop,
+     * keeping all 4×NBlocks accumulators in registers.
+     */
+    template<int NBlocks>
+    static void ScanBlockAVX512Multi(
+        const uint8_t* const* packed,
+        const uint8_t* lut,
+        size_t binary_bytes,
+        uint16_t* const* out_dot
+    ) {
+        static_assert(NBlocks >= 1 && NBlocks <= 4);
+        const __m512i lo_mask = _mm512_set1_epi8(0x0F);
+
+        // 4 accumulators per block (interleaved trick)
+        __m512i accu[NBlocks][4];
+        for (int blk = 0; blk < NBlocks; ++blk)
+            for (int a = 0; a < 4; ++a)
+                accu[blk][a] = _mm512_setzero_si512();
+
+        // Main loop: 2 byte positions per iteration, LUT loaded once
+        size_t b = 0;
+        for (; b + 2 <= binary_bytes; b += 2) {
+            __m512i tab = _mm512_loadu_si512(lut + b * 32);
+
+            for (int blk = 0; blk < NBlocks; ++blk) {
+                __m512i c = _mm512_loadu_si512(packed[blk] + b * kBlockSize);
+                __m512i lo = _mm512_and_si512(c, lo_mask);
+                __m512i hi = _mm512_and_si512(_mm512_srli_epi16(c, 4), lo_mask);
+                __m512i res_lo = _mm512_shuffle_epi8(tab, lo);
+                __m512i res_hi = _mm512_shuffle_epi8(tab, hi);
+                accu[blk][0] = _mm512_add_epi16(accu[blk][0], res_lo);
+                accu[blk][1] = _mm512_add_epi16(accu[blk][1], _mm512_srli_epi16(res_lo, 8));
+                accu[blk][2] = _mm512_add_epi16(accu[blk][2], res_hi);
+                accu[blk][3] = _mm512_add_epi16(accu[blk][3], _mm512_srli_epi16(res_hi, 8));
+            }
+        }
+
+        // Odd trailing byte
+        if (b < binary_bytes) {
+            __m256i tab256 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(lut + b * 32));
+            __m256i lo_mask_256 = _mm256_set1_epi8(0x0F);
+
+            for (int blk = 0; blk < NBlocks; ++blk) {
+                __m256i c256 = _mm256_loadu_si256(
+                    reinterpret_cast<const __m256i*>(packed[blk] + b * kBlockSize));
+                __m256i lo = _mm256_and_si256(c256, lo_mask_256);
+                __m256i hi = _mm256_and_si256(_mm256_srli_epi16(c256, 4), lo_mask_256);
+                __m256i res_lo = _mm256_shuffle_epi8(tab256, lo);
+                __m256i res_hi = _mm256_shuffle_epi8(tab256, hi);
+                __m512i zero = _mm512_setzero_si512();
+                accu[blk][0] = _mm512_add_epi16(accu[blk][0], _mm512_inserti64x4(zero, res_lo, 0));
+                accu[blk][1] = _mm512_add_epi16(accu[blk][1], _mm512_inserti64x4(zero, _mm256_srli_epi16(res_lo, 8), 0));
+                accu[blk][2] = _mm512_add_epi16(accu[blk][2], _mm512_inserti64x4(zero, res_hi, 0));
+                accu[blk][3] = _mm512_add_epi16(accu[blk][3], _mm512_inserti64x4(zero, _mm256_srli_epi16(res_hi, 8), 0));
+            }
+        }
+
+        // Reduce and store each block
+        for (int blk = 0; blk < NBlocks; ++blk) {
+            ReduceAndStore(accu[blk][0], accu[blk][1], accu[blk][2], accu[blk][3], out_dot[blk]);
+        }
     }
 };
 

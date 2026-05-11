@@ -101,6 +101,16 @@ class FastScanComputer {
     constexpr static auto RabitQCorrection = computer::RabitQCorrection<false>;
     constexpr static auto RabitQCorrectionU32 = computer::RabitQCorrection<true>;
     constexpr static auto RabitQCompactSurvivors = computer::RabitQCompactSurvivors;
+
+    template<int NBlocks>
+    static void ScanBlockMulti(
+        const uint8_t* const* packed,
+        const uint8_t* lut,
+        size_t binary_bytes,
+        uint16_t* const* out_dot
+    ) {
+        computer::template ScanBlockMulti<NBlocks>(packed, lut, binary_bytes, out_dot);
+    }
 };
 
 } // namespace skmeans

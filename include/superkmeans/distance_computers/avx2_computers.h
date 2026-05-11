@@ -652,6 +652,19 @@ class SIMDFastScanComputer {
         ScalarFastScanComputer::ScanBlock<WideAdd>(packed, lut, binary_bytes, out_dot, blk_count);
     }
 
+    /// Multi-block ScanBlock: delegates to scalar (AVX2 could be optimized later).
+    template<int NBlocks>
+    static void ScanBlockMulti(
+        const uint8_t* const* packed,
+        const uint8_t* lut,
+        size_t binary_bytes,
+        uint16_t* const* out_dot
+    ) {
+        for (int b = 0; b < NBlocks; ++b) {
+            ScanBlock(packed[b], lut, binary_bytes, out_dot[b], kBlockSize);
+        }
+    }
+
   private:
     /**
      * @brief AVX2 FastScan for nibble-split kPerm0-packed data.
