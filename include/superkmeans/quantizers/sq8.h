@@ -169,7 +169,6 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         assert(fitted);
         (void)x_float;
         (void)y_float;
-        (void)tmp_buf;
         const float inv_scale_sq =
             params.inv_quantization_scale * params.inv_quantization_scale;
 
@@ -221,24 +220,32 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                     }
                 }
 
-                // Convert dots to L2² via norms and find nearest neighbor
-                // L2²(x,y) = ||x||² + ||y||² - 2·dot(x,y)
-                // norms already contain inv_scale² × Σq², so:
-                // dist = norms_x[i] + norms_y[j] - 2·inv_scale²·dot
+                // Convert dots to L2² distances (vectorizable), then find min
+                // L2²(x,y) = ||x||² + ||y||² - 2·inv_scale²·dot(x,y)
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const size_t idx = i + r;
                     const uint32_t* dots_row = pruning_dots_buf.data() + r * batch_n_y;
+                    float* dists_row = tmp_buf + r * batch_n_y;
                     const float nx = norms_x[idx];
 
+                    SKM_VECTORIZE_LOOP
                     for (size_t c = 0; c < batch_n_y; ++c) {
-                        const float dist = nx + norms_y[j + c]
+                        dists_row[c] = nx + norms_y[j + c]
                             - 2.0f * inv_scale_sq * static_cast<float>(dots_row[c]);
-                        if (dist < out_distances[idx]) {
-                            out_distances[idx] = dist;
-                            out_knn[idx] = static_cast<uint32_t>(j + c);
+                    }
+
+                    // Find min in this row
+                    float best = out_distances[idx];
+                    uint32_t best_idx = out_knn[idx];
+                    for (size_t c = 0; c < batch_n_y; ++c) {
+                        if (dists_row[c] < best) {
+                            best = dists_row[c];
+                            best_idx = static_cast<uint32_t>(j + c);
                         }
                     }
+                    out_distances[idx] = best;
+                    out_knn[idx] = best_idx;
                 }
             }
         }
