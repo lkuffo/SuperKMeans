@@ -15,9 +15,7 @@
 #include <utility>
 #include <vector>
 
-#include <numkong/numkong.h>
 #include "ruy/ruy.h"
-#include "ruy/strategy_controls.h"
 
 namespace skmeans {
 
@@ -28,7 +26,7 @@ struct ScalarQuantizationParams {
 };
 
 /**
- * @brief 8-bit scalar quantizer with NumKong GEMM backend.
+ * @brief 8-bit scalar quantizer with ruy GEMM backend.
  *
  * Global min/max quantization: q[i] = round((val[i] - base) * scale), clamped to [0, MAX_VALUE].
  * For L2 distance the base cancels: ||x-y||² = inv_scale² * Σ(x_q - y_q)².
@@ -44,9 +42,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         const size_t total_elements = n * d;
         params = ComputeQuantizationParams(embeddings, total_elements);
         // Pre-allocate scratch buffers (avoids expensive per-call allocation)
-        nn_dists_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         pruning_dots_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
-        packed_buf.resize(nk_dots_packed_size_u8(Y_BATCH_SIZE, d));
         fitted = true;
     }
 
@@ -149,11 +145,10 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     }
 
     /**
-     * @brief Find top-1 nearest neighbor using NumKong u8 Euclidean kernel.
+     * @brief Find top-1 nearest neighbor using ruy u8 dot product GEMM.
      *
-     * Packs centroids (y) with nk_dots_pack_u8 (norms stored in footer),
-     * then nk_euclideans_packed_u8 computes L2 distances directly via the
-     * inner-product expansion: sqrt(Σx_q² + Σy_q² - 2·dot(x_q, y_q)).
+     * Computes dot products via ruy, then converts to L2² using pre-computed
+     * norms: L2²(x,y) = ||x||² + ||y||² - 2·dot(x,y).
      */
     void FindNearestNeighbor(
         const quantized_t* x,
@@ -170,12 +165,10 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         float* tmp_buf
     ) const override {
         SKM_PROFILE_SCOPE("search");
-        SKM_PROFILE_SCOPE("search/1st_blas");
         assert(fitted);
         (void)x_float;
         (void)y_float;
-        (void)norms_x; // nk_euclideans_packed_u8 computes norms internally
-        (void)norms_y;
+        (void)tmp_buf;
         const float inv_scale_sq =
             params.inv_quantization_scale * params.inv_quantization_scale;
 
@@ -188,56 +181,66 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
 
-                const size_t packed_size = nk_dots_packed_size_u8(batch_n_y, d);
-                if (packed_size > packed_buf.size()) packed_buf.resize(packed_size);
-                nk_dots_pack_u8(y + j * d, batch_n_y, d, d, packed_buf.data());
-
-                const size_t batch_r_stride = batch_n_y * sizeof(float);
-
-                // Compute u8 Euclidean distances via NumKong
-#pragma omp parallel num_threads(g_n_threads)
+                // Compute dot products via ruy (OMP-parallelized)
                 {
-                    nk_configure_thread(nk_capabilities());
-                    int tid = omp_get_thread_num();
-                    int nt = omp_get_num_threads();
-                    size_t rows_per_t = (batch_n_x + nt - 1) / nt;
-                    size_t start = tid * rows_per_t;
-                    size_t count = std::min(rows_per_t, batch_n_x - start);
-                    if (start < batch_n_x && count > 0) {
-                        nk_euclideans_packed_u8(
-                            x + (i + start) * d,
-                            packed_buf.data(),
-                            nn_dists_buf.data() + start * batch_n_y,
-                            count,
-                            batch_n_y,
-                            d,
-                            d,
-                            batch_r_stride
-                        );
+                    SKM_PROFILE_SCOPE("search/blas");
+#pragma omp parallel for num_threads(g_n_threads) schedule(static)
+                    for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
+                        const size_t row_start = t * batch_n_x / g_n_threads;
+                        const size_t row_end = (t + 1) * batch_n_x / g_n_threads;
+                        const size_t local_rows = row_end - row_start;
+                        if (local_rows == 0) continue;
+
+                        thread_local ruy::Context ctx;
+                        ctx.set_max_num_threads(1);
+
+                        ruy::Matrix<std::uint8_t> lhs;
+                        lhs.mutable_layout()->set_rows(local_rows);
+                        lhs.mutable_layout()->set_cols(d);
+                        lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                        lhs.mutable_layout()->set_stride(d);
+                        lhs.set_data(x + (i + row_start) * d);
+
+                        ruy::Matrix<std::uint8_t> rhs;
+                        rhs.mutable_layout()->set_rows(d);
+                        rhs.mutable_layout()->set_cols(batch_n_y);
+                        rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
+                        rhs.mutable_layout()->set_stride(d);
+                        rhs.set_data(y + j * d);
+
+                        ruy::Matrix<std::int32_t> dst;
+                        dst.mutable_layout()->set_rows(local_rows);
+                        dst.mutable_layout()->set_cols(batch_n_y);
+                        dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                        dst.mutable_layout()->set_stride(batch_n_y);
+                        dst.set_data(reinterpret_cast<std::int32_t*>(
+                            pruning_dots_buf.data() + row_start * batch_n_y));
+
+                        ruy::MulParams<std::int32_t, std::int32_t> mul_params;
+                        ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
                     }
                 }
 
+                // Convert dots to L2² via norms and find nearest neighbor
+                // L2²(x,y) = ||x||² + ||y||² - 2·dot(x,y)
+                // norms already contain inv_scale² × Σq², so:
+                // dist = norms_x[i] + norms_y[j] - 2·inv_scale²·dot
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const size_t idx = i + r;
-                    const float* dists_row = nn_dists_buf.data() + r * batch_n_y;
+                    const uint32_t* dots_row = pruning_dots_buf.data() + r * batch_n_y;
+                    const float nx = norms_x[idx];
 
                     for (size_t c = 0; c < batch_n_y; ++c) {
-                        if (dists_row[c] < out_distances[idx]) {
-                            out_distances[idx] = dists_row[c];
+                        const float dist = nx + norms_y[j + c]
+                            - 2.0f * inv_scale_sq * static_cast<float>(dots_row[c]);
+                        if (dist < out_distances[idx]) {
+                            out_distances[idx] = dist;
                             out_knn[idx] = static_cast<uint32_t>(j + c);
                         }
                     }
                 }
             }
-        }
-
-        // Convert best distances from quantized L2 to true L2²:
-        // nk_euclideans_packed_u8 outputs sqrt(Σ(x_q-y_q)²);
-        // true L2² = inv_scale² × Σ(x_q-y_q)²
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t i = 0; i < n_x; ++i) {
-            out_distances[i] = inv_scale_sq * out_distances[i] * out_distances[i];
         }
     }
 
@@ -246,7 +249,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     /**
      * @brief Quantized coarse top-k search followed by exact f32 reranking.
      *
-     * 1. Find top rerank_k candidates per query in quantized space (NumKong u8)
+     * 1. Find top rerank_k candidates per query in quantized space (u8 GEMM)
      * 2. Compute exact f32 L2² to those candidates using original float data
      * 3. Write the best to out_knn / out_distances
      */
@@ -313,7 +316,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     /**
      * @brief Find top-1 nearest neighbor with PDX pruning for u8.
      *
-     * Uses partial u8 dot products via NumKong on the first partial_d dimensions,
+     * Uses partial u8 dot products via ruy on the first partial_d dimensions,
      * converts to uint32_t L2² via norm expansion, then PDXearch prunes the rest.
      * Final distances are float (converted inside PDXearch::SetBestCandidate).
      * Partial norms must be cached via CacheDataPartialNorms / CacheCentroidPartialNorms.
@@ -484,10 +487,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     bool fitted = false;
     std::vector<uint32_t> cached_data_partial_norms;
     std::vector<uint32_t> cached_centroid_partial_norms;
-    mutable std::vector<float> nn_dists_buf;
     mutable std::vector<uint32_t> pruning_dots_buf;
-    mutable std::vector<char> packed_buf;
-    mutable ruy::Context ruy_context;
 };
 
 } // namespace skmeans
