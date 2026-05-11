@@ -367,6 +367,14 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                     ruy_context.set_num_threads_strategy(
                         ruy::NumThreadsStrategy::kForceMaxNumThreads);
 
+                    if (i == 0 && j == 0) {
+                        fprintf(stderr, "[ruy diag] max_num_threads=%d, strategy=%d, "
+                            "M=%zu, N=%zu, K=%zu\n",
+                            ruy_context.max_num_threads(),
+                            static_cast<int>(ruy_context.num_threads_strategy()),
+                            batch_n_x, batch_n_y, partial_d);
+                    }
+
                     ruy::Matrix<std::uint8_t> lhs;
                     lhs.mutable_layout()->set_rows(batch_n_x);
                     lhs.mutable_layout()->set_cols(partial_d);
