@@ -1,7 +1,5 @@
 #pragma once
 
-// #ifdef HAS_FAISS
-
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/quantizers/quantizer.h"
@@ -41,50 +39,50 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     using quantized_t = IQuantizer::quantized_t;
 
     void Fit(const float* data, size_t n, size_t d) override {
-        SKM_PROFILE_SCOPE("RaBitQ::Fit");
+        SKM_PROFILE_SCOPE("RQ::Fit");
         assert(d % 8 == 0 && "RaBitQ-GEMM requires dimensionality divisible by 8");
         d_ = d;
         binary_bytes_ = (d + 7) / 8;
         centroid_.resize(d, 0.0f);
 
         // Compute dataset mean as the centering centroid for RaBitQ
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t j = 0; j < d; ++j) {
-            double sum = 0;
+        std::vector<float> sums(d, 0.0);
+        #pragma omp parallel num_threads(g_n_threads) 
+        {
+            std::vector<float> local(d, 0.0);
+            #pragma omp for schedule(static)
             for (size_t i = 0; i < n; ++i) {
-                sum += data[i * d + j];
+                for (size_t j = 0; j < d; ++j) {
+                    local[j] += data[i * d + j];
+                }
             }
-            centroid_[j] = static_cast<float>(sum / static_cast<double>(n));
+            #pragma omp critical
+            for (size_t j = 0; j < d; ++j) sums[j] += local[j];
+        }
+        for (size_t j = 0; j < d; ++j) {
+            centroid_[j] = static_cast<float>(sums[j] / static_cast<float>(n));
         }
 
         faiss_quantizer_ = std::make_unique<faiss::RaBitQuantizer>(d, faiss::METRIC_L2);
         faiss_quantizer_->centroid = centroid_.data();
         faiss_code_size_ = faiss_quantizer_->code_size;
-        assert(faiss_code_size_ == CodeSize(d));
         fitted_ = true;
     }
 
     void Encode(const float* in, quantized_t* out, size_t n, size_t d) const override {
-        SKM_PROFILE_SCOPE("RaBitQ::Encode");
-        assert(fitted_);
-        assert(d == d_);
+        SKM_PROFILE_SCOPE("RQ::Encode");
         faiss_quantizer_->compute_codes(in, reinterpret_cast<uint8_t*>(out), n);
     }
 
     void Decode(const quantized_t* in, float* out, size_t n, size_t d) const override {
-        SKM_PROFILE_SCOPE("RaBitQ::Decode");
-        assert(fitted_);
-        assert(d == d_);
+        SKM_PROFILE_SCOPE("RQ::Decode");
         faiss_quantizer_->decode(reinterpret_cast<const uint8_t*>(in), out, n);
     }
 
     void ComputeNorms(
         const quantized_t* data, size_t n, size_t d, float* out_norms
     ) const override {
-        SKM_PROFILE_SCOPE("RaBitQ::ComputeNorms");
-
-        assert(fitted_);
-
+        SKM_PROFILE_SCOPE("RQ::ComputeNorms");
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const uint8_t* code =
@@ -109,8 +107,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         float* out_distances,
         float* tmp_buf
     ) const override {
-        SKM_PROFILE_SCOPE("RaBitQ::Search::FastScanDistance");
-        assert(fitted_);
+        SKM_PROFILE_SCOPE("RQ::Search::FastScanDistance");
         (void)y;
         (void)x_float;
         (void)norms_x;
@@ -143,7 +140,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         std::fill_n(out_knn, n_x, 0u);
 
         {
-            SKM_PROFILE_SCOPE("RaBitQ::Search::FastScanDistance");
+            SKM_PROFILE_SCOPE("RQ::Search::FastScanDistance");
             constexpr size_t kSuperBlock = 4;
             constexpr size_t kBS = FastScanComputer::kBlockSize;
             const size_t n_groups = (n_blocks + kSuperBlock - 1) / kSuperBlock;
@@ -261,7 +258,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t /*d*/, uint32_t partial_d
     ) override {
-        SKM_PROFILE_SCOPE("RaBitQ::CacheDataPartialNorms");
+        SKM_PROFILE_SCOPE("RQ::CacheDataPartialNorms");
         const uint8_t* codes = reinterpret_cast<const uint8_t*>(data);
         const size_t front_bytes = partial_d / 8;
         const size_t mid_bytes = d_ / 32;  // d/4, byte-aligned
@@ -315,7 +312,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         uint32_t partial_d,
         size_t* out_not_pruned_counts
     ) const override {
-        SKM_PROFILE_SCOPE("RaBitQ::FindNearestNeighborWithPruning");
+        SKM_PROFILE_SCOPE("RQ::FindNearestNeighborWithPruning");
         assert(fitted_);
         (void)y;
 
@@ -376,7 +373,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         using b8_computer = DistanceComputer<DistanceFunction::l2, Quantization::b8>;
 
         {
-            SKM_PROFILE_SCOPE("RaBitQ::PrunedScan");
+            SKM_PROFILE_SCOPE("RQ::PrunedScan");
             constexpr size_t kSuperBlock = 4;
             constexpr size_t kBS = FastScanComputer::kBlockSize;
             const size_t n_groups = (n_blocks + kSuperBlock - 1) / kSuperBlock;
@@ -397,7 +394,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
                 // ── Pass 1a: Multi-block FastScan all centroids ──
                 {
-                    SKM_PROFILE_SCOPE("RaBitQ::PrunedScan/fastscan");
+                    SKM_PROFILE_SCOPE("RQ::PrunedScan/fastscan");
                     if (n_blks == kSuperBlock) {
                         for (size_t j = 0; j < n_y; ++j) {
                             uint16_t* out_ptrs[kSuperBlock];
@@ -423,7 +420,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     }
                 }
 
-                // ── Per-block processing: Pass 1b + Pass 2 + writeback ──
+                // ── Per-block processing: fused correction + checkpoint pipeline ──
                 for (size_t bi = 0; bi < n_blks; ++bi) {
                     const size_t blk = blk_base + bi;
                     const size_t blk_start = blk * kBS;
@@ -432,7 +429,6 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     float best_dist[kBS];
                     uint32_t best_idx[kBS];
 
-                    // Phase 1: threshold from previous centroid via per-pair LUT lookup
                     for (size_t k = 0; k < blk_count; ++k) {
                         const size_t i = blk_start + k;
                         const uint32_t prev_j = out_knn[i];
@@ -447,145 +443,123 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         out_not_pruned_counts[i] = 0;
                     }
 
-                    // ── Pass 1b: SIMD correction + checkpoint 1 compaction ──
+                    // Precompute per-block buffers (reused across all centroids)
                     float partial_l2_buf[kBS];
-                    float sum_q_front_f32[kBS];
                     float threshold_buf[kBS];
+                    float sum_q_front_f32[kBS];
+                    float sum_q_mid_f32[kBS];
+                    float sum_q_f32[kBS];
+                    uint32_t accumulated_dots[kBS];
+                    float correction_buf[kBS];
+                    uint32_t local_survivors[kBS];
+
                     for (size_t k = 0; k < blk_count; ++k) {
                         sum_q_front_f32[k] = static_cast<float>(sum_q_front[blk_start + k]);
+                        sum_q_mid_f32[k] = static_cast<float>(sum_q_mid[blk_start + k]);
+                        sum_q_f32[k] = static_cast<float>(sum_q[blk_start + k]);
                         threshold_buf[k] = best_dist[k] * adsampling_ratio_front;
                     }
 
-                    const size_t max_survivors = blk_count * n_y;
-                    std::unique_ptr<uint32_t[]> survivor_ks(new uint32_t[max_survivors]);
-                    std::unique_ptr<uint32_t[]> survivor_js(new uint32_t[max_survivors]);
-                    size_t total_survivors = 0;
+                    // ── Fused loop: for each centroid, checkpoint1 → checkpoint2 → phase3 ──
+                    for (size_t j = 0; j < n_y; ++j) {
+                        const uint16_t* partial_dot_qo =
+                            all_partial_dots.get() + (bi * n_y + j) * kBS;
 
-                    {
-                        SKM_PROFILE_SCOPE("RaBitQ::PrunedScan/checkpoint1");
-                        for (size_t j = 0; j < n_y; ++j) {
-                            const uint16_t* partial_dot_qo =
-                                all_partial_dots.get() + (bi * n_y + j) * kBS;
+                        // Checkpoint 1: front correction + compact
+                        FastScanComputer::RabitQCorrection(
+                            partial_dot_qo,
+                            c1[j], c2[j], c34_front[j], qr_to_c_l2sqr_front[j],
+                            sum_q_front_f32,
+                            or_c_l2sqr_front + blk_start,
+                            dp_mult + blk_start,
+                            partial_l2_buf,
+                            blk_count
+                        );
 
-                            FastScanComputer::RabitQCorrection(
-                                partial_dot_qo,
-                                c1[j], c2[j], c34_front[j], qr_to_c_l2sqr_front[j],
-                                sum_q_front_f32,
-                                or_c_l2sqr_front + blk_start,
-                                dp_mult + blk_start,
-                                partial_l2_buf,
-                                blk_count
-                            );
+                        size_t n_survivors = 0;
+                        FastScanComputer::RabitQCompactSurvivors(
+                            blk_count, n_survivors,
+                            local_survivors, partial_l2_buf, threshold_buf
+                        );
 
-                            size_t n_new = 0;
-                            FastScanComputer::RabitQCompactSurvivors(
-                                blk_count, n_new,
-                                survivor_ks.get() + total_survivors,
-                                partial_l2_buf, threshold_buf
-                            );
+                        if (n_survivors == 0) continue;
 
-                            std::fill_n(survivor_js.get() + total_survivors, n_new, static_cast<uint32_t>(j));
-
-                            for (size_t s = 0; s < n_new; ++s) {
-                                out_not_pruned_counts[blk_start + survivor_ks[total_survivors + s]]++;
-                            }
-                            total_survivors += n_new;
+                        for (size_t si = 0; si < n_survivors; ++si) {
+                            out_not_pruned_counts[blk_start + local_survivors[si]]++;
                         }
-                    }
 
-                    // ── Pass 2: checkpoint 2 + Phase 3 (centroid-grouped) ──
-                    {
-                        SKM_PROFILE_SCOPE("RaBitQ::PrunedScan/remaining");
-                        uint32_t accumulated_dots[kBS];
-                        float correction_buf[kBS];
-
-                        float sum_q_mid_f32[kBS];
-                        float sum_q_f32[kBS];
+                        // Initialize accumulated dots from front partial dots
                         for (size_t k = 0; k < blk_count; ++k) {
-                            sum_q_mid_f32[k] = static_cast<float>(sum_q_mid[blk_start + k]);
-                            sum_q_f32[k] = static_cast<float>(sum_q[blk_start + k]);
+                            accumulated_dots[k] = static_cast<uint32_t>(partial_dot_qo[k]);
                         }
 
-                        size_t s = 0;
-                        while (s < total_survivors) {
-                            const uint32_t j = survivor_js[s];
-                            const size_t group_start = s;
-                            while (s < total_survivors && survivor_js[s] == j) ++s;
+                        size_t n_phase3 = n_survivors;
 
-                            const uint16_t* partial_dot_row =
-                                all_partial_dots.get() + (bi * n_y + j) * kBS;
-                            for (size_t k = 0; k < blk_count; ++k) {
-                                accumulated_dots[k] = static_cast<uint32_t>(partial_dot_row[k]);
-                            }
-
-                            size_t phase3_start_idx = group_start;
-                            size_t phase3_end_idx = s;
-
-                            if (use_mid_checkpoint) {
-                                for (size_t si = group_start; si < s; ++si) {
-                                    const size_t k = survivor_ks[si];
-                                    const size_t i = blk_start + k;
-                                    const uint8_t* data_code = x_codes + i * faiss_code_size_;
-                                    accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
-                                        data_code + front_bytes,
-                                        centroid_planes.data() + j * centroid_stride,
-                                        gap_bytes, qb_
-                                    );
-                                }
-
-                                FastScanComputer::RabitQCorrectionU32(
-                                    accumulated_dots,
-                                    c1[j], c2[j], c34_mid[j], qr_to_c_l2sqr_mid[j],
-                                    sum_q_mid_f32,
-                                    or_c_l2sqr_mid + blk_start,
-                                    dp_mult + blk_start,
-                                    correction_buf,
-                                    blk_count
-                                );
-
-                                size_t write = group_start;
-                                for (size_t si = group_start; si < s; ++si) {
-                                    const uint32_t k = survivor_ks[si];
-                                    if (correction_buf[k] <= best_dist[k] * adsampling_ratio_mid) {
-                                        survivor_ks[write] = survivor_ks[si];
-                                        write++;
-                                    }
-                                }
-                                phase3_start_idx = group_start;
-                                phase3_end_idx = write;
-                            }
-
-                            for (size_t si = phase3_start_idx; si < phase3_end_idx; ++si) {
-                                const size_t k = survivor_ks[si];
+                        // Checkpoint 2: extend to mid_d dims
+                        if (use_mid_checkpoint) {
+                            for (size_t si = 0; si < n_survivors; ++si) {
+                                const size_t k = local_survivors[si];
                                 const size_t i = blk_start + k;
-                                const uint8_t* data_code = x_codes + i * faiss_code_size_;
                                 accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
-                                    data_code + phase3_start,
-                                    centroid_planes.data() + j * centroid_stride
-                                        + gap_chunks * qb_ * 16,
-                                    rest_bytes, qb_
+                                    x_codes + i * faiss_code_size_ + front_bytes,
+                                    centroid_planes.data() + j * centroid_stride,
+                                    gap_bytes, qb_
                                 );
                             }
 
                             FastScanComputer::RabitQCorrectionU32(
                                 accumulated_dots,
-                                c1[j], c2[j], c34[j], qr_to_c_l2sqr[j],
-                                sum_q_f32,
-                                or_c_l2sqr + blk_start,
+                                c1[j], c2[j], c34_mid[j], qr_to_c_l2sqr_mid[j],
+                                sum_q_mid_f32,
+                                or_c_l2sqr_mid + blk_start,
                                 dp_mult + blk_start,
                                 correction_buf,
                                 blk_count
                             );
 
-                            for (size_t si = phase3_start_idx; si < phase3_end_idx; ++si) {
-                                const uint32_t k = survivor_ks[si];
-                                if (correction_buf[k] < best_dist[k]) {
-                                    best_dist[k] = correction_buf[k];
-                                    best_idx[k] = j;
+                            size_t write = 0;
+                            for (size_t si = 0; si < n_survivors; ++si) {
+                                const uint32_t k = local_survivors[si];
+                                if (correction_buf[k] <= best_dist[k] * adsampling_ratio_mid) {
+                                    local_survivors[write++] = k;
                                 }
                             }
+                            n_phase3 = write;
                         }
-                    }
+
+                        // Phase 3: remaining popcount for survivors
+                        for (size_t si = 0; si < n_phase3; ++si) {
+                            const size_t k = local_survivors[si];
+                            const size_t i = blk_start + k;
+                            accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
+                                x_codes + i * faiss_code_size_ + phase3_start,
+                                centroid_planes.data() + j * centroid_stride
+                                    + gap_chunks * qb_ * 16,
+                                rest_bytes, qb_
+                            );
+                        }
+
+                        // Final correction
+                        FastScanComputer::RabitQCorrectionU32(
+                            accumulated_dots,
+                            c1[j], c2[j], c34[j], qr_to_c_l2sqr[j],
+                            sum_q_f32,
+                            or_c_l2sqr + blk_start,
+                            dp_mult + blk_start,
+                            correction_buf,
+                            blk_count
+                        );
+
+                        // Update best + tighten thresholds for subsequent centroids
+                        for (size_t si = 0; si < n_phase3; ++si) {
+                            const uint32_t k = local_survivors[si];
+                            if (correction_buf[k] < best_dist[k]) {
+                                best_dist[k] = correction_buf[k];
+                                best_idx[k] = static_cast<uint32_t>(j);
+                                threshold_buf[k] = best_dist[k] * adsampling_ratio_front;
+                            }
+                        }
+                    } // centroid loop
 
                     for (size_t k = 0; k < blk_count; ++k) {
                         out_distances[blk_start + k] = best_dist[k];
@@ -602,7 +576,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         const uint8_t* codes, size_t n,
         uint32_t* sum_q, float* or_c_l2sqr, float* dp_mult
     ) const {
-        SKM_PROFILE_SCOPE("RaBitQ::PrecomputeCodeFactors");
+        SKM_PROFILE_SCOPE("RQ::PrecomputeCodeFactors");
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const uint8_t* code = codes + i * faiss_code_size_;
@@ -640,7 +614,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         uint8_t* all_luts,
         float* c1, float* c2, float* c34, float* qr_to_c_l2sqr
     ) const {
-        SKM_PROFILE_SCOPE("RaBitQ::QuantizeCentroidsAndBuildLUTs");
+        SKM_PROFILE_SCOPE("RQ::QuantizeCentroidsAndBuildLUTs");
         const float inv_sqrt_d = 1.0f / std::sqrt(static_cast<float>(d));
         const float max_val = static_cast<float>((1 << qb_) - 1);
         const size_t n_sub = 2 * binary_bytes_;
@@ -753,7 +727,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
     /// Cache PrecomputeCodeFactors results (depend only on x, not centroids).
     void EnsureCodeFactorsCache(const uint8_t* x_codes, size_t n_x) const {
-        SKM_PROFILE_SCOPE("RaBitQ::EnsureCodeFactorsCache");
+        SKM_PROFILE_SCOPE("RQ::EnsureCodeFactorsCache");
         if (cached_x_ptr_ == x_codes && cached_n_x_ == n_x) return;
 
         cached_sum_q_.resize(n_x);
@@ -788,7 +762,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
     /// Transpose all data blocks once and cache for reuse across iterations.
     void EnsureTransposedBlocksCache(const uint8_t* x_codes, size_t n_x) const {
-        SKM_PROFILE_SCOPE("RaBitQ::EnsureTransposedBlocksCache");
+        SKM_PROFILE_SCOPE("RQ::EnsureTransposedBlocksCache");
         // Piggyback on the same pointer check as code factors
         if (cached_n_blocks_ > 0 && cached_x_ptr_ == x_codes && cached_n_x_ == n_x) return;
 
@@ -809,7 +783,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         const float* x_float, size_t n_x, size_t d, uint32_t partial_d
     ) const {
         if (!pruning_partial_norms_dirty_ && cached_pruning_partial_d_ == partial_d) return;
-        SKM_PROFILE_SCOPE("RaBitQ::EnsurePartialNormsCache");
+        SKM_PROFILE_SCOPE("RQ::EnsurePartialNormsCache");
 
         const size_t front_d = (partial_d / 8) * 8;
         const size_t mid_d = (d / 32) * 8;  // d/4, byte-aligned
@@ -858,7 +832,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         float* qr_to_c_l2sqr_mid, float* c34_mid,
         uint8_t* centroid_planes
     ) const {
-        SKM_PROFILE_SCOPE("RaBitQ::QuantizeCentroidsAndBuildLUTsWithBounds");
+        SKM_PROFILE_SCOPE("RQ::QuantizeCentroidsAndBuildLUTsWithBounds");
         const float inv_sqrt_d = 1.0f / std::sqrt(static_cast<float>(d));
         const float max_val = static_cast<float>((1 << qb_) - 1);
         const size_t n_sub = 2 * binary_bytes_;
@@ -1040,4 +1014,3 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
 } // namespace skmeans
 
-// #endif // HAS_FAISS
