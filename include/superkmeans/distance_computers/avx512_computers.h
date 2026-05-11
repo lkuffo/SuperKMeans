@@ -722,7 +722,7 @@ class SIMDFastScanComputer {
     }
 
     /// Reduce 4 interleaved accumulators → 32 uint16 and store.
-    static SKM_ALWAYS_INLINE void ReduceAndStore(
+    SKM_ALWAYS_INLINE static void ReduceAndStore(
         __m512i a0, __m512i a1, __m512i a2, __m512i a3, uint16_t* out
     ) {
         a0 = _mm512_sub_epi16(a0, _mm512_slli_epi16(a1, 8));
