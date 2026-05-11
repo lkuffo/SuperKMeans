@@ -363,42 +363,41 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                 {
                     SKM_PROFILE_SCOPE("search/blas");
 
-                    ruy_context.set_max_num_threads(g_n_threads);
-                    ruy_context.set_num_threads_strategy(
-                        ruy::NumThreadsStrategy::kForceMaxNumThreads);
+#pragma omp parallel for num_threads(g_n_threads) schedule(static)
+                    for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
+                        const size_t row_start = t * batch_n_x / g_n_threads;
+                        const size_t row_end = (t + 1) * batch_n_x / g_n_threads;
+                        const size_t local_rows = row_end - row_start;
+                        if (local_rows == 0) continue;
 
-                    if (i == 0 && j == 0) {
-                        fprintf(stderr, "[ruy diag] max_num_threads=%d, strategy=%d, "
-                            "M=%zu, N=%zu, K=%zu\n",
-                            ruy_context.max_num_threads(),
-                            static_cast<int>(ruy_context.num_threads_strategy()),
-                            batch_n_x, batch_n_y, partial_d);
+                        thread_local ruy::Context ctx;
+                        ctx.set_max_num_threads(1);
+
+                        ruy::Matrix<std::uint8_t> lhs;
+                        lhs.mutable_layout()->set_rows(local_rows);
+                        lhs.mutable_layout()->set_cols(partial_d);
+                        lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                        lhs.mutable_layout()->set_stride(d);
+                        lhs.set_data(x + (i + row_start) * d);
+
+                        ruy::Matrix<std::uint8_t> rhs;
+                        rhs.mutable_layout()->set_rows(partial_d);
+                        rhs.mutable_layout()->set_cols(batch_n_y);
+                        rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
+                        rhs.mutable_layout()->set_stride(d);
+                        rhs.set_data(y + j * d);
+
+                        ruy::Matrix<std::int32_t> dst;
+                        dst.mutable_layout()->set_rows(local_rows);
+                        dst.mutable_layout()->set_cols(batch_n_y);
+                        dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                        dst.mutable_layout()->set_stride(batch_n_y);
+                        dst.set_data(reinterpret_cast<std::int32_t*>(
+                            pruning_dots_buf.data() + row_start * batch_n_y));
+
+                        ruy::MulParams<std::int32_t, std::int32_t> mul_params;
+                        ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
                     }
-
-                    ruy::Matrix<std::uint8_t> lhs;
-                    lhs.mutable_layout()->set_rows(batch_n_x);
-                    lhs.mutable_layout()->set_cols(partial_d);
-                    lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
-                    lhs.mutable_layout()->set_stride(d);
-                    lhs.set_data(x + i * d);
-
-                    ruy::Matrix<std::uint8_t> rhs;
-                    rhs.mutable_layout()->set_rows(partial_d);
-                    rhs.mutable_layout()->set_cols(batch_n_y);
-                    rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
-                    rhs.mutable_layout()->set_stride(d);
-                    rhs.set_data(y + j * d);
-
-                    ruy::Matrix<std::int32_t> dst;
-                    dst.mutable_layout()->set_rows(batch_n_x);
-                    dst.mutable_layout()->set_cols(batch_n_y);
-                    dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
-                    dst.mutable_layout()->set_stride(batch_n_y);
-                    dst.set_data(reinterpret_cast<std::int32_t*>(
-                        pruning_dots_buf.data()));
-
-                    ruy::MulParams<std::int32_t, std::int32_t> mul_params;
-                    ruy::Mul(lhs, rhs, mul_params, &ruy_context, &dst);
                 }
 
                 {
