@@ -17,6 +17,7 @@
 
 #include <numkong/numkong.h>
 #include "ruy/ruy.h"
+#include "ruy/strategy_controls.h"
 
 namespace skmeans {
 
@@ -363,6 +364,8 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                     SKM_PROFILE_SCOPE("search/blas");
 
                     ruy_context.set_max_num_threads(g_n_threads);
+                    ruy_context.set_num_threads_strategy(
+                        ruy::NumThreadsStrategy::kForceMaxNumThreads);
 
                     ruy::Matrix<std::uint8_t> lhs;
                     lhs.mutable_layout()->set_rows(batch_n_x);
