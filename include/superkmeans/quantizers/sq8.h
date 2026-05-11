@@ -355,21 +355,6 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             const size_t batch_n_x = std::min(X_BATCH_SIZE, n_x - i);
 
-            // Pack query vectors once per x-batch: extract first partial_d
-            // bytes contiguously. Reused across all centroid batches.
-            {
-                const size_t qp_size = batch_n_x * partial_d;
-                if (q_partial_buf.size() < qp_size) q_partial_buf.resize(qp_size);
-#pragma omp parallel for num_threads(g_n_threads) schedule(static)
-                for (size_t r = 0; r < batch_n_x; ++r) {
-                    std::memcpy(
-                        q_partial_buf.data() + r * partial_d,
-                        x + (i + r) * d,
-                        partial_d
-                    );
-                }
-            }
-
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
 
@@ -393,13 +378,13 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                         size_t count = std::min(rows_per_t, batch_n_x - start);
                         if (start < batch_n_x && count > 0) {
                             nk_dots_packed_u8(
-                                q_partial_buf.data() + start * partial_d,
+                                x + (i + start) * d,
                                 packed_buf.data(),
                                 pruning_dots_buf.data() + start * batch_n_y,
                                 count,
                                 batch_n_y,
                                 partial_d,
-                                partial_d,
+                                d,
                                 c_stride
                             );
                         }
@@ -493,7 +478,6 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     mutable std::vector<float> nn_dists_buf;
     mutable std::vector<uint32_t> pruning_dots_buf;
     mutable std::vector<char> packed_buf;
-    mutable std::vector<uint8_t> q_partial_buf;
 };
 
 } // namespace skmeans
