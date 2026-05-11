@@ -376,6 +376,44 @@ class SIMDFastScanComputer {
     static constexpr size_t kBlockSize = 32;
 
     /**
+     * @brief NEON-accelerated compaction of surviving positions.
+     *
+     * Survives where partial_l2[k] <= best_dist[k] * adsampling_ratio.
+     */
+    static void RabitQCompactSurvivors(
+        size_t n_vectors,
+        size_t& n_survivors,
+        uint32_t* survivor_positions,
+        float adsampling_ratio,
+        const float* partial_l2,
+        const float* best_dist
+    ) {
+        n_survivors = 0;
+        size_t k = 0;
+        constexpr size_t k_simd_width = 4;
+        const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
+        float32x4_t v_ratio = vdupq_n_f32(adsampling_ratio);
+        for (; k < n_vectors_simd; k += k_simd_width) {
+            float32x4_t thresh = vmulq_f32(vld1q_f32(best_dist + k), v_ratio);
+            float32x4_t dists = vld1q_f32(partial_l2 + k);
+            uint32x4_t cmp_result = vcleq_f32(dists, thresh);
+            uint32_t any_passed = vmaxvq_u32(cmp_result);
+            if (SKM_UNLIKELY(any_passed)) {
+                uint32_t mask[4];
+                vst1q_u32(mask, cmp_result);
+                for (size_t i = 0; i < k_simd_width; ++i) {
+                    survivor_positions[n_survivors] = static_cast<uint32_t>(k + i);
+                    n_survivors += (mask[i] != 0);
+                }
+            }
+        }
+        for (; k < n_vectors; ++k) {
+            survivor_positions[n_survivors] = static_cast<uint32_t>(k);
+            n_survivors += partial_l2[k] <= best_dist[k] * adsampling_ratio;
+        }
+    }
+
+    /**
      * @brief NEON-accelerated RaBitQ partial L2 for a 32-point block.
      *
      * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.

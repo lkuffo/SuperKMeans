@@ -478,15 +478,14 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     }
                 }
 
-                // ── Pass 1b: SIMD correction + checkpoint 1 pruning ──
+                // ── Pass 1b: SIMD correction + checkpoint 1 compaction ──
                 float partial_l2_buf[FastScanComputer::kBlockSize];
 
-                struct SurvivorPos {
-                    uint32_t k;
-                    uint32_t j;
-                };
-                std::vector<SurvivorPos> survivors;
-                survivors.reserve(blk_count * n_y / 16);
+                // Flat survivor buffers: separate k and j arrays
+                const size_t max_survivors = blk_count * n_y;
+                std::unique_ptr<uint32_t[]> survivor_ks(new uint32_t[max_survivors]);
+                std::unique_ptr<uint32_t[]> survivor_js(new uint32_t[max_survivors]);
+                size_t total_survivors = 0;
 
                 {
                     SKM_PROFILE_SCOPE("RaBitQ::PrunedScan/checkpoint1");
@@ -505,29 +504,36 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             blk_count
                         );
 
-                        // Scalar compaction: compare per-point thresholds
-                        for (size_t k = 0; k < blk_count; ++k) {
-                            if (partial_l2_buf[k] > best_dist[k] * adsampling_ratio_front)
-                                continue;
-                            out_not_pruned_counts[blk_start + k]++;
-                            survivors.push_back({static_cast<uint32_t>(k), static_cast<uint32_t>(j)});
+                        // SIMD compaction directly into survivor_ks
+                        size_t n_new = 0;
+                        FastScanComputer::RabitQCompactSurvivors(
+                            blk_count, n_new,
+                            survivor_ks.get() + total_survivors,
+                            adsampling_ratio_front,
+                            partial_l2_buf, best_dist
+                        );
+
+                        std::fill_n(survivor_js.get() + total_survivors, n_new, static_cast<uint32_t>(j));
+
+                        for (size_t s = 0; s < n_new; ++s) {
+                            out_not_pruned_counts[blk_start + survivor_ks[total_survivors + s]]++;
                         }
+                        total_survivors += n_new;
                     }
                 }
 
                 // ── Pass 2: checkpoint 2 + Phase 3 (centroid-grouped) ──
-                // Survivors are already sorted by j. Process groups per centroid,
-                // using block-wide RabitQCorrection for mid and final checkpoints.
+                // Survivors are sorted by j. Process groups per centroid.
                 {
                     SKM_PROFILE_SCOPE("RaBitQ::PrunedScan/remaining");
                     uint32_t accumulated_dots[FastScanComputer::kBlockSize];
                     float correction_buf[FastScanComputer::kBlockSize];
 
                     size_t s = 0;
-                    while (s < survivors.size()) {
-                        const uint32_t j = survivors[s].j;
+                    while (s < total_survivors) {
+                        const uint32_t j = survivor_js[s];
                         const size_t group_start = s;
-                        while (s < survivors.size() && survivors[s].j == j) ++s;
+                        while (s < total_survivors && survivor_js[s] == j) ++s;
 
                         // Initialize accumulated dots from front partial dots
                         const uint16_t* partial_dot_row =
@@ -541,9 +547,8 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
                         // Checkpoint 2: extend to mid_d dims
                         if (use_mid_checkpoint) {
-                            // Add gap popcount for survivors only
                             for (size_t si = group_start; si < s; ++si) {
-                                const size_t k = survivors[si].k;
+                                const size_t k = survivor_ks[si];
                                 const size_t i = blk_start + k;
                                 const uint8_t* data_code = x_codes + i * faiss_code_size_;
                                 uint32_t gap_dot = 0;
@@ -570,13 +575,12 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             );
 
                             // Compact survivors that pass mid threshold
-                            phase3_start_idx = s; // reuse end of group as temp
-                            phase3_end_idx = s;
                             size_t write = group_start;
                             for (size_t si = group_start; si < s; ++si) {
-                                const size_t k = survivors[si].k;
+                                const uint32_t k = survivor_ks[si];
                                 if (correction_buf[k] <= best_dist[k] * adsampling_ratio_mid) {
-                                    survivors[write++] = survivors[si];
+                                    survivor_ks[write] = survivor_ks[si];
+                                    write++;
                                 }
                             }
                             phase3_start_idx = group_start;
@@ -585,7 +589,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
                         // Phase 3: add remaining popcount for survivors
                         for (size_t si = phase3_start_idx; si < phase3_end_idx; ++si) {
-                            const size_t k = survivors[si].k;
+                            const size_t k = survivor_ks[si];
                             const size_t i = blk_start + k;
                             const uint8_t* data_code = x_codes + i * faiss_code_size_;
                             uint32_t remaining_dot_qo = 0;
@@ -613,7 +617,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
                         // Update best for phase 3 survivors
                         for (size_t si = phase3_start_idx; si < phase3_end_idx; ++si) {
-                            const size_t k = survivors[si].k;
+                            const uint32_t k = survivor_ks[si];
                             if (correction_buf[k] < best_dist[k]) {
                                 best_dist[k] = correction_buf[k];
                                 best_idx[k] = j;

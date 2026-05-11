@@ -264,6 +264,24 @@ class ScalarFastScanComputer {
     static constexpr size_t kBlockSize = 32;
 
     /**
+     * @brief Compact surviving positions where partial_l2[k] <= best_dist[k] * ratio.
+     */
+    static void RabitQCompactSurvivors(
+        size_t n_vectors,
+        size_t& n_survivors,
+        uint32_t* survivor_positions,
+        float adsampling_ratio,
+        const float* partial_l2,
+        const float* best_dist
+    ) {
+        n_survivors = 0;
+        for (size_t k = 0; k < n_vectors; ++k) {
+            survivor_positions[n_survivors] = static_cast<uint32_t>(k);
+            n_survivors += partial_l2[k] <= best_dist[k] * adsampling_ratio;
+        }
+    }
+
+    /**
      * @brief Compute RaBitQ partial L2 distances for a block of points against one centroid.
      *
      * For each point k in [0, blk_count):

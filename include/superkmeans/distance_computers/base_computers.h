@@ -99,6 +99,7 @@ class FastScanComputer {
     constexpr static auto ScanBlockWide = computer::ScanBlock<true>;
     constexpr static auto RabitQCorrection = computer::RabitQCorrection<false>;
     constexpr static auto RabitQCorrectionU32 = computer::RabitQCorrection<true>;
+    constexpr static auto RabitQCompactSurvivors = computer::RabitQCompactSurvivors;
 };
 
 } // namespace skmeans

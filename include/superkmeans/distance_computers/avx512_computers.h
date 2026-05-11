@@ -472,6 +472,44 @@ class SIMDFastScanComputer {
     static constexpr size_t kBlockSize = 32;
 
     /**
+     * @brief AVX-512-accelerated compaction of surviving positions.
+     *
+     * Survives where partial_l2[k] <= best_dist[k] * adsampling_ratio.
+     * Uses vpcompressd for native mask-driven compaction.
+     */
+    static void RabitQCompactSurvivors(
+        size_t n_vectors,
+        size_t& n_survivors,
+        uint32_t* survivor_positions,
+        float adsampling_ratio,
+        const float* partial_l2,
+        const float* best_dist
+    ) {
+        n_survivors = 0;
+        size_t k = 0;
+        constexpr size_t k_simd_width = 16;
+        const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
+        __m512 v_ratio = _mm512_set1_ps(adsampling_ratio);
+        const __m512i offsets = _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+        for (; k < n_vectors_simd; k += k_simd_width) {
+            __m512 thresh = _mm512_mul_ps(_mm512_loadu_ps(best_dist + k), v_ratio);
+            __m512 dists = _mm512_loadu_ps(partial_l2 + k);
+            __mmask16 cmp_mask = _mm512_cmp_ps_mask(dists, thresh, _CMP_LE_OQ);
+            if (SKM_UNLIKELY(cmp_mask)) {
+                __m512i indices = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int>(k)), offsets);
+                _mm512_mask_compressstoreu_epi32(
+                    survivor_positions + n_survivors, cmp_mask, indices
+                );
+                n_survivors += _mm_popcnt_u32(cmp_mask);
+            }
+        }
+        for (; k < n_vectors; ++k) {
+            survivor_positions[n_survivors] = static_cast<uint32_t>(k);
+            n_survivors += partial_l2[k] <= best_dist[k] * adsampling_ratio;
+        }
+    }
+
+    /**
      * @brief AVX-512-accelerated RaBitQ partial L2 for a 32-point block.
      *
      * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
