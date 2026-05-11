@@ -273,7 +273,16 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::b8> {
             }
         }
         uint32_t result = static_cast<uint32_t>(_mm512_reduce_add_epi64(acc));
-        // Scalar tail
+        // 64-bit word tail
+        for (; i + 8 <= num_bytes; i += 8) {
+            uint64_t x = *reinterpret_cast<const uint64_t*>(data + i);
+            for (int bp = 0; bp < qb; ++bp) {
+                uint64_t p = *reinterpret_cast<const uint64_t*>(
+                    planes_base + bp * plane_stride + i);
+                result += static_cast<uint32_t>(__builtin_popcountll(x & p)) << bp;
+            }
+        }
+        // Byte tail
         for (; i < num_bytes; ++i) {
             for (int bp = 0; bp < qb; ++bp) {
                 result += static_cast<uint32_t>(
