@@ -404,4 +404,63 @@ class ScalarFastScanComputer {
     }
 };
 
+class ScalarRaBitQCodec {
+  public:
+    /**
+     * @brief Encode one float vector into RaBitQ 1-bit binary code + factors.
+     *
+     * Code layout: [(d+7)/8 sign bytes][or_minus_c_l2sqr: 4B][dp_multiplier: 4B]
+     * sign_bit[j] = 1 iff (x[j] - centroid[j]) > 0
+     */
+    static void EncodeOne(
+        const float* SKM_RESTRICT x,
+        uint8_t* SKM_RESTRICT code,
+        size_t d,
+        size_t binary_bytes,
+        const float* SKM_RESTRICT centroid
+    ) {
+        std::memset(code, 0, binary_bytes);
+
+        float norm_L2sqr = 0.0f;
+        float dp_oO = 0.0f;
+
+        for (size_t j = 0; j < d; ++j) {
+            const float res = x[j] - centroid[j];
+            norm_L2sqr += res * res;
+            dp_oO += std::abs(res);
+            if (res > 0.0f) {
+                code[j / 8] |= static_cast<uint8_t>(1 << (j % 8));
+            }
+        }
+
+        const float sqrt_d = std::sqrt(static_cast<float>(d));
+        float* factors = (float*)(code + binary_bytes);
+        factors[0] = norm_L2sqr;                        // or_minus_c_l2sqr
+        factors[1] = norm_L2sqr * sqrt_d / dp_oO;       // dp_multiplier
+    }
+
+    /**
+     * @brief Decode one RaBitQ code back to float vector.
+     *
+     * x[j] = (sign_bit[j] ? +0.5 : -0.5) * dp_multiplier * 2 / sqrt(d) + centroid[j]
+     */
+    static void DecodeOne(
+        const uint8_t* SKM_RESTRICT code,
+        float* SKM_RESTRICT x,
+        size_t d,
+        size_t binary_bytes,
+        const float* SKM_RESTRICT centroid
+    ) {
+        const float* factors = (const float*)(code + binary_bytes);
+        const float dp_multiplier = factors[1];
+        const float inv_sqrt_d = 1.0f / std::sqrt(static_cast<float>(d));
+        const float scale = dp_multiplier * 2.0f * inv_sqrt_d;
+
+        for (size_t j = 0; j < d; ++j) {
+            const float bit = ((code[j / 8] >> (j % 8)) & 1) ? 1.0f : 0.0f;
+            x[j] = (bit - 0.5f) * scale + centroid[j];
+        }
+    }
+};
+
 } // namespace skmeans

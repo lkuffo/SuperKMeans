@@ -13,20 +13,17 @@
 #include <omp.h>
 #include <vector>
 
-#include <faiss/impl/RaBitQuantizer.h>
-
 namespace skmeans {
 
 struct RaBitQFactors {
     float or_minus_c_l2sqr; // ||original - centroid||²  (for L2 metric)
     float dp_multiplier;    // scaling factor for dot-product estimation
 };
-static_assert(sizeof(RaBitQFactors) == 8, "RaBitQFactors must match FAISS FactorsData");
+static_assert(sizeof(RaBitQFactors) == 8);
 
 /**
  * @brief RaBitQ quantizer with FastScan-accelerated distance kernel.
  *
- * Uses FAISS RaBitQuantizer for Fit/Encode/Decode.
  * Distance computation uses a custom FastScan kernel (VPSHUFB/TBL lookups)
  * that processes 32 data points simultaneously per centroid.
  *
@@ -63,20 +60,28 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
             centroid_[j] = static_cast<float>(sums[j] / static_cast<float>(n));
         }
 
-        faiss_quantizer_ = std::make_unique<faiss::RaBitQuantizer>(d, faiss::METRIC_L2);
-        faiss_quantizer_->centroid = centroid_.data();
-        faiss_code_size_ = faiss_quantizer_->code_size;
+        code_size_ = binary_bytes_ + sizeof(RaBitQFactors);
         fitted_ = true;
     }
 
     void Encode(const float* in, quantized_t* out, size_t n, size_t d) const override {
         SKM_PROFILE_SCOPE("RQ::Encode");
-        faiss_quantizer_->compute_codes(in, reinterpret_cast<uint8_t*>(out), n);
+        uint8_t* codes = reinterpret_cast<uint8_t*>(out);
+#pragma omp parallel for num_threads(g_n_threads) schedule(static) if(n > 1000)
+        for (size_t i = 0; i < n; ++i) {
+            RaBitQCodec::EncodeOne(
+                in + i * d, codes + i * code_size_, d, binary_bytes_, centroid_.data());
+        }
     }
 
     void Decode(const quantized_t* in, float* out, size_t n, size_t d) const override {
         SKM_PROFILE_SCOPE("RQ::Decode");
-        faiss_quantizer_->decode(reinterpret_cast<const uint8_t*>(in), out, n);
+        const uint8_t* codes = reinterpret_cast<const uint8_t*>(in);
+#pragma omp parallel for num_threads(g_n_threads) schedule(static) if(n > 1000)
+        for (size_t i = 0; i < n; ++i) {
+            RaBitQCodec::DecodeOne(
+                codes + i * code_size_, out + i * d, d, binary_bytes_, centroid_.data());
+        }
     }
 
     void ComputeNorms(
@@ -86,7 +91,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const uint8_t* code =
-                reinterpret_cast<const uint8_t*>(data) + i * faiss_code_size_;
+                reinterpret_cast<const uint8_t*>(data) + i * code_size_;
             const auto* factors =
                 reinterpret_cast<const RaBitQFactors*>(code + binary_bytes_);
             out_norms[i] = factors->or_minus_c_l2sqr;
@@ -269,7 +274,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
-            const uint8_t* code = codes + i * faiss_code_size_;
+            const uint8_t* code = codes + i * code_size_;
             uint32_t pc = 0;
             size_t b = 0;
             for (; b < std::min(front_bytes, mid_bytes); ++b) {
@@ -434,7 +439,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         const uint32_t prev_j = out_knn[i];
                         best_idx[k] = prev_j;
                         best_dist[k] = ComputeFullDistanceViaLUT(
-                            x_codes + i * faiss_code_size_,
+                            x_codes + i * code_size_,
                             all_luts.data() + prev_j * lut_stride,
                             c1[prev_j], c2[prev_j], c34[prev_j],
                             qr_to_c_l2sqr[prev_j],
@@ -501,7 +506,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                                 const size_t k = local_survivors[si];
                                 const size_t i = blk_start + k;
                                 accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
-                                    x_codes + i * faiss_code_size_ + front_bytes,
+                                    x_codes + i * code_size_ + front_bytes,
                                     centroid_planes.data() + j * centroid_stride,
                                     gap_bytes, qb_
                                 );
@@ -532,7 +537,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             const size_t k = local_survivors[si];
                             const size_t i = blk_start + k;
                             accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
-                                x_codes + i * faiss_code_size_ + phase3_start,
+                                x_codes + i * code_size_ + phase3_start,
                                 centroid_planes.data() + j * centroid_stride
                                     + gap_chunks * qb_ * 16,
                                 rest_bytes, qb_
@@ -579,7 +584,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         SKM_PROFILE_SCOPE("RQ::PrecomputeCodeFactors");
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
-            const uint8_t* code = codes + i * faiss_code_size_;
+            const uint8_t* code = codes + i * code_size_;
 
             // Popcount of the binary part
             uint32_t pc = 0;
@@ -713,7 +718,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
             // Gather byte b from each of the 32 vectors
             uint8_t col[32] = {0};
             for (size_t k = 0; k < blk_count; ++k) {
-                col[k] = codes[(blk_start + k) * faiss_code_size_ + b];
+                col[k] = codes[(blk_start + k) * code_size_ + b];
             }
 
             for (int j = 0; j < 16; ++j) {
@@ -744,9 +749,8 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     int qb_ = 4;
     size_t d_ = 0;
     size_t binary_bytes_ = 0;
-    size_t faiss_code_size_ = 0;
+    size_t code_size_ = 0;
     std::vector<float> centroid_;
-    std::unique_ptr<faiss::RaBitQuantizer> faiss_quantizer_;
     bool fitted_ = false;
 
     // Cached per-data-point factors (reused across iterations)

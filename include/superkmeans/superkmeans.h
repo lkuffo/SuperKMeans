@@ -20,8 +20,8 @@
 #include "superkmeans/quantizers/sq4.h"
 #include "superkmeans/quantizers/sq8.h"
 #include "superkmeans/quantizers/lvq4.h"
-#ifdef HAS_FAISS
 #include "superkmeans/quantizers/rabitq.h"
+#ifdef HAS_FAISS
 #include "superkmeans/quantizers/pq8.h"
 #include "superkmeans/quantizers/pq4.h"
 #endif

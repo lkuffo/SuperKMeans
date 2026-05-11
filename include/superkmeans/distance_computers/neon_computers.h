@@ -608,4 +608,129 @@ class SIMDFastScanComputer {
     }
 };
 
+class SIMDRaBitQCodec {
+  public:
+    /**
+     * @brief NEON encode: 4 floats per iteration.
+     * vcgtq_f32 → extract sign bits manually via shifts and ORs.
+     */
+    static void EncodeOne(
+        const float* SKM_RESTRICT x,
+        uint8_t* SKM_RESTRICT code,
+        size_t d,
+        size_t binary_bytes,
+        const float* SKM_RESTRICT centroid
+    ) {
+        std::memset(code, 0, binary_bytes);
+
+        float32x4_t norm_acc = vdupq_n_f32(0.0f);
+        float32x4_t abs_acc = vdupq_n_f32(0.0f);
+        const float32x4_t zero = vdupq_n_f32(0.0f);
+
+        size_t j = 0;
+        // Process 8 dims (2 × 4 NEON) per byte
+        for (; j + 8 <= d; j += 8) {
+            float32x4_t xv0 = vld1q_f32(x + j);
+            float32x4_t cv0 = vld1q_f32(centroid + j);
+            float32x4_t res0 = vsubq_f32(xv0, cv0);
+            float32x4_t xv1 = vld1q_f32(x + j + 4);
+            float32x4_t cv1 = vld1q_f32(centroid + j + 4);
+            float32x4_t res1 = vsubq_f32(xv1, cv1);
+
+            norm_acc = vfmaq_f32(norm_acc, res0, res0);
+            norm_acc = vfmaq_f32(norm_acc, res1, res1);
+            abs_acc = vaddq_f32(abs_acc, vabsq_f32(res0));
+            abs_acc = vaddq_f32(abs_acc, vabsq_f32(res1));
+
+            // Extract 4 sign bits from each group
+            uint32x4_t cmp0 = vcgtq_f32(res0, zero);
+            uint32x4_t cmp1 = vcgtq_f32(res1, zero);
+
+            // Narrow to 16-bit, then 8-bit to pack bits
+            uint16x4_t n0 = vmovn_u32(cmp0);
+            uint16x4_t n1 = vmovn_u32(cmp1);
+            uint8x8_t n8 = vmovn_u16(vcombine_u16(n0, n1));
+            // n8 has 8 bytes, each 0x00 or 0xFF. Extract MSBs.
+            static const uint8_t shift_vals[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+            uint8x8_t shifts = vld1_u8(shift_vals);
+            // Convert 0xFF→1, 0x00→0, then shift each to its bit position
+            uint8x8_t bits = vshr_n_u8(n8, 7);  // 0xFF→1, 0x00→0
+            uint8x8_t shifted = vshl_u8(bits, vreinterpret_s8_u8(shifts));
+            // Horizontal OR to combine 8 bits into one byte
+            uint8_t byte_val = shifted[0] | shifted[1] | shifted[2] | shifted[3]
+                             | shifted[4] | shifted[5] | shifted[6] | shifted[7];
+            code[j / 8] = byte_val;
+        }
+
+        // Scalar tail
+        float norm_tail = 0.0f, abs_tail = 0.0f;
+        for (; j < d; ++j) {
+            const float res = x[j] - centroid[j];
+            norm_tail += res * res;
+            abs_tail += std::abs(res);
+            if (res > 0.0f) {
+                code[j / 8] |= static_cast<uint8_t>(1 << (j % 8));
+            }
+        }
+
+        const float norm_L2sqr = vaddvq_f32(norm_acc) + norm_tail;
+        const float dp_oO = vaddvq_f32(abs_acc) + abs_tail;
+        const float sqrt_d = std::sqrt(static_cast<float>(d));
+
+        float* factors = (float*)(code + binary_bytes);
+        factors[0] = norm_L2sqr;
+        factors[1] = norm_L2sqr * sqrt_d / dp_oO;
+    }
+
+    /**
+     * @brief NEON decode: expand 4 sign bits to mask, blend ±0.5*scale, add centroid.
+     */
+    static void DecodeOne(
+        const uint8_t* SKM_RESTRICT code,
+        float* SKM_RESTRICT x,
+        size_t d,
+        size_t binary_bytes,
+        const float* SKM_RESTRICT centroid
+    ) {
+        const float* factors = (const float*)(code + binary_bytes);
+        const float dp_multiplier = factors[1];
+        const float inv_sqrt_d = 1.0f / std::sqrt(static_cast<float>(d));
+        const float scale = dp_multiplier * 2.0f * inv_sqrt_d;
+
+        const float32x4_t pos = vdupq_n_f32(+0.5f * scale);
+        const float32x4_t neg = vdupq_n_f32(-0.5f * scale);
+
+        size_t j = 0;
+        for (; j + 4 <= d; j += 4) {
+            // Extract 4 bits starting at bit position j
+            size_t byte_idx = j / 8;
+            size_t bit_off = j % 8;
+            uint32_t bits;
+            if (bit_off + 4 <= 8) {
+                bits = (code[byte_idx] >> bit_off) & 0x0F;
+            } else {
+                uint16_t two_bytes = *(const uint16_t*)(code + byte_idx);
+                bits = (two_bytes >> bit_off) & 0x0F;
+            }
+
+            // Expand 4 bits to 4 × uint32 masks
+            uint32_t m0 = (bits & 1) ? 0xFFFFFFFF : 0;
+            uint32_t m1 = (bits & 2) ? 0xFFFFFFFF : 0;
+            uint32_t m2 = (bits & 4) ? 0xFFFFFFFF : 0;
+            uint32_t m3 = (bits & 8) ? 0xFFFFFFFF : 0;
+            uint32x4_t mask = {m0, m1, m2, m3};
+
+            float32x4_t val = vbslq_f32(mask, pos, neg);
+            float32x4_t cv = vld1q_f32(centroid + j);
+            vst1q_f32(x + j, vaddq_f32(val, cv));
+        }
+
+        // Scalar tail
+        for (; j < d; ++j) {
+            const float bit = ((code[j / 8] >> (j % 8)) & 1) ? 1.0f : 0.0f;
+            x[j] = (bit - 0.5f) * scale + centroid[j];
+        }
+    }
+};
+
 } // namespace skmeans

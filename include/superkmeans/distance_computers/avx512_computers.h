@@ -804,4 +804,98 @@ class SIMDFastScanComputer {
     }
 };
 
+class SIMDRaBitQCodec {
+  public:
+    /**
+     * @brief AVX-512 encode: compute residual, accumulate norm/abs_sum, pack sign bits.
+     *
+     * 16 floats per iteration. _mm512_cmpgt_ps_mask gives 16 sign bits directly
+     * as __mmask16, written as uint16_t — zero bit shuffling.
+     */
+    static void EncodeOne(
+        const float* SKM_RESTRICT x,
+        uint8_t* SKM_RESTRICT code,
+        size_t d,
+        size_t binary_bytes,
+        const float* SKM_RESTRICT centroid
+    ) {
+        std::memset(code, 0, binary_bytes);
+
+        __m512 norm_acc = _mm512_setzero_ps();
+        __m512 abs_acc = _mm512_setzero_ps();
+        const __m512 zero = _mm512_setzero_ps();
+        const __m512 sign_mask = _mm512_set1_ps(-0.0f);
+
+        size_t j = 0;
+        size_t byte_off = 0;
+        for (; j + 16 <= d; j += 16, byte_off += 2) {
+            __m512 xv = _mm512_loadu_ps(x + j);
+            __m512 cv = _mm512_loadu_ps(centroid + j);
+            __m512 res = _mm512_sub_ps(xv, cv);
+
+            norm_acc = _mm512_fmadd_ps(res, res, norm_acc);
+            abs_acc = _mm512_add_ps(abs_acc, _mm512_andnot_ps(sign_mask, res));
+
+            __mmask16 signs = _mm512_cmpgt_ps_mask(res, zero);
+            *(uint16_t*)(code + byte_off) = static_cast<uint16_t>(signs);
+        }
+
+        // Scalar tail
+        float norm_tail = 0.0f, abs_tail = 0.0f;
+        for (; j < d; ++j) {
+            const float res = x[j] - centroid[j];
+            norm_tail += res * res;
+            abs_tail += std::abs(res);
+            if (res > 0.0f) {
+                code[j / 8] |= static_cast<uint8_t>(1 << (j % 8));
+            }
+        }
+
+        const float norm_L2sqr = _mm512_reduce_add_ps(norm_acc) + norm_tail;
+        const float dp_oO = _mm512_reduce_add_ps(abs_acc) + abs_tail;
+        const float sqrt_d = std::sqrt(static_cast<float>(d));
+
+        float* factors = (float*)(code + binary_bytes);
+        factors[0] = norm_L2sqr;
+        factors[1] = norm_L2sqr * sqrt_d / dp_oO;
+    }
+
+    /**
+     * @brief AVX-512 decode: expand sign bits via mask blend, add centroid.
+     *
+     * 16 dims per iteration. __mmask16 loaded directly from 2 code bytes,
+     * used with _mm512_mask_blend_ps for branchless ±0.5 selection.
+     */
+    static void DecodeOne(
+        const uint8_t* SKM_RESTRICT code,
+        float* SKM_RESTRICT x,
+        size_t d,
+        size_t binary_bytes,
+        const float* SKM_RESTRICT centroid
+    ) {
+        const float* factors = (const float*)(code + binary_bytes);
+        const float dp_multiplier = factors[1];
+        const float inv_sqrt_d = 1.0f / std::sqrt(static_cast<float>(d));
+        const float scale = dp_multiplier * 2.0f * inv_sqrt_d;
+
+        const __m512 pos = _mm512_set1_ps(+0.5f * scale);
+        const __m512 neg = _mm512_set1_ps(-0.5f * scale);
+
+        size_t j = 0;
+        size_t byte_off = 0;
+        for (; j + 16 <= d; j += 16, byte_off += 2) {
+            __mmask16 bits = static_cast<__mmask16>(*(const uint16_t*)(code + byte_off));
+            __m512 val = _mm512_mask_blend_ps(bits, neg, pos);
+            __m512 cv = _mm512_loadu_ps(centroid + j);
+            _mm512_storeu_ps(x + j, _mm512_add_ps(val, cv));
+        }
+
+        // Scalar tail
+        for (; j < d; ++j) {
+            const float bit = ((code[j / 8] >> (j % 8)) & 1) ? 1.0f : 0.0f;
+            x[j] = (bit - 0.5f) * scale + centroid[j];
+        }
+    }
+};
+
 } // namespace skmeans

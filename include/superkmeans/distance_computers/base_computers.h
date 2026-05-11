@@ -113,4 +113,16 @@ class FastScanComputer {
     }
 };
 
+class RaBitQCodec {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+    using codec = ScalarRaBitQCodec;
+#else
+    using codec = SIMDRaBitQCodec;
+#endif
+
+  public:
+    constexpr static auto EncodeOne = codec::EncodeOne;
+    constexpr static auto DecodeOne = codec::DecodeOne;
+};
+
 } // namespace skmeans

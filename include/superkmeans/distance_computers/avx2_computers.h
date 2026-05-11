@@ -725,4 +725,112 @@ class SIMDFastScanComputer {
     }
 };
 
+class SIMDRaBitQCodec {
+  public:
+    /**
+     * @brief AVX2 encode: 8 floats per iteration.
+     * _mm256_movemask_ps gives 8 sign bits as a byte — one store per iter.
+     */
+    static void EncodeOne(
+        const float* SKM_RESTRICT x,
+        uint8_t* SKM_RESTRICT code,
+        size_t d,
+        size_t binary_bytes,
+        const float* SKM_RESTRICT centroid
+    ) {
+        std::memset(code, 0, binary_bytes);
+
+        __m256 norm_acc = _mm256_setzero_ps();
+        __m256 abs_acc = _mm256_setzero_ps();
+        const __m256 zero = _mm256_setzero_ps();
+        const __m256 sign_mask = _mm256_set1_ps(-0.0f);
+
+        size_t j = 0;
+        size_t byte_off = 0;
+        for (; j + 8 <= d; j += 8, byte_off += 1) {
+            __m256 xv = _mm256_loadu_ps(x + j);
+            __m256 cv = _mm256_loadu_ps(centroid + j);
+            __m256 res = _mm256_sub_ps(xv, cv);
+
+            norm_acc = _mm256_fmadd_ps(res, res, norm_acc);
+            abs_acc = _mm256_add_ps(abs_acc, _mm256_andnot_ps(sign_mask, res));
+
+            __m256 cmp = _mm256_cmp_ps(res, zero, _CMP_GT_OQ);
+            code[byte_off] = static_cast<uint8_t>(_mm256_movemask_ps(cmp));
+        }
+
+        // Scalar tail
+        float norm_tail = 0.0f, abs_tail = 0.0f;
+        for (; j < d; ++j) {
+            const float res = x[j] - centroid[j];
+            norm_tail += res * res;
+            abs_tail += std::abs(res);
+            if (res > 0.0f) {
+                code[j / 8] |= static_cast<uint8_t>(1 << (j % 8));
+            }
+        }
+
+        // Horizontal sum: 8 floats → scalar
+        __m128 hi128 = _mm256_extractf128_ps(norm_acc, 1);
+        __m128 lo128 = _mm256_castps256_ps128(norm_acc);
+        __m128 sum4 = _mm_add_ps(lo128, hi128);
+        __m128 sum2 = _mm_add_ps(sum4, _mm_movehl_ps(sum4, sum4));
+        __m128 sum1 = _mm_add_ss(sum2, _mm_movehdup_ps(sum2));
+        const float norm_L2sqr = _mm_cvtss_f32(sum1) + norm_tail;
+
+        hi128 = _mm256_extractf128_ps(abs_acc, 1);
+        lo128 = _mm256_castps256_ps128(abs_acc);
+        sum4 = _mm_add_ps(lo128, hi128);
+        sum2 = _mm_add_ps(sum4, _mm_movehl_ps(sum4, sum4));
+        sum1 = _mm_add_ss(sum2, _mm_movehdup_ps(sum2));
+        const float dp_oO = _mm_cvtss_f32(sum1) + abs_tail;
+
+        const float sqrt_d = std::sqrt(static_cast<float>(d));
+
+        float* factors = (float*)(code + binary_bytes);
+        factors[0] = norm_L2sqr;
+        factors[1] = norm_L2sqr * sqrt_d / dp_oO;
+    }
+
+    /**
+     * @brief AVX2 decode: expand 8 sign bits to mask, blend ±0.5*scale, add centroid.
+     */
+    static void DecodeOne(
+        const uint8_t* SKM_RESTRICT code,
+        float* SKM_RESTRICT x,
+        size_t d,
+        size_t binary_bytes,
+        const float* SKM_RESTRICT centroid
+    ) {
+        const float* factors = (const float*)(code + binary_bytes);
+        const float dp_multiplier = factors[1];
+        const float inv_sqrt_d = 1.0f / std::sqrt(static_cast<float>(d));
+        const float scale = dp_multiplier * 2.0f * inv_sqrt_d;
+
+        const __m256 pos = _mm256_set1_ps(+0.5f * scale);
+        const __m256 neg = _mm256_set1_ps(-0.5f * scale);
+        const __m256i bit_masks = _mm256_set_epi32(128, 64, 32, 16, 8, 4, 2, 1);
+
+        size_t j = 0;
+        size_t byte_off = 0;
+        for (; j + 8 <= d; j += 8, byte_off += 1) {
+            // Broadcast byte to all 8 lanes, AND with bit masks, compare != 0
+            __m256i byte_bcast = _mm256_set1_epi32(code[byte_off]);
+            __m256i masked = _mm256_and_si256(byte_bcast, bit_masks);
+            __m256i cmp = _mm256_cmpeq_epi32(masked, bit_masks);
+            __m256 mask = _mm256_castsi256_ps(cmp);
+
+            __m256 val = _mm256_blendv_ps(neg, pos, mask);
+            __m256 cv = _mm256_loadu_ps(centroid + j);
+            _mm256_storeu_ps(x + j, _mm256_add_ps(val, cv));
+        }
+
+        // Scalar tail
+        for (; j < d; ++j) {
+            const float bit = ((code[j / 8] >> (j % 8)) & 1) ? 1.0f : 0.0f;
+            x[j] = (bit - 0.5f) * scale + centroid[j];
+        }
+    }
+};
+
 } // namespace skmeans
