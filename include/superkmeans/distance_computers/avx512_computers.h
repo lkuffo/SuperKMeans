@@ -254,45 +254,44 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::b8> {
 #endif
     };
 
+    /**
+     * @brief Fused multi-bitplane popcount on chunk-interleaved layout.
+     * Layout: for each 16B data chunk, qb×16B of bitplane data contiguous.
+     * AVX-512: broadcast 16B of data, single 512-bit load for all 4 bitplanes,
+     * AND, VPOPCNTQ, VPSLLVQ by [0,0,1,1,2,2,3,3], reduce.
+     */
     static uint32_t HorizontalMultiPlane(
         const data_t* SKM_RESTRICT data,
-        const data_t* planes_base,
-        size_t plane_stride,
+        const data_t* planes_interleaved,
         size_t num_bytes,
         int qb
     ) {
 #ifdef __AVX512VPOPCNTDQ__
+        const __m512i shift_vec = _mm512_set_epi64(3, 3, 2, 2, 1, 1, 0, 0);
         __m512i acc = _mm512_setzero_si512();
         size_t i = 0;
-        for (; i + 64 <= num_bytes; i += 64) {
-            __m512i x = _mm512_loadu_si512(data + i);
-            for (int bp = 0; bp < qb; ++bp) {
-                __m512i p = _mm512_loadu_si512(planes_base + bp * plane_stride + i);
-                __m512i popcnt = _mm512_popcnt_epi64(_mm512_and_si512(x, p));
-                acc = _mm512_add_epi64(acc, _mm512_slli_epi64(popcnt, bp));
-            }
+        for (; i + 16 <= num_bytes; i += 16) {
+            __m512i x = _mm512_broadcast_i32x4(
+                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i)));
+            __m512i bp = _mm512_loadu_si512(planes_interleaved + i * qb);
+            __m512i popcnt = _mm512_popcnt_epi64(_mm512_and_si512(x, bp));
+            acc = _mm512_add_epi64(acc, _mm512_sllv_epi64(popcnt, shift_vec));
         }
         uint32_t result = static_cast<uint32_t>(_mm512_reduce_add_epi64(acc));
-        // 64-bit word tail
-        for (; i + 8 <= num_bytes; i += 8) {
-            uint64_t x = *reinterpret_cast<const uint64_t*>(data + i);
-            for (int bp = 0; bp < qb; ++bp) {
-                uint64_t p = *reinterpret_cast<const uint64_t*>(
-                    planes_base + bp * plane_stride + i);
-                result += static_cast<uint32_t>(__builtin_popcountll(x & p)) << bp;
-            }
-        }
-        // Byte tail
+        // Scalar tail for remaining < 16 bytes
         for (; i < num_bytes; ++i) {
+            size_t chunk = i / 16;
+            size_t byte_in_chunk = i % 16;
             for (int bp = 0; bp < qb; ++bp) {
-                result += static_cast<uint32_t>(
-                    __builtin_popcount(data[i] & (planes_base + bp * plane_stride)[i])) << bp;
+                result += static_cast<uint32_t>(__builtin_popcount(
+                    data[i] & planes_interleaved[chunk * qb * 16 + bp * 16 + byte_in_chunk]
+                )) << bp;
             }
         }
         return result;
 #else
         return ScalarComputer<DistanceFunction::l2, Quantization::b8>::HorizontalMultiPlane(
-            data, planes_base, plane_stride, num_bytes, qb
+            data, planes_interleaved, num_bytes, qb
         );
 #endif
     }

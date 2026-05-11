@@ -321,7 +321,11 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         std::vector<float> qr_to_c_l2sqr_mid(n_y), c34_mid(n_y);
         std::vector<uint8_t> all_luts(n_y * n_sub * 16);
         const size_t rest_bytes = phase3_bytes;
-        const size_t centroid_stride = qb_ * (gap_bytes + rest_bytes);
+        // Chunk-interleaved layout: for each 16B data chunk, all qb bitplanes
+        // are stored contiguously (qb*16 bytes). Regions padded to 16B multiple.
+        const size_t gap_chunks = (gap_bytes + 15) / 16;
+        const size_t rest_chunks = (rest_bytes + 15) / 16;
+        const size_t centroid_stride = (gap_chunks + rest_chunks) * qb_ * 16;
         std::vector<uint8_t> centroid_planes(n_y * centroid_stride, 0);
         QuantizeCentroidsAndBuildLUTsWithBounds(
             y_float, n_y, d, front_d, mid_d,
@@ -473,11 +477,10 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                                 const size_t k = survivor_ks[si];
                                 const size_t i = blk_start + k;
                                 const uint8_t* data_code = x_codes + i * faiss_code_size_;
-                                const uint8_t* gap_plane0 = centroid_planes.data()
-                                    + j * centroid_stride;
                                 accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
-                                    data_code + front_bytes, gap_plane0,
-                                    gap_bytes, gap_bytes, qb_
+                                    data_code + front_bytes,
+                                    centroid_planes.data() + j * centroid_stride,
+                                    gap_bytes, qb_
                                 );
                             }
 
@@ -510,11 +513,11 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             const size_t k = survivor_ks[si];
                             const size_t i = blk_start + k;
                             const uint8_t* data_code = x_codes + i * faiss_code_size_;
-                            const uint8_t* rest_plane0 = centroid_planes.data()
-                                + j * centroid_stride + qb_ * gap_bytes;
                             accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
-                                data_code + phase3_start, rest_plane0,
-                                rest_bytes, rest_bytes, qb_
+                                data_code + phase3_start,
+                                centroid_planes.data() + j * centroid_stride
+                                    + gap_chunks * qb_ * 16,
+                                rest_bytes, qb_
                             );
                         }
 
@@ -892,32 +895,43 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 }
             }
 
-            // Bit-transpose SQ values into per-centroid bitplanes,
-            // split by checkpoint regions: [gap_bp0..gap_bpN][rest_bp0..rest_bpN]
+            // Bit-transpose SQ values into chunk-interleaved bitplanes.
+            // Layout: for each 16-byte data chunk, all qb bitplanes are contiguous.
+            // [chunk0_bp0_16B][chunk0_bp1_16B]...[chunk0_bpN_16B][chunk1_bp0_16B]...
             const size_t front_bytes_l = front_d_clamped / 8;
             const size_t mid_bytes_l = mid_d_clamped / 8;
             const bool has_gap = (front_bytes_l < mid_bytes_l) && (mid_bytes_l < binary_bytes_);
             const size_t gap_bytes_l = has_gap ? (mid_bytes_l - front_bytes_l) : 0;
             const size_t phase3_start_l = has_gap ? mid_bytes_l : front_bytes_l;
             const size_t rest_bytes_l = binary_bytes_ - phase3_start_l;
-            const size_t cstride = qb_ * (gap_bytes_l + rest_bytes_l);
+            const size_t gap_chunks_l = (gap_bytes_l + 15) / 16;
+            const size_t rest_chunks_l = (rest_bytes_l + 15) / 16;
+            const size_t cstride = (gap_chunks_l + rest_chunks_l) * qb_ * 16;
+            uint8_t* cent_base = centroid_planes + j * cstride;
 
-            for (int b = 0; b < qb_; ++b) {
-                // Gap region: dims [front_d_clamped, mid_d_clamped)
-                uint8_t* gap_plane = centroid_planes + j * cstride + b * gap_bytes_l;
-                for (size_t dim = front_d_clamped; dim < mid_d_clamped; ++dim) {
-                    size_t local = dim - front_d_clamped;
+            // Gap region: dims [front_d, mid_d)
+            for (size_t dim = front_d_clamped; dim < mid_d_clamped; ++dim) {
+                size_t local_byte = (dim - front_d_clamped) / 8;
+                uint8_t bit = static_cast<uint8_t>(1 << (dim % 8));
+                size_t chunk = local_byte / 16;
+                size_t byte_in_chunk = local_byte % 16;
+                for (int b = 0; b < qb_; ++b) {
                     if ((quantized[dim] >> b) & 1)
-                        gap_plane[local / 8] |= static_cast<uint8_t>(1 << (local % 8));
+                        cent_base[chunk * qb_ * 16 + b * 16 + byte_in_chunk] |= bit;
                 }
-                // Rest region: dims [phase3_start_d, d)
-                const size_t phase3_start_d = phase3_start_l * 8;
-                uint8_t* rest_plane = centroid_planes + j * cstride
-                    + qb_ * gap_bytes_l + b * rest_bytes_l;
-                for (size_t dim = phase3_start_d; dim < d; ++dim) {
-                    size_t local = dim - phase3_start_d;
+            }
+
+            // Rest region: dims [phase3_start_d, d)
+            const size_t phase3_start_d = phase3_start_l * 8;
+            uint8_t* rest_base = cent_base + gap_chunks_l * qb_ * 16;
+            for (size_t dim = phase3_start_d; dim < d; ++dim) {
+                size_t local_byte = (dim - phase3_start_d) / 8;
+                uint8_t bit = static_cast<uint8_t>(1 << (dim % 8));
+                size_t chunk = local_byte / 16;
+                size_t byte_in_chunk = local_byte % 16;
+                for (int b = 0; b < qb_; ++b) {
                     if ((quantized[dim] >> b) & 1)
-                        rest_plane[local / 8] |= static_cast<uint8_t>(1 << (local % 8));
+                        rest_base[chunk * qb_ * 16 + b * 16 + byte_in_chunk] |= bit;
                 }
             }
         }

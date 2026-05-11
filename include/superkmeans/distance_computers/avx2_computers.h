@@ -291,8 +291,7 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
 
     static uint32_t HorizontalMultiPlane(
         const data_t* SKM_RESTRICT data,
-        const data_t* planes_base,
-        size_t plane_stride,
+        const data_t* planes_interleaved,
         size_t num_bytes,
         int qb
     ) {
@@ -304,29 +303,44 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
         const __m256i zero = _mm256_setzero_si256();
         __m256i acc = zero;
         size_t i = 0;
-        for (; i + 32 <= num_bytes; i += 32) {
-            __m256i x = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data + i));
-            for (int bp = 0; bp < qb; ++bp) {
-                __m256i p = _mm256_loadu_si256(
-                    reinterpret_cast<const __m256i*>(planes_base + bp * plane_stride + i));
-                __m256i v = _mm256_and_si256(x, p);
-                __m256i lo = _mm256_shuffle_epi8(lookup, _mm256_and_si256(v, nibble_mask));
-                __m256i hi = _mm256_shuffle_epi8(
-                    lookup, _mm256_and_si256(_mm256_srli_epi16(v, 4), nibble_mask));
-                __m256i byte_cnt = _mm256_add_epi8(lo, hi);
-                __m256i popcnt64 = _mm256_sad_epu8(byte_cnt, zero);
-                acc = _mm256_add_epi64(acc, _mm256_slli_epi64(popcnt64, bp));
-            }
+        // Process 16 bytes at a time: broadcast x, load 2 bitplanes per 256-bit
+        for (; i + 16 <= num_bytes; i += 16) {
+            __m128i x128 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i));
+            __m256i x = _mm256_broadcastsi128_si256(x128);
+            const uint8_t* chunk = planes_interleaved + i * qb;
+            // bp0+bp1 in one 256-bit load
+            __m256i p01 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(chunk));
+            __m256i v01 = _mm256_and_si256(x, p01);
+            __m256i lo01 = _mm256_shuffle_epi8(lookup, _mm256_and_si256(v01, nibble_mask));
+            __m256i hi01 = _mm256_shuffle_epi8(
+                lookup, _mm256_and_si256(_mm256_srli_epi16(v01, 4), nibble_mask));
+            __m256i cnt01 = _mm256_sad_epu8(_mm256_add_epi8(lo01, hi01), zero);
+            // lane0,1 = bp0 popcounts (shift 0), lane2,3 = bp1 popcounts (shift 1)
+            __m256i shift01 = _mm256_set_epi64x(1, 1, 0, 0);
+            acc = _mm256_add_epi64(acc, _mm256_sllv_epi64(cnt01, shift01));
+            // bp2+bp3
+            __m256i p23 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(chunk + 32));
+            __m256i v23 = _mm256_and_si256(x, p23);
+            __m256i lo23 = _mm256_shuffle_epi8(lookup, _mm256_and_si256(v23, nibble_mask));
+            __m256i hi23 = _mm256_shuffle_epi8(
+                lookup, _mm256_and_si256(_mm256_srli_epi16(v23, 4), nibble_mask));
+            __m256i cnt23 = _mm256_sad_epu8(_mm256_add_epi8(lo23, hi23), zero);
+            __m256i shift23 = _mm256_set_epi64x(3, 3, 2, 2);
+            acc = _mm256_add_epi64(acc, _mm256_sllv_epi64(cnt23, shift23));
         }
         __m128i lo128 = _mm256_castsi256_si128(acc);
         __m128i hi128 = _mm256_extracti128_si256(acc, 1);
         __m128i sum128 = _mm_add_epi64(lo128, hi128);
         __m128i hi64 = _mm_unpackhi_epi64(sum128, sum128);
         uint32_t result = static_cast<uint32_t>(_mm_cvtsi128_si64(_mm_add_epi64(sum128, hi64)));
+        // Scalar tail
         for (; i < num_bytes; ++i) {
+            size_t chunk_idx = i / 16;
+            size_t byte_in_chunk = i % 16;
             for (int bp = 0; bp < qb; ++bp) {
-                result += static_cast<uint32_t>(
-                    __builtin_popcount(data[i] & (planes_base + bp * plane_stride)[i])) << bp;
+                result += static_cast<uint32_t>(__builtin_popcount(
+                    data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
+                )) << bp;
             }
         }
         return result;

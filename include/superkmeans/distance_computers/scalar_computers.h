@@ -138,36 +138,37 @@ class ScalarComputer<DistanceFunction::l2, Quantization::b8> {
     };
 
     /**
-     * @brief Fused multi-bitplane popcount: sum over bp of (popcount(data AND plane_bp) << bp).
-     * Loads data once and reuses across all qb bitplanes.
-     * @param data Binary data vector (packed bytes)
-     * @param planes_base Pointer to bitplane 0 (stride plane_stride to next)
-     * @param plane_stride Byte offset between consecutive bitplanes
-     * @param num_bytes Number of bytes per vector
-     * @param qb Number of bitplanes
+     * @brief Fused multi-bitplane popcount on chunk-interleaved layout.
+     * Layout: for each 16B data chunk, qb×16B of bitplane data contiguous.
      */
     static uint32_t HorizontalMultiPlane(
         const data_t* SKM_RESTRICT data,
-        const data_t* planes_base,
-        size_t plane_stride,
+        const data_t* planes_interleaved,
         size_t num_bytes,
         int qb
     ) {
         uint32_t result = 0;
-        const uint64_t* d64 = reinterpret_cast<const uint64_t*>(data);
-        size_t n_words = num_bytes / 8;
-        for (size_t i = 0; i < n_words; ++i) {
-            uint64_t x = d64[i];
-            for (int bp = 0; bp < qb; ++bp) {
-                const uint64_t* p64 = reinterpret_cast<const uint64_t*>(
-                    planes_base + bp * plane_stride);
-                result += static_cast<uint32_t>(__builtin_popcountll(x & p64[i])) << bp;
+        size_t i = 0;
+        // Process 16-byte chunks using uint64 words
+        for (; i + 16 <= num_bytes; i += 16) {
+            const uint64_t* d64 = reinterpret_cast<const uint64_t*>(data + i);
+            for (int w = 0; w < 2; ++w) {
+                uint64_t x = d64[w];
+                for (int bp = 0; bp < qb; ++bp) {
+                    const uint64_t* p64 = reinterpret_cast<const uint64_t*>(
+                        planes_interleaved + i * qb + bp * 16);
+                    result += static_cast<uint32_t>(__builtin_popcountll(x & p64[w])) << bp;
+                }
             }
         }
-        for (size_t i = n_words * 8; i < num_bytes; ++i) {
+        // Byte tail
+        for (; i < num_bytes; ++i) {
+            size_t chunk_idx = i / 16;
+            size_t byte_in_chunk = i % 16;
             for (int bp = 0; bp < qb; ++bp) {
-                result += static_cast<uint32_t>(
-                    __builtin_popcount(data[i] & (planes_base + bp * plane_stride)[i])) << bp;
+                result += static_cast<uint32_t>(__builtin_popcount(
+                    data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
+                )) << bp;
             }
         }
         return result;
