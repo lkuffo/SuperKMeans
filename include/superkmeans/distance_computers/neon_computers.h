@@ -6,6 +6,7 @@
 
 #include "arm_neon.h"
 #include "superkmeans/common.h"
+#include "superkmeans/distance_computers/scalar_computers.h"
 
 namespace skmeans {
 
@@ -490,34 +491,20 @@ class SIMDFastScanComputer {
         size_t blk_count
     ) {
         if (blk_count == kBlockSize) {
-            ScanBlockNeon<WideAdd>(packed, lut, binary_bytes, out_dot);
+            ScanBlockNeon(packed, lut, binary_bytes, out_dot);
             return;
         }
-        ScanBlockScalar(packed, lut, binary_bytes, out_dot, blk_count);
+        ScalarFastScanComputer::ScanBlock<WideAdd>(packed, lut, binary_bytes, out_dot, blk_count);
     }
 
   private:
-    static void ScanBlockScalar(
-        const uint8_t* packed,
-        const uint8_t* lut,
-        size_t binary_bytes,
-        uint16_t* out_dot,
-        size_t blk_count
-    ) {
-        std::memset(out_dot, 0, kBlockSize * sizeof(uint16_t));
-        for (size_t b = 0; b < binary_bytes; ++b) {
-            const uint8_t* lut_lo = lut + (2 * b) * 16;
-            const uint8_t* lut_hi = lut + (2 * b + 1) * 16;
-            const uint8_t* row = packed + b * kBlockSize;
-            for (size_t k = 0; k < blk_count; ++k) {
-                uint8_t byte = row[k];
-                out_dot[k] += static_cast<uint16_t>(lut_lo[byte & 0x0F])
-                            + static_cast<uint16_t>(lut_hi[byte >> 4]);
-            }
-        }
-    }
-
-    template<bool WideAdd = false>
+    /**
+     * @brief NEON FastScan for nibble-split kPerm0-packed data.
+     *
+     * Loads lo/hi codes and LUTs as 4 separate 16B loads per byte position.
+     * Combines lo+hi per-vector as u8, widens to u16 and accumulates.
+     * Final vuzp deinterleave from kPerm0 to natural order.
+     */
     static void ScanBlockNeon(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -526,38 +513,54 @@ class SIMDFastScanComputer {
     ) {
         const uint8x16_t mask_0f = vdupq_n_u8(0x0F);
 
-        for (int half = 0; half < 2; ++half) {
-            uint16x8_t acc_lo = vdupq_n_u16(0);
-            uint16x8_t acc_hi = vdupq_n_u16(0);
+        // 4 accumulators: A = lo-nibble extract (vecs kPerm0[j]),
+        //                 B = hi-nibble extract (vecs kPerm0[j]+16)
+        uint16x8_t acc_A_lo = vdupq_n_u16(0);
+        uint16x8_t acc_A_hi = vdupq_n_u16(0);
+        uint16x8_t acc_B_lo = vdupq_n_u16(0);
+        uint16x8_t acc_B_hi = vdupq_n_u16(0);
 
-            for (size_t b = 0; b < binary_bytes; ++b) {
-                uint8x16_t lut_lo_vec = vld1q_u8(lut + (2 * b) * 16);
-                uint8x16_t lut_hi_vec = vld1q_u8(lut + (2 * b + 1) * 16);
-                uint8x16_t data = vld1q_u8(packed + b * kBlockSize + half * 16);
+        for (size_t b = 0; b < binary_bytes; ++b) {
+            uint8x16_t lo_lut_vec = vld1q_u8(lut + b * 32);
+            uint8x16_t hi_lut_vec = vld1q_u8(lut + b * 32 + 16);
 
-                uint8x16_t lo_idx = vandq_u8(data, mask_0f);
-                uint8x16_t hi_idx = vshrq_n_u8(data, 4);
+            uint8x16_t lo_codes = vld1q_u8(packed + b * kBlockSize);
+            uint8x16_t hi_codes = vld1q_u8(packed + b * kBlockSize + 16);
 
-                uint8x16_t res_lo = vqtbl1q_u8(lut_lo_vec, lo_idx);
-                uint8x16_t res_hi = vqtbl1q_u8(lut_hi_vec, hi_idx);
+            // Extract indices: lo nibble = vecA, hi nibble = vecB
+            uint8x16_t lo_idx_A = vandq_u8(lo_codes, mask_0f);
+            uint8x16_t lo_idx_B = vshrq_n_u8(lo_codes, 4);
+            uint8x16_t hi_idx_A = vandq_u8(hi_codes, mask_0f);
+            uint8x16_t hi_idx_B = vshrq_n_u8(hi_codes, 4);
 
-                if constexpr (WideAdd) {
-                    // Widen each to u16 before adding — safe for LUT entries > 127
-                    acc_lo = vaddw_u8(acc_lo, vget_low_u8(res_lo));
-                    acc_lo = vaddw_u8(acc_lo, vget_low_u8(res_hi));
-                    acc_hi = vaddw_u8(acc_hi, vget_high_u8(res_lo));
-                    acc_hi = vaddw_u8(acc_hi, vget_high_u8(res_hi));
-                } else {
-                    // Add in u8 first (safe when LUT entries ≤ 127, e.g. RaBitQ)
-                    uint8x16_t partial = vaddq_u8(res_lo, res_hi);
-                    acc_lo = vaddw_u8(acc_lo, vget_low_u8(partial));
-                    acc_hi = vaddw_u8(acc_hi, vget_high_u8(partial));
-                }
-            }
+            // Lookups
+            uint8x16_t res_lo_A = vqtbl1q_u8(lo_lut_vec, lo_idx_A);
+            uint8x16_t res_hi_A = vqtbl1q_u8(hi_lut_vec, hi_idx_A);
+            uint8x16_t res_lo_B = vqtbl1q_u8(lo_lut_vec, lo_idx_B);
+            uint8x16_t res_hi_B = vqtbl1q_u8(hi_lut_vec, hi_idx_B);
 
-            vst1q_u16(out_dot + half * 16, acc_lo);
-            vst1q_u16(out_dot + half * 16 + 8, acc_hi);
+            // Combine lo+hi for each vector set, widen and accumulate
+            uint8x16_t total_A = vaddq_u8(res_lo_A, res_hi_A);
+            uint8x16_t total_B = vaddq_u8(res_lo_B, res_hi_B);
+
+            acc_A_lo = vaddw_u8(acc_A_lo, vget_low_u8(total_A));
+            acc_A_hi = vaddw_u8(acc_A_hi, vget_high_u8(total_A));
+            acc_B_lo = vaddw_u8(acc_B_lo, vget_low_u8(total_B));
+            acc_B_hi = vaddw_u8(acc_B_hi, vget_high_u8(total_B));
         }
+
+        // Deinterleave from kPerm0 order to natural order
+        // acc_A_lo = {v0,v8,v1,v9,v2,v10,v3,v11}, acc_A_hi = {v4,v12,v5,v13,v6,v14,v7,v15}
+        // vuzp1 takes even indices, vuzp2 takes odd indices
+        uint16x8_t out_0_7   = vuzp1q_u16(acc_A_lo, acc_A_hi);  // {v0,v1,v2,v3,v4,v5,v6,v7}
+        uint16x8_t out_8_15  = vuzp2q_u16(acc_A_lo, acc_A_hi);  // {v8,v9,...,v15}
+        uint16x8_t out_16_23 = vuzp1q_u16(acc_B_lo, acc_B_hi);  // {v16,...,v23}
+        uint16x8_t out_24_31 = vuzp2q_u16(acc_B_lo, acc_B_hi);  // {v24,...,v31}
+
+        vst1q_u16(out_dot, out_0_7);
+        vst1q_u16(out_dot + 8, out_8_15);
+        vst1q_u16(out_dot + 16, out_16_23);
+        vst1q_u16(out_dot + 24, out_24_31);
     }
 };
 

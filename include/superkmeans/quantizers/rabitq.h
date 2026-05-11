@@ -109,6 +109,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         float* out_distances,
         float* tmp_buf
     ) const override {
+        SKM_PROFILE_SCOPE("RaBitQ::Search::FastScanDistance");
         assert(fitted_);
         (void)y;
         (void)x_float;
@@ -142,7 +143,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         std::fill_n(out_knn, n_x, 0u);
 
         {
-            SKM_PROFILE_SCOPE("RaBitQ::FastScanDistance");
+            SKM_PROFILE_SCOPE("RaBitQ::Search::FastScanDistance");
 #pragma omp parallel for num_threads(g_n_threads)
             for (size_t blk = 0; blk < n_blocks; ++blk) {
                 const size_t blk_start = blk * FastScanComputer::kBlockSize;
@@ -672,22 +673,38 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-    /// Byte-level matrix transpose: extract binary codes from n points
-    /// and write them in column-major order for SIMD scanning.
+    /// Nibble-split transpose with kPerm0 interleaving for fast SIMD scanning.
     ///
-    /// Input:  codes[i] has binary_bytes_ bytes at offset i * faiss_code_size_
-    /// Output: packed[b * FastScanComputer::kBlockSize + k] = codes[blk_start + k][b]
+    /// For each byte position b, output layout (32 bytes):
+    ///   out[0..15]:  lo nibbles, kPerm0-interleaved, 2 vectors per byte
+    ///   out[16..31]: hi nibbles, kPerm0-interleaved, 2 vectors per byte
+    ///
+    /// This allows a single 256-bit LUT load (lo_LUT|hi_LUT) and
+    /// vpshufb per-lane to match codes to correct LUTs without broadcasts.
+    static constexpr int kPerm0[16] = {
+        0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15
+    };
+
     void TransposeBlock(
         const uint8_t* codes, size_t blk_start, size_t blk_count,
         uint8_t* packed
     ) const {
-        // Zero the entire block (handles partial blocks where blk_count < 32)
         std::memset(packed, 0, binary_bytes_ * FastScanComputer::kBlockSize);
 
-        for (size_t k = 0; k < blk_count; ++k) {
-            const uint8_t* src = codes + (blk_start + k) * faiss_code_size_;
-            for (size_t b = 0; b < binary_bytes_; ++b) {
-                packed[b * FastScanComputer::kBlockSize + k] = src[b];
+        for (size_t b = 0; b < binary_bytes_; ++b) {
+            uint8_t* out = packed + b * FastScanComputer::kBlockSize;
+
+            // Gather byte b from each of the 32 vectors
+            uint8_t col[32] = {0};
+            for (size_t k = 0; k < blk_count; ++k) {
+                col[k] = codes[(blk_start + k) * faiss_code_size_ + b];
+            }
+
+            for (int j = 0; j < 16; ++j) {
+                const int vA = kPerm0[j];
+                const int vB = kPerm0[j] + 16;
+                out[j]      = (col[vA] & 0x0F) | ((col[vB] & 0x0F) << 4);
+                out[j + 16] = (col[vA] >> 4)    | ((col[vB] >> 4) << 4);
             }
         }
     }

@@ -589,60 +589,69 @@ class SIMDFastScanComputer {
         size_t blk_count
     ) {
         if (blk_count == kBlockSize) {
-            ScanBlockAVX2<WideAdd>(packed, lut, binary_bytes, out_dot);
+            ScanBlockAVX2(packed, lut, binary_bytes, out_dot);
             return;
         }
         ScalarFastScanComputer::ScanBlock<WideAdd>(packed, lut, binary_bytes, out_dot, blk_count);
     }
 
   private:
-    template<bool WideAdd = false>
+    /**
+     * @brief AVX2 FastScan for nibble-split kPerm0-packed data.
+     *
+     * Single 256-bit LUT load per byte position (no broadcasts).
+     * Interleaved u16 accumulation trick avoids per-iteration widening.
+     * Output: 32 uint16 in natural vector order 0..31.
+     */
     static void ScanBlockAVX2(
         const uint8_t* packed,
         const uint8_t* lut,
         size_t binary_bytes,
         uint16_t* out_dot
     ) {
-        const __m256i mask_0f = _mm256_set1_epi8(0x0F);
+        const __m256i lo_mask = _mm256_set1_epi8(0x0F);
 
-        __m256i acc0 = _mm256_setzero_si256();
-        __m256i acc1 = _mm256_setzero_si256();
+        __m256i accu0 = _mm256_setzero_si256();
+        __m256i accu1 = _mm256_setzero_si256();
+        __m256i accu2 = _mm256_setzero_si256();
+        __m256i accu3 = _mm256_setzero_si256();
 
         for (size_t b = 0; b < binary_bytes; ++b) {
-            __m128i lut_lo_128 = _mm_loadu_si128(
-                reinterpret_cast<const __m128i*>(lut + (2 * b) * 16));
-            __m128i lut_hi_128 = _mm_loadu_si128(
-                reinterpret_cast<const __m128i*>(lut + (2 * b + 1) * 16));
-            __m256i lut_lo_vec = _mm256_broadcastsi128_si256(lut_lo_128);
-            __m256i lut_hi_vec = _mm256_broadcastsi128_si256(lut_hi_128);
-
-            __m256i data = _mm256_loadu_si256(
+            __m256i c   = _mm256_loadu_si256(
                 reinterpret_cast<const __m256i*>(packed + b * kBlockSize));
+            __m256i tab = _mm256_loadu_si256(
+                reinterpret_cast<const __m256i*>(lut + b * 32));
 
-            __m256i lo_idx = _mm256_and_si256(data, mask_0f);
-            __m256i hi_idx = _mm256_and_si256(_mm256_srli_epi16(data, 4), mask_0f);
+            __m256i lo = _mm256_and_si256(c, lo_mask);
+            __m256i hi = _mm256_and_si256(_mm256_srli_epi16(c, 4), lo_mask);
 
-            __m256i res_lo = _mm256_shuffle_epi8(lut_lo_vec, lo_idx);
-            __m256i res_hi = _mm256_shuffle_epi8(lut_hi_vec, hi_idx);
+            __m256i res_lo = _mm256_shuffle_epi8(tab, lo);
+            __m256i res_hi = _mm256_shuffle_epi8(tab, hi);
 
-            if constexpr (WideAdd) {
-                __m256i lo16_a = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(res_lo));
-                __m256i hi16_a = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(res_lo, 1));
-                __m256i lo16_b = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(res_hi));
-                __m256i hi16_b = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(res_hi, 1));
-                acc0 = _mm256_add_epi16(acc0, _mm256_add_epi16(lo16_a, lo16_b));
-                acc1 = _mm256_add_epi16(acc1, _mm256_add_epi16(hi16_a, hi16_b));
-            } else {
-                __m256i partial = _mm256_add_epi8(res_lo, res_hi);
-                __m256i lo16 = _mm256_cvtepu8_epi16(_mm256_castsi256_si128(partial));
-                __m256i hi16 = _mm256_cvtepu8_epi16(_mm256_extracti128_si256(partial, 1));
-                acc0 = _mm256_add_epi16(acc0, lo16);
-                acc1 = _mm256_add_epi16(acc1, hi16);
-            }
+            accu0 = _mm256_add_epi16(accu0, res_lo);
+            accu1 = _mm256_add_epi16(accu1, _mm256_srli_epi16(res_lo, 8));
+            accu2 = _mm256_add_epi16(accu2, res_hi);
+            accu3 = _mm256_add_epi16(accu3, _mm256_srli_epi16(res_hi, 8));
         }
 
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(out_dot), acc0);
-        _mm256_storeu_si256(reinterpret_cast<__m256i*>(out_dot + 16), acc1);
+        // Fix up: remove odd-byte contamination
+        accu0 = _mm256_sub_epi16(accu0, _mm256_slli_epi16(accu1, 8));
+        accu2 = _mm256_sub_epi16(accu2, _mm256_slli_epi16(accu3, 8));
+
+        // Cross-lane reduction: sum lo+hi nibble contributions
+        // accu0 lane0=lo_vecs_0_7, lane1=hi_vecs_0_7 → sum = total_vecs_0_7
+        // accu1 lane0=lo_vecs_8_15, lane1=hi_vecs_8_15 → sum = total_vecs_8_15
+        __m256i dis0 = _mm256_add_epi16(
+            _mm256_permute2f128_si256(accu0, accu1, 0x21),
+            _mm256_blend_epi32(accu0, accu1, 0xF0)
+        );
+        __m256i dis1 = _mm256_add_epi16(
+            _mm256_permute2f128_si256(accu2, accu3, 0x21),
+            _mm256_blend_epi32(accu2, accu3, 0xF0)
+        );
+
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(out_dot), dis0);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(out_dot + 16), dis1);
     }
 };
 

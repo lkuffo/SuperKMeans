@@ -320,6 +320,11 @@ class ScalarFastScanComputer {
         }
     }
 
+    /// kPerm0 interleaving used by nibble-split TransposeBlock.
+    static constexpr int kPerm0[16] = {
+        0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15
+    };
+
     template<bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,
@@ -328,17 +333,22 @@ class ScalarFastScanComputer {
         uint16_t* out_dot,
         size_t blk_count
     ) {
-        // Scalar path is already safe (casts to u16 before adding).
         (void)sizeof(WideAdd);
+        (void)blk_count;
         std::memset(out_dot, 0, kBlockSize * sizeof(uint16_t));
         for (size_t b = 0; b < binary_bytes; ++b) {
-            const uint8_t* lut_lo = lut + (2 * b) * 16;
-            const uint8_t* lut_hi = lut + (2 * b + 1) * 16;
+            const uint8_t* lut_lo = lut + b * 32;
+            const uint8_t* lut_hi = lut + b * 32 + 16;
             const uint8_t* row = packed + b * kBlockSize;
-            for (size_t k = 0; k < blk_count; ++k) {
-                uint8_t byte = row[k];
-                out_dot[k] += static_cast<uint16_t>(lut_lo[byte & 0x0F])
-                            + static_cast<uint16_t>(lut_hi[byte >> 4]);
+            for (int j = 0; j < 16; ++j) {
+                const uint8_t lo_byte = row[j];
+                const uint8_t hi_byte = row[j + 16];
+                const int vA = kPerm0[j];
+                const int vB = kPerm0[j] + 16;
+                out_dot[vA] += static_cast<uint16_t>(lut_lo[lo_byte & 0x0F])
+                             + static_cast<uint16_t>(lut_hi[hi_byte & 0x0F]);
+                out_dot[vB] += static_cast<uint16_t>(lut_lo[lo_byte >> 4])
+                             + static_cast<uint16_t>(lut_hi[hi_byte >> 4]);
             }
         }
     }
