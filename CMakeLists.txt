@@ -132,7 +132,7 @@ if(SKMEANS_ENABLE_RABITQ)
     set(FAISS_OPT_LEVEL "generic" CACHE STRING "" FORCE)
     FetchContent_Declare(faiss
         GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
-        GIT_TAG v1.11.0
+        GIT_TAG main
     )
     FetchContent_MakeAvailable(faiss)
     list(APPEND _SKMEANS_LINK_LIBS faiss)
@@ -148,6 +148,28 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(numkong)
+
+# ── Ruy (Google matrix multiplication, for SQ8 pruning) ──
+if(NOT TARGET cpuinfo::cpuinfo)
+    FetchContent_Declare(cpuinfo
+        GIT_REPOSITORY https://github.com/pytorch/cpuinfo.git
+        GIT_TAG main
+        GIT_SHALLOW TRUE
+    )
+    set(CPUINFO_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(CPUINFO_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+    set(CPUINFO_BUILD_MOCK_TESTS OFF CACHE BOOL "" FORCE)
+    set(CPUINFO_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(cpuinfo)
+endif()
+
+FetchContent_Declare(ruy
+    GIT_REPOSITORY https://github.com/google/ruy.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+)
+set(RUY_MINIMAL_BUILD ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(ruy)
 
 # ── INTERFACE library target ──
 add_library(superkmeans INTERFACE)
@@ -181,7 +203,7 @@ target_include_directories(superkmeans ${_SKMEANS_SYSTEM} INTERFACE
     ${_SKMEANS_INCLUDE_DIRS}
 )
 
-target_link_libraries(superkmeans INTERFACE ${_SKMEANS_LINK_LIBS} numkong)
+target_link_libraries(superkmeans INTERFACE ${_SKMEANS_LINK_LIBS} numkong ruy::ruy)
 target_compile_definitions(superkmeans INTERFACE ${_SKMEANS_COMPILE_DEFS})
 target_compile_features(superkmeans INTERFACE cxx_std_17)
 

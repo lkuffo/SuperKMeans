@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <numkong/numkong.h>
+#include "ruy/ruy.h"
 
 namespace skmeans {
 
@@ -360,35 +361,33 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
                 {
                     SKM_PROFILE_SCOPE("search/blas");
-                    // Pack y for partial_d dimensions (stride = d for full vectors)
-                    const size_t packed_size = nk_dots_packed_size_u8(batch_n_y, partial_d);
-                    if (packed_size > packed_buf.size()) packed_buf.resize(packed_size);
-                    nk_dots_pack_u8(y + j * d, batch_n_y, partial_d, d, packed_buf.data());
 
-                    const size_t c_stride = batch_n_y * sizeof(uint32_t);
+                    ruy_context.set_max_num_threads(g_n_threads);
 
-                    // Compute partial u8 dot products via NumKong
-#pragma omp parallel num_threads(g_n_threads)
-                    {
-                        nk_configure_thread(nk_capabilities());
-                        int tid = omp_get_thread_num();
-                        int nt = omp_get_num_threads();
-                        size_t rows_per_t = (batch_n_x + nt - 1) / nt;
-                        size_t start = tid * rows_per_t;
-                        size_t count = std::min(rows_per_t, batch_n_x - start);
-                        if (start < batch_n_x && count > 0) {
-                            nk_dots_packed_u8(
-                                x + (i + start) * d,
-                                packed_buf.data(),
-                                pruning_dots_buf.data() + start * batch_n_y,
-                                count,
-                                batch_n_y,
-                                partial_d,
-                                d,
-                                c_stride
-                            );
-                        }
-                    }
+                    ruy::Matrix<std::uint8_t> lhs;
+                    lhs.mutable_layout()->set_rows(batch_n_x);
+                    lhs.mutable_layout()->set_cols(partial_d);
+                    lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                    lhs.mutable_layout()->set_stride(d);
+                    lhs.set_data(x + i * d);
+
+                    ruy::Matrix<std::uint8_t> rhs;
+                    rhs.mutable_layout()->set_rows(partial_d);
+                    rhs.mutable_layout()->set_cols(batch_n_y);
+                    rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
+                    rhs.mutable_layout()->set_stride(d);
+                    rhs.set_data(y + j * d);
+
+                    ruy::Matrix<std::int32_t> dst;
+                    dst.mutable_layout()->set_rows(batch_n_x);
+                    dst.mutable_layout()->set_cols(batch_n_y);
+                    dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                    dst.mutable_layout()->set_stride(batch_n_y);
+                    dst.set_data(reinterpret_cast<std::int32_t*>(
+                        pruning_dots_buf.data()));
+
+                    ruy::MulParams<std::int32_t, std::int32_t> mul_params;
+                    ruy::Mul(lhs, rhs, mul_params, &ruy_context, &dst);
                 }
 
                 {
@@ -478,6 +477,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     mutable std::vector<float> nn_dists_buf;
     mutable std::vector<uint32_t> pruning_dots_buf;
     mutable std::vector<char> packed_buf;
+    mutable ruy::Context ruy_context;
 };
 
 } // namespace skmeans
