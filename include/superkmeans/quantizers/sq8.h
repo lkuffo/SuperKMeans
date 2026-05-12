@@ -41,6 +41,12 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
     static constexpr uint8_t MAX_VALUE = 255;
 
+#if defined(__ARM_NEON)
+    static constexpr bool is_arm = true;
+#else
+    static constexpr bool is_arm = false;
+#endif
+
     SQ8Quantizer() {
         cpuinfo_initialize();
         has_amx = cpuinfo_has_x86_amx_int8();
@@ -66,8 +72,8 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         size_t a_stride,
         size_t b_stride
     ) const {
-#if !defined(__ARM_NEON)
-        if (has_amx || k > THIN_MATRIX_THRESHOLD) {
+        // NumKong u8 path: AMX or wide matrices on x86
+        if (!is_arm && (has_amx || k > THIN_MATRIX_THRESHOLD)) {
             const size_t pack_size = nk_dots_packed_size_u8(n, k);
             if (pack_size > centroids_nk_packed_buf.size()) centroids_nk_packed_buf.resize(pack_size);
             nk_dots_pack_u8(b, n, k, b_stride, centroids_nk_packed_buf.data());
@@ -94,8 +100,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
             }
             return;
         }
-#endif
-        // Ruy path: OMP over row strips, single-threaded ruy per strip
+        // Ruy path: ARM always, x86 for thin matrices
 #pragma omp parallel for num_threads(g_n_threads) schedule(static)
         for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
             const size_t row_start = t * m / g_n_threads;

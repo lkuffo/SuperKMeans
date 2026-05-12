@@ -41,6 +41,12 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
 
     static constexpr uint8_t MAX_VALUE = 15;
 
+#if defined(__ARM_NEON)
+    static constexpr bool is_arm = true;
+#else
+    static constexpr bool is_arm = false;
+#endif
+
     SQ4Quantizer() {
         cpuinfo_initialize();
         has_amx = cpuinfo_has_x86_amx_int8();
@@ -90,8 +96,13 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         bool a_changed = true,
         bool b_changed = true
     ) const {
-        // On-the-fly decoding path: unpack u4→u8, then use u8 GEMM (NumKong or Ruy)
-        if (has_amx || on_the_fly_decoding) {
+        // Decode u4→u8 when beneficial:
+        //   AMX:   always (AMX has native int8 tiles, no 4-bit)
+        //   ARM:   always (Ruy u8 wins)
+        //   Other: only for thin k (Ruy u8 beats NumKong u4 on small matrices)
+        const bool decode_to_u8 = has_amx || is_arm || (k <= THIN_MATRIX_THRESHOLD);
+
+        if (decode_to_u8) {
             {
                 SKM_PROFILE_SCOPE("search/unpack");
                 if (a_changed) {
@@ -106,8 +117,8 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
                 }
             }
 
-#if !defined(__ARM_NEON)
-            if (has_amx || k > THIN_MATRIX_THRESHOLD) {
+            // NumKong u8 path: only on AMX (is_arm is constexpr, compiler eliminates this on ARM)
+            if (!is_arm && has_amx) {
                 if (b_changed) {
                     const size_t pack_size = nk_dots_packed_size_u8(n, k);
                     if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
@@ -136,8 +147,8 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
                 }
                 return;
             }
-#endif
-            // Ruy u8 path: OMP over row strips, single-threaded ruy per strip
+
+            // Ruy u8 path: ARM always, x86 for thin matrices
 #pragma omp parallel for num_threads(g_n_threads) schedule(static)
             for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
                 const size_t row_start = t * m / g_n_threads;
@@ -174,7 +185,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
             return;
         }
 
-        // Native u4 NumKong path (no decoding)
+        // Native u4 NumKong path: x86 without AMX, wide matrices
         const auto* a_u4 = reinterpret_cast<const nk_u4x2_t*>(a);
         const auto* b_u4 = reinterpret_cast<const nk_u4x2_t*>(b);
 
@@ -619,7 +630,6 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
     ScalarQuantizationParams params{};
     bool fitted = false;
     bool has_amx = false;
-    bool on_the_fly_decoding = true;
     std::vector<uint32_t> cached_data_partial_norms;
     std::vector<uint32_t> cached_centroid_partial_norms;
     mutable std::vector<uint32_t> pruning_dots_buf;
