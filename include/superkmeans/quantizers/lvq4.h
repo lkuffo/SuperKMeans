@@ -12,7 +12,9 @@
 #include <omp.h>
 #include <vector>
 
+#include <Eigen/Dense>
 #include <numkong/numkong.h>
+#include "ruy/ruy.h"
 
 namespace skmeans {
 
@@ -40,6 +42,9 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
   public:
     using quantized_t = IQuantizer::quantized_t;
     using u4_computer = DistanceComputer<DistanceFunction::l2, Quantization::u4>;
+    using u4_utils = UtilsComputer<Quantization::u4>;
+
+    LVQ4Quantizer() : has_amx(DetectAMX()) {}
 
     void Fit(const float* /*data*/, size_t /*n*/, size_t d) override {
         SKM_PROFILE_SCOPE("LVQ4::Fit");
@@ -50,6 +55,146 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         dots_buf_.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         packed_buf_.resize(nk_dots_packed_size_u4(Y_BATCH_SIZE, d));
         fitted_ = true;
+    }
+
+    static void UnpackU4x2ToU8(
+        const quantized_t* src, uint8_t* dst,
+        size_t n_rows, size_t k, size_t row_stride
+    ) {
+#pragma omp parallel for num_threads(g_n_threads)
+        for (size_t row = 0; row < n_rows; ++row) {
+            u4_utils::UnpackU4x2ToU8(src + row * row_stride, dst + row * k, k);
+        }
+    }
+
+    void MatrixMultiplication(
+        const quantized_t* a,
+        const quantized_t* b,
+        uint32_t* out,
+        size_t m,
+        size_t n,
+        size_t k,
+        size_t a_stride,
+        size_t b_stride,
+        bool a_changed = true,
+        bool b_changed = true
+    ) const {
+        const bool decode_to_u8 = has_amx || IS_ARM || (k <= THIN_MATRIX_THRESHOLD);
+
+        if (decode_to_u8) {
+            {
+                SKM_PROFILE_SCOPE("search/unpack");
+                if (a_changed) {
+                    const size_t a_u8_size = m * k;
+                    if (decoded_a_buf.size() < a_u8_size) decoded_a_buf.resize(a_u8_size);
+                    UnpackU4x2ToU8(a, decoded_a_buf.data(), m, k, a_stride);
+                }
+                if (b_changed) {
+                    const size_t b_u8_size = n * k;
+                    if (decoded_b_buf.size() < b_u8_size) decoded_b_buf.resize(b_u8_size);
+                    UnpackU4x2ToU8(b, decoded_b_buf.data(), n, k, b_stride);
+                }
+            }
+
+            // NumKong u8 path: only on AMX
+            if (!IS_ARM && has_amx) {
+                if (b_changed) {
+                    const size_t pack_size = nk_dots_packed_size_u8(n, k);
+                    if (pack_size > packed_buf_.size()) packed_buf_.resize(pack_size);
+                    nk_dots_pack_u8(decoded_b_buf.data(), n, k, k, packed_buf_.data());
+                }
+
+                const size_t c_stride = n * sizeof(uint32_t);
+
+#pragma omp parallel num_threads(g_n_threads)
+                {
+                    nk_configure_thread(nk_capabilities());
+                    int tid = omp_get_thread_num();
+                    int nt = omp_get_num_threads();
+                    size_t rows_per_t = (m + nt - 1) / nt;
+                    size_t start = tid * rows_per_t;
+                    size_t count = std::min(rows_per_t, m - start);
+                    if (start < m && count > 0) {
+                        nk_dots_packed_u8(
+                            decoded_a_buf.data() + start * k,
+                            packed_buf_.data(),
+                            out + start * n,
+                            count, n, k,
+                            k, c_stride
+                        );
+                    }
+                }
+                return;
+            }
+
+            // Ruy u8 path: ARM always, x86 for thin matrices
+#pragma omp parallel for num_threads(g_n_threads) schedule(static)
+            for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
+                const size_t row_start = t * m / g_n_threads;
+                const size_t row_end = (t + 1) * m / g_n_threads;
+                const size_t local_rows = row_end - row_start;
+                if (local_rows == 0) continue;
+
+                thread_local ruy::Context ctx;
+                ctx.set_max_num_threads(1);
+
+                ruy::Matrix<std::uint8_t> lhs;
+                lhs.mutable_layout()->set_rows(local_rows);
+                lhs.mutable_layout()->set_cols(k);
+                lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                lhs.mutable_layout()->set_stride(k);
+                lhs.set_data(decoded_a_buf.data() + row_start * k);
+
+                ruy::Matrix<std::uint8_t> rhs;
+                rhs.mutable_layout()->set_rows(k);
+                rhs.mutable_layout()->set_cols(n);
+                rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
+                rhs.mutable_layout()->set_stride(k);
+                rhs.set_data(decoded_b_buf.data());
+
+                ruy::Matrix<std::int32_t> dst;
+                dst.mutable_layout()->set_rows(local_rows);
+                dst.mutable_layout()->set_cols(n);
+                dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                dst.mutable_layout()->set_stride(n);
+                dst.set_data(reinterpret_cast<std::int32_t*>(out + row_start * n));
+
+                ruy::MulParams<std::int32_t, std::int32_t> mul_params;
+                ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
+            }
+            return;
+        }
+
+        // Native u4 NumKong path: x86 without AMX, wide matrices
+        const auto* a_u4 = reinterpret_cast<const nk_u4x2_t*>(a);
+        const auto* b_u4 = reinterpret_cast<const nk_u4x2_t*>(b);
+
+        if (b_changed) {
+            const size_t pack_size = nk_dots_packed_size_u4(n, k);
+            if (pack_size > packed_buf_.size()) packed_buf_.resize(pack_size);
+            nk_dots_pack_u4(b_u4, n, k, b_stride, packed_buf_.data());
+        }
+
+        const size_t c_stride = n * sizeof(uint32_t);
+
+#pragma omp parallel num_threads(g_n_threads)
+        {
+            nk_configure_thread(nk_capabilities());
+            int tid = omp_get_thread_num();
+            int nt = omp_get_num_threads();
+            size_t rows_per_t = (m + nt - 1) / nt;
+            size_t start = tid * rows_per_t;
+            size_t count = std::min(rows_per_t, m - start);
+            if (start < m && count > 0) {
+                nk_dots_packed_u4(
+                    a_u4 + start * a_stride,
+                    packed_buf_.data(),
+                    out + start * n,
+                    count, n, k,
+                    a_stride, c_stride
+                );
+            }
+        }
     }
 
     void Encode(const float* in, quantized_t* out, size_t n, size_t d) const override {
@@ -145,24 +290,19 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         const float* /*norms_y*/,
         uint32_t* out_knn,
         float* out_distances,
-        float* /*tmp_buf*/
+        float* tmp_buf
     ) const override {
-        SKM_PROFILE_SCOPE("LVQ4::FindNearestNeighbor");
+        SKM_PROFILE_SCOPE("search");
+        SKM_PROFILE_SCOPE("search/1st_blas");
         assert(fitted_);
 
-        const uint8_t* x_codes = reinterpret_cast<const uint8_t*>(x);
-        const uint8_t* y_codes = reinterpret_cast<const uint8_t*>(y);
-
-        EnsureCodeFactorsCache(x_codes, n_x);
+        EnsureCodeFactorsCache(reinterpret_cast<const uint8_t*>(x), n_x);
 
         CentroidFactors cf;
-        ExtractCentroidFactors(y_codes, n_y, 0, 0, cf);
+        ExtractCentroidFactors(reinterpret_cast<const uint8_t*>(y), n_y, 0, 0, cf);
 
         std::fill_n(out_distances, n_x, std::numeric_limits<float>::max());
         std::fill_n(out_knn, n_x, 0u);
-
-        const auto* x_u4 = (const nk_u4x2_t*)x_codes;
-        const auto* y_u4 = (const nk_u4x2_t*)y_codes;
 
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             const size_t batch_n_x = std::min(X_BATCH_SIZE, n_x - i);
@@ -170,45 +310,24 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
 
-                {
-                    SKM_PROFILE_SCOPE("LVQ4::FindNearestNeighbor/gemm");
-                    // Pack centroid batch for NumKong
-                    const size_t pack_size = nk_dots_packed_size_u4(batch_n_y, d);
-                    if (pack_size > packed_buf_.size()) packed_buf_.resize(pack_size);
-                    nk_dots_pack_u4(
-                        y_u4 + j * code_size_, batch_n_y, d, code_size_, packed_buf_.data()
-                    );
+                const bool a_changed = (j == 0);
+                const bool b_changed = true;
 
-                    const size_t c_stride = batch_n_y * sizeof(uint32_t);
+                MatrixMultiplication(
+                    x + i * code_size_, y + j * code_size_,
+                    dots_buf_.data(),
+                    batch_n_x, batch_n_y, d, code_size_, code_size_,
+                    a_changed, b_changed
+                );
 
-#pragma omp parallel num_threads(g_n_threads)
-                    {
-                        nk_configure_thread(nk_capabilities());
-                        int tid = omp_get_thread_num();
-                        int nt = omp_get_num_threads();
-                        size_t rows_per_t = (batch_n_x + nt - 1) / nt;
-                        size_t start = tid * rows_per_t;
-                        size_t count = std::min(rows_per_t, batch_n_x - start);
-                        if (start < batch_n_x && count > 0) {
-                            nk_dots_packed_u4(
-                                x_u4 + (i + start) * code_size_,
-                                packed_buf_.data(),
-                                dots_buf_.data() + start * batch_n_y,
-                                count,
-                                batch_n_y,
-                                d,
-                                code_size_,
-                                c_stride
-                            );
-                        }
-                    }
-                }
-
-                // Apply LVQ4 distance formula per pair
+                // Apply LVQ4 distance formula and find nearest per row
+                using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+                Eigen::Map<MatrixR> dists_matrix(tmp_buf, batch_n_x, batch_n_y);
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const size_t idx = i + r;
                     const uint32_t* dots_row = dots_buf_.data() + r * batch_n_y;
+                    float* dists_row = tmp_buf + r * batch_n_y;
                     const float si = cached_scales_[idx];
                     const float bi = cached_biases_[idx];
                     const float norm_x_i = cached_norm_x_full_[idx];
@@ -216,17 +335,20 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                     const float two_A_x_i = 2.0f * cached_A_x_full_[idx];
                     const float two_bi = 2.0f * bi;
 
+                    SKM_VECTORIZE_LOOP
                     for (size_t c = 0; c < batch_n_y; ++c) {
                         const size_t j_idx = j + c;
-                        float dist = norm_x_i + cf.norm_y_full[j_idx]
-                                   - two_si * cf.scales[j_idx] * static_cast<float>(dots_row[c])
-                                   - two_A_x_i * cf.biases[j_idx]
-                                   - two_bi * cf.sj_sum_cy_full[j_idx];
+                        dists_row[c] = norm_x_i + cf.norm_y_full[j_idx]
+                                     - two_si * cf.scales[j_idx] * static_cast<float>(dots_row[c])
+                                     - two_A_x_i * cf.biases[j_idx]
+                                     - two_bi * cf.sj_sum_cy_full[j_idx];
+                    }
 
-                        if (dist < out_distances[idx]) {
-                            out_distances[idx] = dist;
-                            out_knn[idx] = static_cast<uint32_t>(j_idx);
-                        }
+                    uint32_t knn_idx;
+                    float batch_top_1 = dists_matrix.row(r).minCoeff(&knn_idx);
+                    if (batch_top_1 < out_distances[idx]) {
+                        out_distances[idx] = batch_top_1;
+                        out_knn[idx] = static_cast<uint32_t>(j + knn_idx);
                     }
                 }
             }
@@ -534,6 +656,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     size_t nibble_bytes_ = 0;      // d/2
     size_t code_size_ = 0;         // d/2 + 8
     bool fitted_ = false;
+    bool has_amx = false;
 
     // static constexpr size_t X_BATCH_SIZE = 65536;
     // static constexpr size_t Y_BATCH_SIZE = 256;
@@ -547,6 +670,8 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     // GEMM buffers
     mutable std::vector<uint32_t> dots_buf_;
     mutable std::vector<char> packed_buf_;
+    mutable std::vector<uint8_t> decoded_a_buf;
+    mutable std::vector<uint8_t> decoded_b_buf;
 
     // Pruning checkpoint caches
     mutable std::vector<uint32_t> cached_sum_cx_front_, cached_sum_cx_sq_front_;
