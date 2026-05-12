@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include <cpuinfo.h>
+#include <Eigen/Dense>
 #include <numkong/numkong.h>
 
 namespace skmeans {
@@ -38,6 +40,58 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
 
     static constexpr uint8_t MAX_VALUE = 15;
 
+    SQ4Quantizer() {
+        cpuinfo_initialize();
+        has_amx = cpuinfo_has_x86_amx_int8();
+    }
+
+    /**
+     * @brief u4×u4→u32 dot product GEMM via NumKong.
+     *
+     * Computes C[m, n] = A[m, k] × B[k, n] where A and B are packed u4x2.
+     * k is the real dimension count (not packed bytes).
+     * a_stride and b_stride are byte strides between rows.
+     * Handles OMP parallelization internally.
+     */
+    void MatrixMultiplication(
+        const quantized_t* a,
+        const quantized_t* b,
+        uint32_t* out,
+        size_t m,
+        size_t n,
+        size_t k,
+        size_t a_stride,
+        size_t b_stride
+    ) const {
+        const auto* a_u4 = reinterpret_cast<const nk_u4x2_t*>(a);
+        const auto* b_u4 = reinterpret_cast<const nk_u4x2_t*>(b);
+
+        const size_t pack_size = nk_dots_packed_size_u4(n, k);
+        if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
+        nk_dots_pack_u4(b_u4, n, k, b_stride, packed_buf.data());
+
+        const size_t c_stride = n * sizeof(uint32_t);
+
+#pragma omp parallel num_threads(g_n_threads)
+        {
+            nk_configure_thread(nk_capabilities());
+            int tid = omp_get_thread_num();
+            int nt = omp_get_num_threads();
+            size_t rows_per_t = (m + nt - 1) / nt;
+            size_t start = tid * rows_per_t;
+            size_t count = std::min(rows_per_t, m - start);
+            if (start < m && count > 0) {
+                nk_dots_packed_u4(
+                    a_u4 + start * a_stride,
+                    packed_buf.data(),
+                    out + start * n,
+                    count, n, k,
+                    a_stride, c_stride
+                );
+            }
+        }
+    }
+
     void Fit(const float* embeddings, size_t n, size_t d) override {
         SKM_PROFILE_SCOPE("fitting");
         if (d % 2 != 0) {
@@ -48,7 +102,6 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         const size_t total_elements = n * d;
         params = ComputeQuantizationParams(embeddings, total_elements);
         // Pre-allocate scratch buffers (avoids expensive per-call allocation)
-        nn_dists_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         pruning_dots_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         packed_buf.resize(nk_dots_packed_size_u4(Y_BATCH_SIZE, d));
         fitted = true;
@@ -180,11 +233,10 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
     }
 
     /**
-     * @brief Find top-1 nearest neighbor using NumKong u4 Euclidean kernel.
+     * @brief Find top-1 nearest neighbor using NumKong u4 dot product GEMM.
      *
-     * Data is already in u4x2 packed format (d/2 bytes per vector),
-     * so no conversion is needed. Centroids (y) are packed for NumKong
-     * via nk_dots_pack_u4 per batch.
+     * Computes dot products via nk_dots_packed_u4, then converts to L2² using
+     * pre-computed norms: L2²(x,y) = ||x||² + ||y||² - 2·inv_scale²·dot(x,y).
      */
     void FindNearestNeighbor(
         const quantized_t* x,
@@ -206,14 +258,9 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         assert(d % 2 == 0);
         (void)x_float;
         (void)y_float;
-        (void)norms_x;
-        (void)norms_y;
         const float inv_scale_sq =
             params.inv_quantization_scale * params.inv_quantization_scale;
         const size_t d_packed = d / 2;
-
-        const auto* x_u4 = reinterpret_cast<const nk_u4x2_t*>(x);
-        const auto* y_u4 = reinterpret_cast<const nk_u4x2_t*>(y);
 
         std::fill_n(out_distances, n_x, std::numeric_limits<float>::max());
         std::fill_n(out_knn, n_x, 0u);
@@ -224,56 +271,36 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
 
-                // Pack Y batch for NumKong
-                const size_t pack_size = nk_dots_packed_size_u4(batch_n_y, d);
-                if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
-                nk_dots_pack_u4(y_u4 + j * d_packed, batch_n_y, d, d_packed, packed_buf.data());
+                MatrixMultiplication(
+                    x + i * d_packed, y + j * d_packed,
+                    pruning_dots_buf.data(),
+                    batch_n_x, batch_n_y, d, d_packed, d_packed
+                );
 
-                const size_t batch_r_stride = batch_n_y * sizeof(float);
-
-#pragma omp parallel num_threads(g_n_threads)
-                {
-                    nk_configure_thread(nk_capabilities());
-                    int tid = omp_get_thread_num();
-                    int nt = omp_get_num_threads();
-                    size_t rows_per_t = (batch_n_x + nt - 1) / nt;
-                    size_t start = tid * rows_per_t;
-                    size_t count = std::min(rows_per_t, batch_n_x - start);
-                    if (start < batch_n_x && count > 0) {
-                        nk_euclideans_packed_u4(
-                            x_u4 + (i + start) * d_packed,
-                            packed_buf.data(),
-                            nn_dists_buf.data() + start * batch_n_y,
-                            count,
-                            batch_n_y,
-                            d,
-                            d_packed,
-                            batch_r_stride
-                        );
-                    }
-                }
-
+                // Convert dots to L2² and find nearest neighbor per row
+                using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+                Eigen::Map<MatrixR> dists_matrix(tmp_buf, batch_n_x, batch_n_y);
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const size_t idx = i + r;
-                    const float* dists_row = nn_dists_buf.data() + r * batch_n_y;
+                    const uint32_t* dots_row = pruning_dots_buf.data() + r * batch_n_y;
+                    float* dists_row = tmp_buf + r * batch_n_y;
+                    const float nx = norms_x[idx];
 
+                    SKM_VECTORIZE_LOOP
                     for (size_t c = 0; c < batch_n_y; ++c) {
-                        if (dists_row[c] < out_distances[idx]) {
-                            out_distances[idx] = dists_row[c];
-                            out_knn[idx] = static_cast<uint32_t>(j + c);
-                        }
+                        dists_row[c] = nx + norms_y[j + c]
+                            - 2.0f * inv_scale_sq * static_cast<float>(dots_row[c]);
+                    }
+
+                    uint32_t knn_idx;
+                    float batch_top_1 = dists_matrix.row(r).minCoeff(&knn_idx);
+                    if (batch_top_1 < out_distances[idx]) {
+                        out_distances[idx] = std::max(0.0f, batch_top_1);
+                        out_knn[idx] = static_cast<uint32_t>(j + knn_idx);
                     }
                 }
             }
-        }
-
-        // Convert best distances from quantized L2 to true L2²:
-        // nk_euclideans_packed_u4 outputs sqrt(Σ(x_q-y_q)²);
-        // true L2² = inv_scale² × Σ(x_q-y_q)²
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t i = 0; i < n_x; ++i) {
-            out_distances[i] = inv_scale_sq * out_distances[i] * out_distances[i];
         }
     }
 
@@ -362,9 +389,6 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         const size_t d_packed = d / 2;
         const size_t partial_d_packed = partial_d / 2;
 
-        const auto* x_u4 = reinterpret_cast<const nk_u4x2_t*>(x);
-        const auto* y_u4 = reinterpret_cast<const nk_u4x2_t*>(y);
-
         // Set scale factors on the PDX index for threshold conversion
         pdx_centroids.index->quantization_scale_squared =
             params.quantization_scale * params.quantization_scale;
@@ -380,37 +404,11 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
 
                 {
                     SKM_PROFILE_SCOPE("search/blas");
-                    // Pack y for partial_d dimensions (stride = d_packed for packed rows)
-                    const size_t packed_size = nk_dots_packed_size_u4(batch_n_y, partial_d);
-                    if (packed_size > packed_buf.size()) packed_buf.resize(packed_size);
-                    nk_dots_pack_u4(
-                        y_u4 + j * d_packed, batch_n_y, partial_d, d_packed, packed_buf.data()
+                    MatrixMultiplication(
+                        x + i * d_packed, y + j * d_packed,
+                        pruning_dots_buf.data(),
+                        batch_n_x, batch_n_y, partial_d, d_packed, d_packed
                     );
-
-                    const size_t c_stride = batch_n_y * sizeof(uint32_t);
-
-                    // Compute partial u4 dot products via NumKong
-#pragma omp parallel num_threads(g_n_threads)
-                    {
-                        nk_configure_thread(nk_capabilities());
-                        int tid = omp_get_thread_num();
-                        int nt = omp_get_num_threads();
-                        size_t rows_per_t = (batch_n_x + nt - 1) / nt;
-                        size_t start = tid * rows_per_t;
-                        size_t count = std::min(rows_per_t, batch_n_x - start);
-                        if (start < batch_n_x && count > 0) {
-                            nk_dots_packed_u4(
-                                x_u4 + (i + start) * d_packed,
-                                packed_buf.data(),
-                                pruning_dots_buf.data() + start * batch_n_y,
-                                count,
-                                batch_n_y,
-                                partial_d,
-                                d_packed,
-                                c_stride
-                            );
-                        }
-                    }
                 }
 
                 {
@@ -505,9 +503,9 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
   private:
     ScalarQuantizationParams params{};
     bool fitted = false;
+    bool has_amx = false;
     std::vector<uint32_t> cached_data_partial_norms;
     std::vector<uint32_t> cached_centroid_partial_norms;
-    mutable std::vector<float> nn_dists_buf;
     mutable std::vector<uint32_t> pruning_dots_buf;
     mutable std::vector<char> packed_buf;
 };
