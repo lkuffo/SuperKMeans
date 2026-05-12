@@ -99,12 +99,14 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
             if (decoded_a_buf.size() < a_u8_size) decoded_a_buf.resize(a_u8_size);
             if (decoded_b_buf.size() < b_u8_size) decoded_b_buf.resize(b_u8_size);
 
-            UnpackU4x2ToU8(a, decoded_a_buf.data(), m, k, a_stride);
-            UnpackU4x2ToU8(b, decoded_b_buf.data(), n, k, b_stride);
-
-            const size_t pack_size = nk_dots_packed_size_u8(n, k);
-            if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
-            nk_dots_pack_u8(decoded_b_buf.data(), n, k, k, packed_buf.data());
+            {
+                SKM_PROFILE_SCOPE("search/unpack");
+                UnpackU4x2ToU8(a, decoded_a_buf.data(), m, k, a_stride);
+                UnpackU4x2ToU8(b, decoded_b_buf.data(), n, k, b_stride);
+                const size_t pack_size = nk_dots_packed_size_u8(n, k);
+                if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
+                nk_dots_pack_u8(decoded_b_buf.data(), n, k, k, packed_buf.data());
+            }
 
             const size_t c_stride = n * sizeof(uint32_t);
 
