@@ -19,6 +19,7 @@
 #include "superkmeans/quantizers/f32.h"
 #include "superkmeans/quantizers/sq4.h"
 #include "superkmeans/quantizers/sq8.h"
+#include "superkmeans/quantizers/sq8_nk.h"
 #include "superkmeans/quantizers/lvq4.h"
 #include "superkmeans/quantizers/rabitq.h"
 #ifdef HAS_FAISS
@@ -394,6 +395,8 @@ class SuperKMeans {
         } else {
             if (config.quantizer_type == QuantizerType::sq8) {
                 quantizer = std::make_unique<SQ8Quantizer>();
+            } else if (config.quantizer_type == QuantizerType::sq8_nk) {
+                quantizer = std::make_unique<SQ8NKQuantizer>();
             } else if (config.quantizer_type == QuantizerType::lvq4) {
                 quantizer = std::make_unique<LVQ4Quantizer>();
 #ifdef HAS_FAISS
