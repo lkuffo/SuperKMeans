@@ -302,7 +302,6 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         ExtractCentroidFactors(reinterpret_cast<const uint8_t*>(y), n_y, 0, 0, cf);
 
         std::fill_n(out_distances, n_x, std::numeric_limits<float>::max());
-        std::fill_n(out_knn, n_x, 0u);
 
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             const size_t batch_n_x = std::min(X_BATCH_SIZE, n_x - i);
@@ -475,9 +474,6 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         CentroidFactors cf;
         ExtractCentroidFactors(y_codes, n_y, front_d, mid_d, cf);
 
-        const auto* x_u4 = (const nk_u4x2_t*)x_codes;
-        const auto* y_u4 = (const nk_u4x2_t*)y_codes;
-
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             const size_t batch_n_x = std::min(X_BATCH_SIZE, n_x - i);
 
@@ -485,38 +481,15 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
 
                 {
-                    SKM_PROFILE_SCOPE("LVQ4::FindNearestNeighborWithPruning/front_gemm");
-                    // Pack centroid batch for partial_d GEMM
-                    const size_t pack_size = nk_dots_packed_size_u4(batch_n_y, partial_d);
-                    if (pack_size > packed_buf_.size()) packed_buf_.resize(pack_size);
-                    nk_dots_pack_u4(
-                        y_u4 + j * code_size_, batch_n_y, partial_d, code_size_,
-                        packed_buf_.data()
+                    SKM_PROFILE_SCOPE("search/blas");
+                    const bool a_changed = (j == 0);
+                    const bool b_changed = true;
+                    MatrixMultiplication(
+                        x + i * code_size_, y + j * code_size_,
+                        dots_buf_.data(),
+                        batch_n_x, batch_n_y, partial_d, code_size_, code_size_,
+                        a_changed, b_changed
                     );
-
-                    const size_t c_stride = batch_n_y * sizeof(uint32_t);
-
-#pragma omp parallel num_threads(g_n_threads)
-                    {
-                        nk_configure_thread(nk_capabilities());
-                        int tid = omp_get_thread_num();
-                        int nt = omp_get_num_threads();
-                        size_t rows_per_t = (batch_n_x + nt - 1) / nt;
-                        size_t start = tid * rows_per_t;
-                        size_t count = std::min(rows_per_t, batch_n_x - start);
-                        if (start < batch_n_x && count > 0) {
-                            nk_dots_packed_u4(
-                                x_u4 + (i + start) * code_size_,
-                                packed_buf_.data(),
-                                dots_buf_.data() + start * batch_n_y,
-                                count,
-                                batch_n_y,
-                                partial_d,
-                                code_size_,
-                                c_stride
-                            );
-                        }
-                    }
                 }
 
                 {
