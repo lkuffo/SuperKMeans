@@ -38,6 +38,52 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
     static constexpr uint8_t MAX_VALUE = 255;
 
+    /**
+     * @brief u8×u8→i32 dot product GEMM via ruy.
+     *
+     * Computes C[m, n] = A[m, k] × B[k, n] where A is row-major with stride
+     * a_stride, B is row-major with stride b_stride (reinterpreted as col-major
+     * by ruy), and C is row-major tightly packed (stride = n).
+     * Must be called from a single thread (caller handles OMP parallelization).
+     */
+    static void MatrixMultiplication(
+        const quantized_t* a,
+        const quantized_t* b,
+        uint32_t* out,
+        size_t m,
+        size_t n,
+        size_t k,
+        size_t a_stride,
+        size_t b_stride
+    ) {
+        thread_local ruy::Context ctx;
+        ctx.set_max_num_threads(1);
+
+        ruy::Matrix<std::uint8_t> lhs;
+        lhs.mutable_layout()->set_rows(m);
+        lhs.mutable_layout()->set_cols(k);
+        lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
+        lhs.mutable_layout()->set_stride(a_stride);
+        lhs.set_data(a);
+
+        ruy::Matrix<std::uint8_t> rhs;
+        rhs.mutable_layout()->set_rows(k);
+        rhs.mutable_layout()->set_cols(n);
+        rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
+        rhs.mutable_layout()->set_stride(b_stride);
+        rhs.set_data(b);
+
+        ruy::Matrix<std::int32_t> dst;
+        dst.mutable_layout()->set_rows(m);
+        dst.mutable_layout()->set_cols(n);
+        dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
+        dst.mutable_layout()->set_stride(n);
+        dst.set_data(reinterpret_cast<std::int32_t*>(out));
+
+        ruy::MulParams<std::int32_t, std::int32_t> mul_params;
+        ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
+    }
+
     void Fit(const float* embeddings, size_t n, size_t d) override {
         SKM_PROFILE_SCOPE("fitting");
         const size_t total_elements = n * d;
@@ -182,7 +228,6 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
 
-                // Compute dot products via ruy (OMP-parallelized)
                 {
 #pragma omp parallel for num_threads(g_n_threads) schedule(static)
                     for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
@@ -190,34 +235,11 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                         const size_t row_end = (t + 1) * batch_n_x / g_n_threads;
                         const size_t local_rows = row_end - row_start;
                         if (local_rows == 0) continue;
-
-                        thread_local ruy::Context ctx;
-                        ctx.set_max_num_threads(1);
-
-                        ruy::Matrix<std::uint8_t> lhs;
-                        lhs.mutable_layout()->set_rows(local_rows);
-                        lhs.mutable_layout()->set_cols(d);
-                        lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
-                        lhs.mutable_layout()->set_stride(d);
-                        lhs.set_data(x + (i + row_start) * d);
-
-                        ruy::Matrix<std::uint8_t> rhs;
-                        rhs.mutable_layout()->set_rows(d);
-                        rhs.mutable_layout()->set_cols(batch_n_y);
-                        rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
-                        rhs.mutable_layout()->set_stride(d);
-                        rhs.set_data(y + j * d);
-
-                        ruy::Matrix<std::int32_t> dst;
-                        dst.mutable_layout()->set_rows(local_rows);
-                        dst.mutable_layout()->set_cols(batch_n_y);
-                        dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
-                        dst.mutable_layout()->set_stride(batch_n_y);
-                        dst.set_data(reinterpret_cast<std::int32_t*>(
-                            pruning_dots_buf.data() + row_start * batch_n_y));
-
-                        ruy::MulParams<std::int32_t, std::int32_t> mul_params;
-                        ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
+                        MatrixMultiplication(
+                            x + (i + row_start) * d, y + j * d,
+                            pruning_dots_buf.data() + row_start * batch_n_y,
+                            local_rows, batch_n_y, d, d, d
+                        );
                     }
                 }
 
@@ -377,34 +399,11 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                         const size_t row_end = (t + 1) * batch_n_x / g_n_threads;
                         const size_t local_rows = row_end - row_start;
                         if (local_rows == 0) continue;
-
-                        thread_local ruy::Context ctx;
-                        ctx.set_max_num_threads(1);
-
-                        ruy::Matrix<std::uint8_t> lhs;
-                        lhs.mutable_layout()->set_rows(local_rows);
-                        lhs.mutable_layout()->set_cols(partial_d);
-                        lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
-                        lhs.mutable_layout()->set_stride(d);
-                        lhs.set_data(x + (i + row_start) * d);
-
-                        ruy::Matrix<std::uint8_t> rhs;
-                        rhs.mutable_layout()->set_rows(partial_d);
-                        rhs.mutable_layout()->set_cols(batch_n_y);
-                        rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
-                        rhs.mutable_layout()->set_stride(d);
-                        rhs.set_data(y + j * d);
-
-                        ruy::Matrix<std::int32_t> dst;
-                        dst.mutable_layout()->set_rows(local_rows);
-                        dst.mutable_layout()->set_cols(batch_n_y);
-                        dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
-                        dst.mutable_layout()->set_stride(batch_n_y);
-                        dst.set_data(reinterpret_cast<std::int32_t*>(
-                            pruning_dots_buf.data() + row_start * batch_n_y));
-
-                        ruy::MulParams<std::int32_t, std::int32_t> mul_params;
-                        ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
+                        MatrixMultiplication(
+                            x + (i + row_start) * d, y + j * d,
+                            pruning_dots_buf.data() + row_start * batch_n_y,
+                            local_rows, batch_n_y, partial_d, d, d
+                        );
                     }
                 }
 
