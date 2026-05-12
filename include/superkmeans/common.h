@@ -3,6 +3,7 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
+#include <cpuinfo.h>
 
 extern "C" {
 int sgemm_(
@@ -127,6 +128,17 @@ static constexpr uint32_t AlignValue(T n) {
 }
 
 static constexpr size_t THIN_MATRIX_THRESHOLD = 256;
+
+#if defined(__ARM_NEON)
+inline constexpr bool IS_ARM = true;
+#else
+inline constexpr bool IS_ARM = false;
+#endif
+
+inline bool DetectAMX() {
+    cpuinfo_initialize();
+    return cpuinfo_has_x86_amx_int8();
+}
 
 enum class DistanceFunction : uint8_t { l2, dp };
 

@@ -5,6 +5,7 @@
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
+#include "superkmeans/quantizers/sq_common.h"
 
 #include <algorithm>
 #include <cassert>
@@ -15,18 +16,11 @@
 #include <utility>
 #include <vector>
 
-#include <cpuinfo.h>
 #include <Eigen/Dense>
 #include <numkong/numkong.h>
 #include "ruy/ruy.h"
 
 namespace skmeans {
-
-struct ScalarQuantizationParams {
-    float quantization_base;
-    float quantization_scale;
-    float inv_quantization_scale;
-};
 
 /**
  * @brief 8-bit scalar quantizer with ruy GEMM backend.
@@ -41,16 +35,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
     static constexpr uint8_t MAX_VALUE = 255;
 
-#if defined(__ARM_NEON)
-    static constexpr bool is_arm = true;
-#else
-    static constexpr bool is_arm = false;
-#endif
-
-    SQ8Quantizer() {
-        cpuinfo_initialize();
-        has_amx = cpuinfo_has_x86_amx_int8();
-    }
+    SQ8Quantizer() : has_amx(DetectAMX()) {}
 
     /**
      * @brief u8×u8→u32 dot product GEMM, dispatching between NumKong and ruy.
@@ -73,7 +58,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         size_t b_stride
     ) const {
         // NumKong u8 path: AMX or wide matrices on x86
-        if (!is_arm && (has_amx || k > THIN_MATRIX_THRESHOLD)) {
+        if (!IS_ARM && (has_amx || k > THIN_MATRIX_THRESHOLD)) {
             const size_t pack_size = nk_dots_packed_size_u8(n, k);
             if (pack_size > centroids_nk_packed_buf.size()) centroids_nk_packed_buf.resize(pack_size);
             nk_dots_pack_u8(b, n, k, b_stride, centroids_nk_packed_buf.data());
@@ -140,29 +125,10 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     void Fit(const float* embeddings, size_t n, size_t d) override {
         SKM_PROFILE_SCOPE("fitting");
         const size_t total_elements = n * d;
-        params = ComputeQuantizationParams(embeddings, total_elements);
+        params = ComputeScalarQuantizationParams(embeddings, total_elements, static_cast<float>(MAX_VALUE));
         tmp_dots_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         centroids_nk_packed_buf.resize(nk_dots_packed_size_u8(Y_BATCH_SIZE, d));
         fitted = true;
-    }
-
-    static ScalarQuantizationParams ComputeQuantizationParams(
-        const float* embeddings,
-        const size_t total_elements
-    ) {
-        float global_min = std::numeric_limits<float>::max();
-        float global_max = std::numeric_limits<float>::lowest();
-
-#pragma omp parallel for reduction(min : global_min) reduction(max : global_max)                   \
-    num_threads(g_n_threads)
-        for (size_t i = 0; i < total_elements; ++i) {
-            global_min = std::min(global_min, embeddings[i]);
-            global_max = std::max(global_max, embeddings[i]);
-        }
-
-        const float range = global_max - global_min;
-        const float scale = (range > 0) ? static_cast<float>(MAX_VALUE) / range : 1.0f;
-        return {global_min, scale, 1.0f / scale};
     }
 
     void Encode(
@@ -316,35 +282,13 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t d, uint32_t partial_d
     ) override {
-        cached_data_partial_norms.resize(n);
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t idx = 0; idx < n; ++idx) {
-            uint32_t sum = 0;
-            const quantized_t* row = data + idx * d;
-            SKM_VECTORIZE_LOOP
-            for (size_t dim = 0; dim < partial_d; ++dim) {
-                uint32_t v = row[dim];
-                sum += v * v;
-            }
-            cached_data_partial_norms[idx] = sum;
-        }
+        CachePartialNorms(data, n, d, partial_d, cached_data_partial_norms);
     }
 
     void CacheCentroidPartialNorms(
         const quantized_t* centroids, size_t n, size_t d, uint32_t partial_d
     ) override {
-        cached_centroid_partial_norms.resize(n);
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t idx = 0; idx < n; ++idx) {
-            uint32_t sum = 0;
-            const quantized_t* row = centroids + idx * d;
-            SKM_VECTORIZE_LOOP
-            for (size_t dim = 0; dim < partial_d; ++dim) {
-                uint32_t v = row[dim];
-                sum += v * v;
-            }
-            cached_centroid_partial_norms[idx] = sum;
-        }
+        CachePartialNorms(centroids, n, d, partial_d, cached_centroid_partial_norms);
     }
 
     /**
@@ -482,6 +426,24 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     const ScalarQuantizationParams& GetParams() const { return params; }
 
   private:
+    void CachePartialNorms(
+        const quantized_t* vecs, size_t n, size_t d, uint32_t partial_d,
+        std::vector<uint32_t>& out
+    ) const {
+        out.resize(n);
+#pragma omp parallel for num_threads(g_n_threads)
+        for (size_t idx = 0; idx < n; ++idx) {
+            uint32_t sum = 0;
+            const quantized_t* row = vecs + idx * d;
+            SKM_VECTORIZE_LOOP
+            for (size_t dim = 0; dim < partial_d; ++dim) {
+                uint32_t v = row[dim];
+                sum += v * v;
+            }
+            out[idx] = sum;
+        }
+    }
+
     ScalarQuantizationParams params{};
     bool fitted = false;
     bool has_amx = false;

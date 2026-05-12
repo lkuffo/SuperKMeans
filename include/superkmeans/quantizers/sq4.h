@@ -5,7 +5,7 @@
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
-#include "superkmeans/quantizers/sq8.h"
+#include "superkmeans/quantizers/sq_common.h"
 
 #include <algorithm>
 #include <cassert>
@@ -16,7 +16,6 @@
 #include <utility>
 #include <vector>
 
-#include <cpuinfo.h>
 #include <Eigen/Dense>
 #include <numkong/numkong.h>
 #include "ruy/ruy.h"
@@ -41,16 +40,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
 
     static constexpr uint8_t MAX_VALUE = 15;
 
-#if defined(__ARM_NEON)
-    static constexpr bool is_arm = true;
-#else
-    static constexpr bool is_arm = false;
-#endif
-
-    SQ4Quantizer() {
-        cpuinfo_initialize();
-        has_amx = cpuinfo_has_x86_amx_int8();
-    }
+    SQ4Quantizer() : has_amx(DetectAMX()) {}
 
     /**
      * @brief Unpack u4x2 packed data to u8 (one byte per element).
@@ -100,7 +90,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         //   AMX:   always (AMX has native int8 tiles, no 4-bit)
         //   ARM:   always (Ruy u8 wins)
         //   Other: only for thin k (Ruy u8 beats NumKong u4 on small matrices)
-        const bool decode_to_u8 = has_amx || is_arm || (k <= THIN_MATRIX_THRESHOLD);
+        const bool decode_to_u8 = has_amx || IS_ARM || (k <= THIN_MATRIX_THRESHOLD);
 
         if (decode_to_u8) {
             {
@@ -117,8 +107,8 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
                 }
             }
 
-            // NumKong u8 path: only on AMX (is_arm is constexpr, compiler eliminates this on ARM)
-            if (!is_arm && has_amx) {
+            // NumKong u8 path: only on AMX (IS_ARM is constexpr, compiler eliminates this on ARM)
+            if (!IS_ARM && has_amx) {
                 if (b_changed) {
                     const size_t pack_size = nk_dots_packed_size_u8(n, k);
                     if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
@@ -157,6 +147,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
                 if (local_rows == 0) continue;
 
                 thread_local ruy::Context ctx;
+                ctx.set_max_num_threads(1);
 
                 ruy::Matrix<std::uint8_t> lhs;
                 lhs.mutable_layout()->set_rows(local_rows);
@@ -225,29 +216,10 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
             );
         }
         const size_t total_elements = n * d;
-        params = ComputeQuantizationParams(embeddings, total_elements);
-        pruning_dots_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
+        params = ComputeScalarQuantizationParams(embeddings, total_elements, static_cast<float>(MAX_VALUE));
+        tmp_dots_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         packed_buf.resize(nk_dots_packed_size_u4(Y_BATCH_SIZE, d));
         fitted = true;
-    }
-
-    static ScalarQuantizationParams ComputeQuantizationParams(
-        const float* embeddings,
-        const size_t total_elements
-    ) {
-        float global_min = std::numeric_limits<float>::max();
-        float global_max = std::numeric_limits<float>::lowest();
-
-#pragma omp parallel for reduction(min : global_min) reduction(max : global_max)                   \
-    num_threads(g_n_threads)
-        for (size_t i = 0; i < total_elements; ++i) {
-            global_min = std::min(global_min, embeddings[i]);
-            global_max = std::max(global_max, embeddings[i]);
-        }
-
-        const float range = global_max - global_min;
-        const float scale = (range > 0) ? static_cast<float>(MAX_VALUE) / range : 1.0f;
-        return {global_min, scale, 1.0f / scale};
     }
 
     /**
@@ -399,7 +371,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
 
                 MatrixMultiplication(
                     x + i * d_packed, y + j * d_packed,
-                    pruning_dots_buf.data(),
+                    tmp_dots_buf.data(),
                     batch_n_x, batch_n_y, d, d_packed, d_packed,
                     a_changed, b_changed
                 );
@@ -410,7 +382,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const size_t idx = i + r;
-                    const uint32_t* dots_row = pruning_dots_buf.data() + r * batch_n_y;
+                    const uint32_t* dots_row = tmp_dots_buf.data() + r * batch_n_y;
                     float* dists_row = tmp_buf + r * batch_n_y;
                     const float nx = norms_x[idx];
 
@@ -434,39 +406,13 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t d, uint32_t partial_d
     ) override {
-        const size_t d_packed = d / 2;
-        const size_t partial_bytes = partial_d / 2;
-        cached_data_partial_norms.resize(n);
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t idx = 0; idx < n; ++idx) {
-            uint32_t sum = 0;
-            const quantized_t* row = data + idx * d_packed;
-            for (size_t k = 0; k < partial_bytes; ++k) {
-                uint32_t lo = row[k] & 0x0F;
-                uint32_t hi = (row[k] >> 4) & 0x0F;
-                sum += lo * lo + hi * hi;
-            }
-            cached_data_partial_norms[idx] = sum;
-        }
+        CachePackedPartialNorms(data, n, d, partial_d, cached_data_partial_norms);
     }
 
     void CacheCentroidPartialNorms(
         const quantized_t* centroids, size_t n, size_t d, uint32_t partial_d
     ) override {
-        const size_t d_packed = d / 2;
-        const size_t partial_bytes = partial_d / 2;
-        cached_centroid_partial_norms.resize(n);
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t idx = 0; idx < n; ++idx) {
-            uint32_t sum = 0;
-            const quantized_t* row = centroids + idx * d_packed;
-            for (size_t k = 0; k < partial_bytes; ++k) {
-                uint32_t lo = row[k] & 0x0F;
-                uint32_t hi = (row[k] >> 4) & 0x0F;
-                sum += lo * lo + hi * hi;
-            }
-            cached_centroid_partial_norms[idx] = sum;
-        }
+        CachePackedPartialNorms(centroids, n, d, partial_d, cached_centroid_partial_norms);
     }
 
     /**
@@ -529,7 +475,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
                     SKM_PROFILE_SCOPE("search/blas");
                     MatrixMultiplication(
                         x + i * d_packed, y + j * d_packed,
-                        pruning_dots_buf.data(),
+                        tmp_dots_buf.data(),
                         batch_n_x, batch_n_y, partial_d, d_packed, d_packed,
                         a_changed, b_changed
                     );
@@ -545,7 +491,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
 #endif
                     for (size_t r = 0; r < batch_n_x; ++r) {
                         const size_t i_idx = i + r;
-                        uint32_t* dots_row = pruning_dots_buf.data() + r * batch_n_y;
+                        uint32_t* dots_row = tmp_dots_buf.data() + r * batch_n_y;
 
                         // Convert dot products to L2²: l2 = norm_x + norm_y - 2*dot
                         const uint32_t nx = cached_data_partial_norms[i_idx];
@@ -627,12 +573,32 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
     bool SupportsPruning() const override { return true; }
 
   private:
+    void CachePackedPartialNorms(
+        const quantized_t* vecs, size_t n, size_t d, uint32_t partial_d,
+        std::vector<uint32_t>& out
+    ) const {
+        const size_t d_packed = d / 2;
+        const size_t partial_bytes = partial_d / 2;
+        out.resize(n);
+#pragma omp parallel for num_threads(g_n_threads)
+        for (size_t idx = 0; idx < n; ++idx) {
+            uint32_t sum = 0;
+            const quantized_t* row = vecs + idx * d_packed;
+            for (size_t k = 0; k < partial_bytes; ++k) {
+                uint32_t lo = row[k] & 0x0F;
+                uint32_t hi = (row[k] >> 4) & 0x0F;
+                sum += lo * lo + hi * hi;
+            }
+            out[idx] = sum;
+        }
+    }
+
     ScalarQuantizationParams params{};
     bool fitted = false;
     bool has_amx = false;
     std::vector<uint32_t> cached_data_partial_norms;
     std::vector<uint32_t> cached_centroid_partial_norms;
-    mutable std::vector<uint32_t> pruning_dots_buf;
+    mutable std::vector<uint32_t> tmp_dots_buf;
     mutable std::vector<char> packed_buf;
     mutable std::vector<uint8_t> decoded_a_buf;
     mutable std::vector<uint8_t> decoded_b_buf;
