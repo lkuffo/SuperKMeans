@@ -84,6 +84,7 @@ class UtilsComputer {
     constexpr static auto FlipSign = computer::FlipSign;
     constexpr static auto InitPositionsArray = computer::InitPositionsArray;
     constexpr static auto PackU8ToU4x2 = computer::PackU8ToU4x2;
+    constexpr static auto UnpackU4x2ToU8 = computer::UnpackU4x2ToU8;
 };
 
 

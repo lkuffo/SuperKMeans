@@ -51,6 +51,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
      * Each packed byte yields two u8 values (0–15).
      * src has n rows, each row_stride bytes apart (packed).
      * dst has n rows, each k bytes apart (one u8 per dimension).
+     * Delegates to SIMD-accelerated utils::UnpackU4x2ToU8 per row.
      */
     static void UnpackU4x2ToU8(
         const quantized_t* src,
@@ -59,16 +60,9 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         size_t k,
         size_t row_stride
     ) {
-        const size_t k_packed = k / 2;
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t row = 0; row < n; ++row) {
-            const quantized_t* s = src + row * row_stride;
-            uint8_t* d = dst + row * k;
-            SKM_VECTORIZE_LOOP
-            for (size_t j = 0; j < k_packed; ++j) {
-                d[2 * j] = s[j] & 0x0F;
-                d[2 * j + 1] = (s[j] >> 4) & 0x0F;
-            }
+            utils::UnpackU4x2ToU8(src + row * row_stride, dst + row * k, k);
         }
     }
 

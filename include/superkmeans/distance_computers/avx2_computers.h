@@ -393,6 +393,9 @@ class SIMDUtilsComputer {
     static void PackU8ToU4x2(const uint8_t*, uint8_t*, size_t) {
         assert(false && "PackU8ToU4x2 not applicable");
     }
+    static void UnpackU4x2ToU8(const uint8_t*, uint8_t*, size_t) {
+        assert(false && "UnpackU4x2ToU8 not applicable");
+    }
 };
 
 template <>
@@ -465,6 +468,9 @@ class SIMDUtilsComputer<skmeans::Quantization::f32> {
     static void PackU8ToU4x2(const uint8_t*, uint8_t*, size_t) {
         assert(false && "PackU8ToU4x2 not applicable for f32");
     }
+    static void UnpackU4x2ToU8(const uint8_t*, uint8_t*, size_t) {
+        assert(false && "UnpackU4x2ToU8 not applicable for f32");
+    }
 };
 
 template <>
@@ -533,6 +539,31 @@ class SIMDUtilsComputer<skmeans::Quantization::u4> {
         }
         for (; i + 2 <= count; i += 2) {
             dst[i / 2] = (src[i] & 0x0F) | ((src[i + 1] & 0x0F) << 4);
+        }
+    }
+
+    /**
+     * @brief Unpack u4x2 packed bytes to individual u8 values using AVX2.
+     *
+     * Uses vpmovzxbw (cvtepu8_epi16) to widen each packed byte to 16 bits,
+     * splits nibbles, recombines as adjacent bytes in each 16-bit slot.
+     * Processes 16 packed bytes (32 output) per iteration.
+     */
+    static void UnpackU4x2ToU8(const uint8_t* src, uint8_t* dst, size_t count) {
+        assert(count % 2 == 0);
+        const size_t n_packed = count / 2;
+        size_t i = 0;
+        for (; i + 16 <= n_packed; i += 16) {
+            __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i));
+            __m256i v16 = _mm256_cvtepu8_epi16(v);
+            __m256i lo = _mm256_and_si256(v16, _mm256_set1_epi16(0x000F));
+            __m256i hi = _mm256_srli_epi16(v16, 4);
+            __m256i result = _mm256_or_si256(lo, _mm256_slli_epi16(hi, 8));
+            _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i * 2), result);
+        }
+        for (; i < n_packed; ++i) {
+            dst[2 * i] = src[i] & 0x0F;
+            dst[2 * i + 1] = (src[i] >> 4) & 0x0F;
         }
     }
 };

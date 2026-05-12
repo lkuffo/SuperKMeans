@@ -342,6 +342,9 @@ class SIMDUtilsComputer {
     static void PackU8ToU4x2(const uint8_t*, uint8_t*, size_t) {
         assert(false && "PackU8ToU4x2 not applicable");
     }
+    static void UnpackU4x2ToU8(const uint8_t*, uint8_t*, size_t) {
+        assert(false && "UnpackU4x2ToU8 not applicable");
+    }
 };
 
 template <>
@@ -426,6 +429,9 @@ class SIMDUtilsComputer<Quantization::f32> {
     static void PackU8ToU4x2(const uint8_t*, uint8_t*, size_t) {
         assert(false && "PackU8ToU4x2 not applicable for f32");
     }
+    static void UnpackU4x2ToU8(const uint8_t*, uint8_t*, size_t) {
+        assert(false && "UnpackU4x2ToU8 not applicable for f32");
+    }
 };
 
 template <>
@@ -505,6 +511,39 @@ class SIMDUtilsComputer<Quantization::u4> {
         }
         for (; i + 2 <= count; i += 2) {
             dst[i / 2] = (src[i] & 0x0F) | ((src[i + 1] & 0x0F) << 4);
+        }
+    }
+    /**
+     * @brief Unpack u4x2 packed bytes to individual u8 values using AVX-512.
+     *
+     * Reverse of PackU8ToU4x2. Uses vpmovzxbw (cvtepu8_epi16) to widen each
+     * packed byte to 16 bits, splits nibbles, recombines as adjacent bytes,
+     * and stores. No lane-crossing permutes needed.
+     * Processes 32 packed bytes (64 output) per AVX-512 iteration.
+     */
+    static void UnpackU4x2ToU8(const uint8_t* src, uint8_t* dst, size_t count) {
+        assert(count % 2 == 0);
+        const size_t n_packed = count / 2;
+        size_t i = 0;
+        for (; i + 32 <= n_packed; i += 32) {
+            __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + i));
+            __m512i v16 = _mm512_cvtepu8_epi16(v);
+            __m512i lo = _mm512_and_si512(v16, _mm512_set1_epi16(0x000F));
+            __m512i hi = _mm512_srli_epi16(v16, 4);
+            __m512i result = _mm512_or_si512(lo, _mm512_slli_epi16(hi, 8));
+            _mm512_storeu_si512(reinterpret_cast<__m512i*>(dst + i * 2), result);
+        }
+        const __m128i mask8 = _mm_set1_epi8(0x0F);
+        for (; i + 16 <= n_packed; i += 16) {
+            __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + i));
+            __m128i lo = _mm_and_si128(v, mask8);
+            __m128i hi = _mm_and_si128(_mm_srli_epi16(v, 4), mask8);
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i * 2), _mm_unpacklo_epi8(lo, hi));
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i * 2 + 16), _mm_unpackhi_epi8(lo, hi));
+        }
+        for (; i < n_packed; ++i) {
+            dst[2 * i] = src[i] & 0x0F;
+            dst[2 * i + 1] = (src[i] >> 4) & 0x0F;
         }
     }
 };

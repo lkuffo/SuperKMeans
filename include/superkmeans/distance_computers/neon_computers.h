@@ -264,6 +264,9 @@ class SIMDUtilsComputer {
     static void PackU8ToU4x2(const uint8_t*, uint8_t*, size_t) {
         assert(false && "PackU8ToU4x2 not applicable");
     }
+    static void UnpackU4x2ToU8(const uint8_t*, uint8_t*, size_t) {
+        assert(false && "UnpackU4x2ToU8 not applicable");
+    }
 };
 
 template <>
@@ -339,6 +342,9 @@ class SIMDUtilsComputer<Quantization::f32> {
     static void PackU8ToU4x2(const uint8_t*, uint8_t*, size_t) {
         assert(false && "PackU8ToU4x2 not applicable for f32");
     }
+    static void UnpackU4x2ToU8(const uint8_t*, uint8_t*, size_t) {
+        assert(false && "UnpackU4x2ToU8 not applicable for f32");
+    }
 };
 
 template <>
@@ -399,6 +405,31 @@ class SIMDUtilsComputer<Quantization::u4> {
         }
         for (; i + 2 <= count; i += 2) {
             dst[i / 2] = (src[i] & 0x0F) | ((src[i + 1] & 0x0F) << 4);
+        }
+    }
+
+    /**
+     * @brief Unpack u4x2 packed bytes to individual u8 values using NEON.
+     *
+     * Masks low/high nibbles and interleaves with vzipq.
+     * Processes 16 packed bytes (32 output) per iteration.
+     */
+    static void UnpackU4x2ToU8(const uint8_t* src, uint8_t* dst, size_t count) {
+        assert(count % 2 == 0);
+        const size_t n_packed = count / 2;
+        size_t i = 0;
+        const uint8x16_t mask = vdupq_n_u8(0x0F);
+        for (; i + 16 <= n_packed; i += 16) {
+            uint8x16_t v = vld1q_u8(src + i);
+            uint8x16_t lo = vandq_u8(v, mask);
+            uint8x16_t hi = vshrq_n_u8(v, 4);
+            uint8x16x2_t result = vzipq_u8(lo, hi);
+            vst1q_u8(dst + i * 2, result.val[0]);
+            vst1q_u8(dst + i * 2 + 16, result.val[1]);
+        }
+        for (; i < n_packed; ++i) {
+            dst[2 * i] = src[i] & 0x0F;
+            dst[2 * i + 1] = (src[i] >> 4) & 0x0F;
         }
     }
 };

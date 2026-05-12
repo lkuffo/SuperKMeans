@@ -202,6 +202,9 @@ class ScalarUtilsComputer {
     static void PackU8ToU4x2(const uint8_t*, uint8_t*, size_t) {
         assert(false && "PackU8ToU4x2 not applicable");
     }
+    static void UnpackU4x2ToU8(const uint8_t*, uint8_t*, size_t) {
+        assert(false && "UnpackU4x2ToU8 not applicable");
+    }
 };
 
 template <>
@@ -251,6 +254,9 @@ class ScalarUtilsComputer<Quantization::f32> {
     static void PackU8ToU4x2(const uint8_t*, uint8_t*, size_t) {
         assert(false && "PackU8ToU4x2 not applicable for f32");
     }
+    static void UnpackU4x2ToU8(const uint8_t*, uint8_t*, size_t) {
+        assert(false && "UnpackU4x2ToU8 not applicable for f32");
+    }
 };
 
 template <>
@@ -292,6 +298,15 @@ class ScalarUtilsComputer<Quantization::u4> {
         SKM_VECTORIZE_LOOP
         for (size_t k = 0; k < n_packed; ++k) {
             dst[k] = (src[2 * k] & 0x0F) | ((src[2 * k + 1] & 0x0F) << 4);
+        }
+    }
+
+    static void UnpackU4x2ToU8(const uint8_t* src, uint8_t* dst, size_t count) {
+        assert(count % 2 == 0);
+        const size_t n_packed = count / 2;
+        for (size_t k = 0; k < n_packed; ++k) {
+            dst[2 * k] = src[k] & 0x0F;
+            dst[2 * k + 1] = (src[k] >> 4) & 0x0F;
         }
     }
 };
