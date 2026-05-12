@@ -46,12 +46,42 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
     }
 
     /**
+     * @brief Unpack u4x2 packed data to u8 (one byte per element).
+     *
+     * Each packed byte yields two u8 values (0–15).
+     * src has n rows, each row_stride bytes apart (packed).
+     * dst has n rows, each k bytes apart (one u8 per dimension).
+     */
+    static void UnpackU4x2ToU8(
+        const quantized_t* src,
+        uint8_t* dst,
+        size_t n,
+        size_t k,
+        size_t row_stride
+    ) {
+        const size_t k_packed = k / 2;
+#pragma omp parallel for num_threads(g_n_threads)
+        for (size_t row = 0; row < n; ++row) {
+            const quantized_t* s = src + row * row_stride;
+            uint8_t* d = dst + row * k;
+            SKM_VECTORIZE_LOOP
+            for (size_t j = 0; j < k_packed; ++j) {
+                d[2 * j] = s[j] & 0x0F;
+                d[2 * j + 1] = (s[j] >> 4) & 0x0F;
+            }
+        }
+    }
+
+    /**
      * @brief u4×u4→u32 dot product GEMM via NumKong.
      *
      * Computes C[m, n] = A[m, k] × B[k, n] where A and B are packed u4x2.
      * k is the real dimension count (not packed bytes).
      * a_stride and b_stride are byte strides between rows.
      * Handles OMP parallelization internally.
+     *
+     * On AMX-capable hardware, decodes u4→u8 and uses the faster u8 GEMM path,
+     * since AMX has native int8 tiles but no 4-bit support.
      */
     void MatrixMultiplication(
         const quantized_t* a,
@@ -63,6 +93,42 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         size_t a_stride,
         size_t b_stride
     ) const {
+        if (has_amx) {
+            const size_t a_u8_size = m * k;
+            const size_t b_u8_size = n * k;
+            if (decoded_a_buf.size() < a_u8_size) decoded_a_buf.resize(a_u8_size);
+            if (decoded_b_buf.size() < b_u8_size) decoded_b_buf.resize(b_u8_size);
+
+            UnpackU4x2ToU8(a, decoded_a_buf.data(), m, k, a_stride);
+            UnpackU4x2ToU8(b, decoded_b_buf.data(), n, k, b_stride);
+
+            const size_t pack_size = nk_dots_packed_size_u8(n, k);
+            if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
+            nk_dots_pack_u8(decoded_b_buf.data(), n, k, k, packed_buf.data());
+
+            const size_t c_stride = n * sizeof(uint32_t);
+
+#pragma omp parallel num_threads(g_n_threads)
+            {
+                nk_configure_thread(nk_capabilities());
+                int tid = omp_get_thread_num();
+                int nt = omp_get_num_threads();
+                size_t rows_per_t = (m + nt - 1) / nt;
+                size_t start = tid * rows_per_t;
+                size_t count = std::min(rows_per_t, m - start);
+                if (start < m && count > 0) {
+                    nk_dots_packed_u8(
+                        decoded_a_buf.data() + start * k,
+                        packed_buf.data(),
+                        out + start * n,
+                        count, n, k,
+                        k, c_stride
+                    );
+                }
+            }
+            return;
+        }
+
         const auto* a_u4 = reinterpret_cast<const nk_u4x2_t*>(a);
         const auto* b_u4 = reinterpret_cast<const nk_u4x2_t*>(b);
 
@@ -304,10 +370,6 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         }
     }
 
-    bool IsFitted() const override { return fitted; }
-
-    bool SupportsPruning() const override { return true; }
-
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t d, uint32_t partial_d
     ) override {
@@ -499,6 +561,8 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
     }
 
     const ScalarQuantizationParams& GetParams() const { return params; }
+    bool IsFitted() const override { return fitted; }
+    bool SupportsPruning() const override { return true; }
 
   private:
     ScalarQuantizationParams params{};
@@ -508,6 +572,8 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
     std::vector<uint32_t> cached_centroid_partial_norms;
     mutable std::vector<uint32_t> pruning_dots_buf;
     mutable std::vector<char> packed_buf;
+    mutable std::vector<uint8_t> decoded_a_buf;
+    mutable std::vector<uint8_t> decoded_b_buf;
 };
 
 } // namespace skmeans
