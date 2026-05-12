@@ -19,7 +19,6 @@
 #include "superkmeans/quantizers/f32.h"
 #include "superkmeans/quantizers/sq4.h"
 #include "superkmeans/quantizers/sq8.h"
-#include "superkmeans/quantizers/sq8_nk.h"
 #include "superkmeans/quantizers/lvq4.h"
 #include "superkmeans/quantizers/rabitq.h"
 #ifdef HAS_FAISS
@@ -45,7 +44,6 @@ struct SuperKMeansConfig {
     uint32_t seed = 42;         // Random seed for reproducibility
     bool use_blas_only = false; // Use BLAS-only computation for all iterations
     QuantizerType quantizer_type = QuantizerType::none; // Quantization method
-    int32_t rerank_k = -1; // Reranking candidates: -1 = quantizer default, 0 = none, >0 = override
     uint32_t pq_m = 16; // Number of PQ subspaces (d must be divisible by pq_m). Ignored if not PQ.
 
     // Convergence parameters
@@ -395,8 +393,6 @@ class SuperKMeans {
         } else {
             if (config.quantizer_type == QuantizerType::sq8) {
                 quantizer = std::make_unique<SQ8Quantizer>();
-            } else if (config.quantizer_type == QuantizerType::sq8_nk) {
-                quantizer = std::make_unique<SQ8NKQuantizer>();
             } else if (config.quantizer_type == QuantizerType::lvq4) {
                 quantizer = std::make_unique<LVQ4Quantizer>();
 #ifdef HAS_FAISS
@@ -412,9 +408,6 @@ class SuperKMeans {
             }
         }
         quantizer->Fit(data_to_cluster, n_samples, d);
-        effective_rerank_k = (config.rerank_k >= 0)
-            ? static_cast<size_t>(config.rerank_k)
-            : quantizer->DefaultRerankK();
         code_size = quantizer->CodeSize(d);
 
         // Override partial_d/vertical_d for quantizers with custom pruning (no PDX layout)
@@ -754,39 +747,20 @@ class SuperKMeans {
         std::vector<float> c_norms(n_centroids);
         quantizer->ComputeNorms(q_vectors.data(), n_vectors, d, v_norms.data());
         quantizer->ComputeNorms(q_centroids.data(), n_centroids, d, c_norms.data());
-
-        if (effective_rerank_k > 0) {
-            quantizer->FindNearestNeighborWithReranking(
-                q_vectors.data(),
-                q_centroids.data(),
-                encode_vectors,
-                encode_centroids,
-                n_vectors,
-                n_centroids,
-                d,
-                v_norms.data(),
-                c_norms.data(),
-                effective_rerank_k,
-                result_assignments.data(),
-                result_distances.data(),
-                tmp_distances_buf.get()
-            );
-        } else {
-            quantizer->FindNearestNeighbor(
-                q_vectors.data(),
-                q_centroids.data(),
-                encode_vectors,
-                encode_centroids,
-                n_vectors,
-                n_centroids,
-                d,
-                v_norms.data(),
-                c_norms.data(),
-                result_assignments.data(),
-                result_distances.data(),
-                tmp_distances_buf.get()
-            );
-        }
+        quantizer->FindNearestNeighbor(
+            q_vectors.data(),
+            q_centroids.data(),
+            encode_vectors,
+            encode_centroids,
+            n_vectors,
+            n_centroids,
+            d,
+            v_norms.data(),
+            c_norms.data(),
+            result_assignments.data(),
+            result_distances.data(),
+            tmp_distances_buf.get()
+        );
 
         return result_assignments;
     }
@@ -1307,24 +1281,13 @@ class SuperKMeans {
             quantizer->ComputeNorms(
                 quantized_centroids.get(), n_clusters, d, centroid_norms.get()
             );
-            if (effective_rerank_k > 0) {
-                quantizer->FindNearestNeighborWithReranking(
-                    encoded_data_p, quantized_centroids.get(),
-                    data_to_cluster, prev_centroids.get(),
-                    n_samples, n_clusters, d,
-                    data_norms.get(), centroid_norms.get(),
-                    effective_rerank_k,
-                    assignments.get(), distances.get(), tmp_distances_buf
-                );
-            } else {
-                quantizer->FindNearestNeighbor(
-                    encoded_data_p, quantized_centroids.get(),
-                    data_to_cluster, prev_centroids.get(),
-                    n_samples, n_clusters, d,
-                    data_norms.get(), centroid_norms.get(),
-                    assignments.get(), distances.get(), tmp_distances_buf
-                );
-            }
+            quantizer->FindNearestNeighbor(
+                encoded_data_p, quantized_centroids.get(),
+                data_to_cluster, prev_centroids.get(),
+                n_samples, n_clusters, d,
+                data_norms.get(), centroid_norms.get(),
+                assignments.get(), distances.get(), tmp_distances_buf
+            );
             if constexpr (q != Quantization::f32) {
                 if (config.quantized_centroid_update && !decoded_data_buffer
                     && !quantizer->UsesSparseVoting()) {
@@ -2232,7 +2195,6 @@ class SuperKMeans {
 
     // Quantization state (F32Quantizer for f32, SQ8/SQ4/etc for u8)
     std::unique_ptr<IQuantizer<q>> quantizer;
-    size_t effective_rerank_k = 0;
     size_t code_size = 0; // bytes per encoded vector (= d for SQ8/SQ4, variable for RaBitQ)
     std::unique_ptr<vector_value_t[]> quantized_data;
     std::unique_ptr<vector_value_t[]> quantized_centroids;

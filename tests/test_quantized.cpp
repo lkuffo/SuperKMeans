@@ -236,61 +236,6 @@ TEST_F(SuperKMeansU8Test, WCSSReasonable) {
         << "u8 WCSS (" << wcss_u8 << ") is too much worse than f32 WCSS (" << wcss_f32 << ")";
 }
 
-TEST_F(SuperKMeansU8Test, RerankingMatchesOrImproves) {
-    const size_t n = 3000;
-    const size_t d = 64;
-    const size_t n_clusters = 10;
-
-    std::vector<float> data = MakeBlobs(n, d, n_clusters);
-
-    // Train without reranking (default: rerank_k = -1, sq8 DefaultRerankK = 0)
-    SuperKMeansConfig config_no_rerank;
-    config_no_rerank.iters = 15;
-    config_no_rerank.verbose = false;
-    config_no_rerank.quantizer_type = QuantizerType::sq8;
-    auto kmeans_no_rerank =
-        SuperKMeans<Quantization::u8, DistanceFunction::l2>(n_clusters, d, config_no_rerank);
-    auto centroids_no_rerank = kmeans_no_rerank.Train(data.data(), n);
-
-    // Train with reranking (rerank_k = 4)
-    SuperKMeansConfig config_rerank;
-    config_rerank.iters = 15;
-    config_rerank.verbose = false;
-    config_rerank.quantizer_type = QuantizerType::sq8;
-    config_rerank.rerank_k = 4;
-    auto kmeans_rerank =
-        SuperKMeans<Quantization::u8, DistanceFunction::l2>(n_clusters, d, config_rerank);
-    auto centroids_rerank = kmeans_rerank.Train(data.data(), n);
-
-    // Compute WCSS for both
-    auto assign_no_rerank =
-        kmeans_no_rerank.Assign(data.data(), centroids_no_rerank.data(), n, n_clusters);
-    auto assign_rerank =
-        kmeans_rerank.Assign(data.data(), centroids_rerank.data(), n, n_clusters);
-
-    auto compute_wcss = [&](const std::vector<uint32_t>& assignments,
-                            const std::vector<float>& ctrs) {
-        double wcss = 0.0;
-        for (size_t i = 0; i < n; ++i) {
-            uint32_t c = assignments[i];
-            for (size_t j = 0; j < d; ++j) {
-                double diff = data[i * d + j] - ctrs[c * d + j];
-                wcss += diff * diff;
-            }
-        }
-        return wcss;
-    };
-
-    double wcss_no_rerank = compute_wcss(assign_no_rerank, centroids_no_rerank);
-    double wcss_rerank = compute_wcss(assign_rerank, centroids_rerank);
-
-    // Both training runs converge to potentially different local optima,
-    // so we only check that reranked WCSS is in the same ballpark
-    EXPECT_LT(wcss_rerank, wcss_no_rerank * 1.5)
-        << "Reranked WCSS (" << wcss_rerank
-        << ") is unexpectedly worse than non-reranked (" << wcss_no_rerank << ")";
-}
-
 // ── SuperKMeans<u8> SQ8 pruning integration tests ──
 // These tests require d >= 128 and k > 256 to enter the pruning code path
 // (RunIteration<false> via quantizer->FindNearestNeighborWithPruning).

@@ -203,7 +203,7 @@ target_include_directories(superkmeans ${_SKMEANS_SYSTEM} INTERFACE
     ${_SKMEANS_INCLUDE_DIRS}
 )
 
-target_link_libraries(superkmeans INTERFACE ${_SKMEANS_LINK_LIBS} numkong ruy::ruy)
+target_link_libraries(superkmeans INTERFACE ${_SKMEANS_LINK_LIBS} numkong ruy::ruy cpuinfo::cpuinfo)
 target_compile_definitions(superkmeans INTERFACE ${_SKMEANS_COMPILE_DEFS})
 target_compile_features(superkmeans INTERFACE cxx_std_17)
 

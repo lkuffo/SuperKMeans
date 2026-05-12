@@ -233,24 +233,6 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-    size_t DefaultRerankK() const override { return 0; }
-
-    void FindNearestNeighborWithReranking(
-        const quantized_t*, const quantized_t*,
-        const float*, const float*,
-        size_t, size_t, size_t,
-        const float*, const float*,
-        size_t,
-        uint32_t*, float*, float*
-    ) const override {
-        assert(false && "LVQ4 does not support reranking");
-    }
-
-    size_t CodeSize(size_t d) const override { return d / 2 + 8; }
-    bool IsFitted() const override { return fitted_; }
-    bool SupportsPruning() const override { return true; }
-    bool NeedsPDXLayout() const override { return false; }
-
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t /*d*/, uint32_t partial_d
     ) override {
@@ -540,6 +522,13 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
+
+    size_t CodeSize(size_t d) const override { return d / 2 + 8; }
+    bool IsFitted() const override { return fitted_; }
+    bool SupportsPruning() const override { return true; }
+    bool NeedsPDXLayout() const override { return false; }
+
+
   private:
     size_t d_ = 0;
     size_t nibble_bytes_ = 0;      // d/2
@@ -760,6 +749,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
             (1.0 + eps0 / std::sqrt(static_cast<double>(front_d)));
         return static_cast<float>(ratio);
     }
+
 };
 
 } // namespace skmeans

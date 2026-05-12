@@ -227,30 +227,6 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-    size_t DefaultRerankK() const override { return 0; }
-
-    void FindNearestNeighborWithReranking(
-        const quantized_t* x_quantized,
-        const quantized_t* y_quantized,
-        const float* x_float,
-        const float* y_float,
-        size_t n_x,
-        size_t n_y,
-        size_t d,
-        const float* norms_x,
-        const float* norms_y,
-        size_t rerank_k,
-        uint32_t* out_knn,
-        float* out_distances,
-        float* tmp_buf
-    ) const override {
-        assert(fitted_);
-        (void)y_quantized;
-        (void)norms_x;
-        (void)norms_y;
-        (void)tmp_buf;
-    }
-
     size_t CodeSize(size_t d) const override {
         return (d + 7) / 8 + sizeof(RaBitQFactors);
     }

@@ -126,11 +126,13 @@ static constexpr uint32_t AlignValue(T n) {
     return ((n + (val - 1)) / val) * val;
 }
 
+static constexpr size_t THIN_MATRIX_THRESHOLD = 256;
+
 enum class DistanceFunction : uint8_t { l2, dp };
 
 enum class Quantization : uint8_t { f32, u8, u4, b8, f16, bf16 };
 
-enum class QuantizerType : uint8_t { none, sq8, sq4, rabitq, pq8, pq4, lvq4, sq8_nk };
+enum class QuantizerType : uint8_t { none, sq8, sq4, rabitq, pq8, pq4, lvq4 };
 
 // Distance type: float for all quantization types.
 // Even u8 GEMM produces integer dot products, but we convert to float L2 distances

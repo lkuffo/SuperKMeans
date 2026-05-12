@@ -15,7 +15,9 @@
 #include <utility>
 #include <vector>
 
+#include <cpuinfo.h>
 #include <Eigen/Dense>
+#include <numkong/numkong.h>
 #include "ruy/ruy.h"
 
 namespace skmeans {
@@ -35,18 +37,26 @@ struct ScalarQuantizationParams {
 class SQ8Quantizer : public IQuantizer<Quantization::u8> {
   public:
     using quantized_t = IQuantizer::quantized_t;
+    using u8_computer = DistanceComputer<DistanceFunction::l2, Quantization::u8>;
 
     static constexpr uint8_t MAX_VALUE = 255;
 
+    SQ8Quantizer() {
+        cpuinfo_initialize();
+        has_amx = cpuinfo_has_x86_amx_int8();
+    }
+
     /**
-     * @brief u8×u8→i32 dot product GEMM via ruy.
+     * @brief u8×u8→u32 dot product GEMM, dispatching between NumKong and ruy.
      *
-     * Computes C[m, n] = A[m, k] × B[k, n] where A is row-major with stride
-     * a_stride, B is row-major with stride b_stride (reinterpreted as col-major
-     * by ruy), and C is row-major tightly packed (stride = n).
-     * Must be called from a single thread (caller handles OMP parallelization).
+     * - ARM: always ruy (best for thin/wide matrices on NEON).
+     * - x86 with AMX: always NumKong (leverages AMX tiles).
+     * - x86 without AMX (e.g. Zen 5): NumKong when k > THIN_MATRIX_THRESHOLD,
+     *   ruy otherwise (NumKong is subpar for small k).
+     *
+     * Handles OMP parallelization internally (backends need different threading).
      */
-    static void MatrixMultiplication(
+    void MatrixMultiplication(
         const quantized_t* a,
         const quantized_t* b,
         uint32_t* out,
@@ -55,41 +65,79 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         size_t k,
         size_t a_stride,
         size_t b_stride
-    ) {
-        thread_local ruy::Context ctx;
-        ctx.set_max_num_threads(1);
+    ) const {
+#if !defined(__ARM_NEON)
+        if (has_amx || k > THIN_MATRIX_THRESHOLD) {
+            const size_t pack_size = nk_dots_packed_size_u8(n, k);
+            if (pack_size > centroids_nk_packed_buf.size()) centroids_nk_packed_buf.resize(pack_size);
+            nk_dots_pack_u8(b, n, k, b_stride, centroids_nk_packed_buf.data());
 
-        ruy::Matrix<std::uint8_t> lhs;
-        lhs.mutable_layout()->set_rows(m);
-        lhs.mutable_layout()->set_cols(k);
-        lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
-        lhs.mutable_layout()->set_stride(a_stride);
-        lhs.set_data(a);
+            const size_t c_stride = n * sizeof(uint32_t);
 
-        ruy::Matrix<std::uint8_t> rhs;
-        rhs.mutable_layout()->set_rows(k);
-        rhs.mutable_layout()->set_cols(n);
-        rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
-        rhs.mutable_layout()->set_stride(b_stride);
-        rhs.set_data(b);
+#pragma omp parallel num_threads(g_n_threads)
+            {
+                nk_configure_thread(nk_capabilities());
+                int tid = omp_get_thread_num();
+                int nt = omp_get_num_threads();
+                size_t rows_per_t = (m + nt - 1) / nt;
+                size_t start = tid * rows_per_t;
+                size_t count = std::min(rows_per_t, m - start);
+                if (start < m && count > 0) {
+                    nk_dots_packed_u8(
+                        a + start * a_stride,
+                        centroids_nk_packed_buf.data(),
+                        out + start * n,
+                        count, n, k,
+                        a_stride, c_stride
+                    );
+                }
+            }
+            return;
+        }
+#endif
+        // Ruy path: OMP over row strips, single-threaded ruy per strip
+#pragma omp parallel for num_threads(g_n_threads) schedule(static)
+        for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
+            const size_t row_start = t * m / g_n_threads;
+            const size_t row_end = (t + 1) * m / g_n_threads;
+            const size_t local_rows = row_end - row_start;
+            if (local_rows == 0) continue;
 
-        ruy::Matrix<std::int32_t> dst;
-        dst.mutable_layout()->set_rows(m);
-        dst.mutable_layout()->set_cols(n);
-        dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
-        dst.mutable_layout()->set_stride(n);
-        dst.set_data(reinterpret_cast<std::int32_t*>(out));
+            thread_local ruy::Context ctx;
+            ctx.set_max_num_threads(1);
 
-        ruy::MulParams<std::int32_t, std::int32_t> mul_params;
-        ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
+            ruy::Matrix<std::uint8_t> lhs;
+            lhs.mutable_layout()->set_rows(local_rows);
+            lhs.mutable_layout()->set_cols(k);
+            lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
+            lhs.mutable_layout()->set_stride(a_stride);
+            lhs.set_data(a + row_start * a_stride);
+
+            ruy::Matrix<std::uint8_t> rhs;
+            rhs.mutable_layout()->set_rows(k);
+            rhs.mutable_layout()->set_cols(n);
+            rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
+            rhs.mutable_layout()->set_stride(b_stride);
+            rhs.set_data(b);
+
+            ruy::Matrix<std::int32_t> dst;
+            dst.mutable_layout()->set_rows(local_rows);
+            dst.mutable_layout()->set_cols(n);
+            dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
+            dst.mutable_layout()->set_stride(n);
+            dst.set_data(reinterpret_cast<std::int32_t*>(out + row_start * n));
+
+            ruy::MulParams<std::int32_t, std::int32_t> mul_params;
+            ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
+        }
     }
 
     void Fit(const float* embeddings, size_t n, size_t d) override {
         SKM_PROFILE_SCOPE("fitting");
         const size_t total_elements = n * d;
         params = ComputeQuantizationParams(embeddings, total_elements);
-        // Pre-allocate scratch buffers (avoids expensive per-call allocation)
-        pruning_dots_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
+        tmp_dots_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
+        centroids_nk_packed_buf.resize(nk_dots_packed_size_u8(Y_BATCH_SIZE, d));
         fitted = true;
     }
 
@@ -218,9 +266,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         (void)y_float;
         const float inv_scale_sq =
             params.inv_quantization_scale * params.inv_quantization_scale;
-
         std::fill_n(out_distances, n_x, std::numeric_limits<float>::max());
-        std::fill_n(out_knn, n_x, 0u);
 
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
             const size_t batch_n_x = std::min(X_BATCH_SIZE, n_x - i);
@@ -228,29 +274,20 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
 
-                {
-#pragma omp parallel for num_threads(g_n_threads) schedule(static)
-                    for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
-                        const size_t row_start = t * batch_n_x / g_n_threads;
-                        const size_t row_end = (t + 1) * batch_n_x / g_n_threads;
-                        const size_t local_rows = row_end - row_start;
-                        if (local_rows == 0) continue;
-                        MatrixMultiplication(
-                            x + (i + row_start) * d, y + j * d,
-                            pruning_dots_buf.data() + row_start * batch_n_y,
-                            local_rows, batch_n_y, d, d, d
-                        );
-                    }
-                }
+                MatrixMultiplication(
+                    x + i * d, y + j * d,
+                    tmp_dots_buf.data(),
+                    batch_n_x, batch_n_y, d, d, d
+                );
 
-                // Convert dots to L2² and find nearest neighbor per row
                 // L2²(x,y) = ||x||² + ||y||² - 2·inv_scale²·dot(x,y)
+                // TODO(@lkuffo, low): I believe we can just avoid the inv_scale term
                 using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
                 Eigen::Map<MatrixR> dists_matrix(tmp_buf, batch_n_x, batch_n_y);
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
                     const size_t idx = i + r;
-                    const uint32_t* dots_row = pruning_dots_buf.data() + r * batch_n_y;
+                    const uint32_t* dots_row = tmp_dots_buf.data() + r * batch_n_y;
                     float* dists_row = tmp_buf + r * batch_n_y;
                     const float nx = norms_x[idx];
 
@@ -270,41 +307,6 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
             }
         }
     }
-
-    size_t DefaultRerankK() const override { return 0; }
-
-    /**
-     * @brief Quantized coarse top-k search followed by exact f32 reranking.
-     *
-     * 1. Find top rerank_k candidates per query in quantized space (u8 GEMM)
-     * 2. Compute exact f32 L2² to those candidates using original float data
-     * 3. Write the best to out_knn / out_distances
-     */
-    void FindNearestNeighborWithReranking(
-        const quantized_t* x_quantized,
-        const quantized_t* y_quantized,
-        const float* x_float,
-        const float* y_float,
-        size_t n_x,
-        size_t n_y,
-        size_t d,
-        const float* norms_x,
-        const float* norms_y,
-        size_t rerank_k,
-        uint32_t* out_knn,
-        float* out_distances,
-        float* tmp_buf
-    ) const override {
-        SKM_PROFILE_SCOPE("search");
-        SKM_PROFILE_SCOPE("search/rerank");
-        (void)norms_x;
-        (void)norms_y;
-        (void)tmp_buf;
-    }
-
-    bool IsFitted() const override { return fitted; }
-
-    bool SupportsPruning() const override { return true; }
 
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t d, uint32_t partial_d
@@ -343,8 +345,9 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     /**
      * @brief Find top-1 nearest neighbor with PDX pruning for u8.
      *
-     * Uses partial u8 dot products via ruy on the first partial_d dimensions,
-     * converts to uint32_t L2² via norm expansion, then PDXearch prunes the rest.
+     * Hybrid approach that computes partial distances (first partial_d dimensions)
+     * via GEMM, then uses ADSampling+PDX pruning to skip full distance computation
+     * for unlikely candidates.
      * Final distances are float (converted inside PDXearch::SetBestCandidate).
      * Partial norms must be cached via CacheDataPartialNorms / CacheCentroidPartialNorms.
      */
@@ -363,20 +366,12 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         size_t* out_not_pruned_counts
     ) const override {
         SKM_PROFILE_SCOPE("search");
-        assert(fitted);
         (void) x_float;
         (void) y_float;
-        assert(!cached_data_partial_norms.empty() && "CacheDataPartialNorms must be called first");
-        assert(
-            !cached_centroid_partial_norms.empty() &&
-            "CacheCentroidPartialNorms must be called first"
-        );
 
-        using u8_computer = DistanceComputer<DistanceFunction::l2, Quantization::u8>;
         const float inv_scale_sq =
             params.inv_quantization_scale * params.inv_quantization_scale;
 
-        // Set scale factors on the PDX index for threshold conversion
         pdx_centroids.index->quantization_scale_squared =
             params.quantization_scale * params.quantization_scale;
         pdx_centroids.index->inverse_scale_factor_squared = inv_scale_sq;
@@ -392,19 +387,11 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
                 {
                     SKM_PROFILE_SCOPE("search/blas");
-
-#pragma omp parallel for num_threads(g_n_threads) schedule(static)
-                    for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
-                        const size_t row_start = t * batch_n_x / g_n_threads;
-                        const size_t row_end = (t + 1) * batch_n_x / g_n_threads;
-                        const size_t local_rows = row_end - row_start;
-                        if (local_rows == 0) continue;
-                        MatrixMultiplication(
-                            x + (i + row_start) * d, y + j * d,
-                            pruning_dots_buf.data() + row_start * batch_n_y,
-                            local_rows, batch_n_y, partial_d, d, d
-                        );
-                    }
+                    MatrixMultiplication(
+                        x + i * d, y + j * d,
+                        tmp_dots_buf.data(),
+                        batch_n_x, batch_n_y, partial_d, d, d
+                    );
                 }
 
                 {
@@ -417,22 +404,23 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 #endif
                     for (size_t r = 0; r < batch_n_x; ++r) {
                         const size_t i_idx = i + r;
-                        uint32_t* dots_row = pruning_dots_buf.data() + r * batch_n_y;
 
-                        // Convert dot products to L2²: l2 = norm_x + norm_y - 2*dot
-                        const uint32_t nx = cached_data_partial_norms[i_idx];
+                        // Norms: convert dot products to squared L2 distances
+                        const uint32_t norm_x_i = cached_data_partial_norms[i_idx];
+                        uint32_t* partial_distances_p = tmp_dots_buf.data() + r * batch_n_y;
                         SKM_VECTORIZE_LOOP
                         for (size_t c = 0; c < batch_n_y; ++c) {
-                            dots_row[c] =
-                                nx + cached_centroid_partial_norms[j + c] - 2 * dots_row[c];
+                            partial_distances_p[c] =
+                                norm_x_i + cached_centroid_partial_norms[j + c] - 2 * partial_distances_p[c];
                         }
 
-                        // Initial threshold: compute u8 L2² to previous assignment, scale to float
+                        // PDX pruned search per vector
+                        auto data_p = x + (i_idx * d);
                         const auto prev_assignment = out_knn[i_idx];
                         float dist_to_prev_centroid;
                         if (j == 0) {
                             uint32_t u8_dist = u8_computer::Horizontal(
-                                x + i_idx * d, y + prev_assignment * d, d
+                                data_p, y + prev_assignment * d, d
                             );
                             dist_to_prev_centroid = static_cast<float>(u8_dist) * inv_scale_sq;
                         } else {
@@ -444,10 +432,10 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                         auto assignment =
                             pdx_centroids.searcher
                                 ->Top1PartialSearchWithThresholdAndPartialDistances(
-                                    x + i_idx * d,
+                                    data_p,
                                     dist_to_prev_centroid,
                                     prev_assignment,
-                                    dots_row,
+                                    partial_distances_p,
                                     partial_d,
                                     j / VECTOR_CHUNK_SIZE,
                                     (j + Y_BATCH_SIZE) / VECTOR_CHUNK_SIZE,
@@ -484,14 +472,18 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
+    bool IsFitted() const override { return fitted; }
+    bool SupportsPruning() const override { return true; }
     const ScalarQuantizationParams& GetParams() const { return params; }
 
   private:
     ScalarQuantizationParams params{};
     bool fitted = false;
+    bool has_amx = false;
     std::vector<uint32_t> cached_data_partial_norms;
     std::vector<uint32_t> cached_centroid_partial_norms;
-    mutable std::vector<uint32_t> pruning_dots_buf;
+    mutable std::vector<uint32_t> tmp_dots_buf;
+    mutable std::vector<char> centroids_nk_packed_buf;
 };
 
 } // namespace skmeans

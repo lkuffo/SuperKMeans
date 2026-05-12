@@ -76,35 +76,6 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
         );
     }
 
-    size_t DefaultRerankK() const override { return 0; }
-
-    void FindNearestNeighborWithReranking(
-        const quantized_t* x,
-        const quantized_t* y,
-        const float* /*x_float*/,
-        const float* /*y_float*/,
-        size_t n_x,
-        size_t n_y,
-        size_t d,
-        const float* norms_x,
-        const float* norms_y,
-        size_t /*rerank_k*/,
-        uint32_t* out_knn,
-        float* out_distances,
-        float* tmp_buf
-    ) const override {
-        // f32 doesn't need reranking — delegate to exact search
-        FindNearestNeighbor(
-            x, y, nullptr, nullptr, n_x, n_y, d, norms_x, norms_y, out_knn, out_distances, tmp_buf
-        );
-    }
-
-    bool IsFitted() const override { return fitted; }
-
-    bool SupportsPruning() const override { return true; }
-
-    size_t CodeSize(size_t d) const override { return d; }
-
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t d, uint32_t partial_d
     ) override {
@@ -159,6 +130,10 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
             out_not_pruned_counts
         );
     }
+
+    bool IsFitted() const override { return fitted; }
+    bool SupportsPruning() const override { return true; }
+    size_t CodeSize(size_t d) const override { return d; }
 
   private:
     bool fitted = false;

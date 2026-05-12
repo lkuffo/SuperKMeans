@@ -179,37 +179,6 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-    size_t DefaultRerankK() const override { return 0; }
-
-    void FindNearestNeighborWithReranking(
-        const quantized_t* x_quantized,
-        const quantized_t* y_quantized,
-        const float* /*x_float*/,
-        const float* /*y_float*/,
-        size_t n_x,
-        size_t n_y,
-        size_t /*d*/,
-        const float* /*norms_x*/,
-        const float* /*norms_y*/,
-        size_t /*rerank_k*/,
-        uint32_t* out_knn,
-        float* out_distances,
-        float* /*tmp_buf*/
-    ) const override {
-        FindNearestNeighbor(
-            x_quantized, y_quantized,
-            nullptr, nullptr,
-            n_x, n_y, 0,
-            nullptr, nullptr,
-            out_knn, out_distances, nullptr
-        );
-    }
-
-    bool IsFitted() const override { return fitted; }
-    bool SupportsPruning() const override { return true; }
-    bool NeedsPDXLayout() const override { return false; }
-    bool UsesSparseVoting() const override { return true; }
-
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t /*d*/, uint32_t partial_d
     ) override {
@@ -472,6 +441,11 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
     ) const override {
         // Not used — PQ4 uses SparseVotingUpdate instead
     }
+
+    bool IsFitted() const override { return fitted; }
+    bool SupportsPruning() const override { return true; }
+    bool NeedsPDXLayout() const override { return false; }
+    bool UsesSparseVoting() const override { return true; }
 
   private:
     /// Extract 4-bit code for subspace m from a packed code vector.

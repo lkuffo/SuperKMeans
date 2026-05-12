@@ -190,7 +190,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             );
         }
         this->quantizer->Fit(data_to_cluster, this->n_samples, this->d);
-        this->effective_rerank_k = 0;
         this->code_size = this->quantizer->CodeSize(this->d);
 
         // For f32, encoded data IS the float data (zero-copy)

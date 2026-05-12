@@ -169,37 +169,6 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-    size_t DefaultRerankK() const override { return 0; }
-
-    void FindNearestNeighborWithReranking(
-        const quantized_t* x_quantized,
-        const quantized_t* y_quantized,
-        const float* /*x_float*/,
-        const float* /*y_float*/,
-        size_t n_x,
-        size_t n_y,
-        size_t /*d*/,
-        const float* /*norms_x*/,
-        const float* /*norms_y*/,
-        size_t /*rerank_k*/,
-        uint32_t* out_knn,
-        float* out_distances,
-        float* /*tmp_buf*/
-    ) const override {
-        // No reranking for PQ8 — just do normal SDC search
-        FindNearestNeighbor(
-            x_quantized, y_quantized,
-            nullptr, nullptr,
-            n_x, n_y, 0,
-            nullptr, nullptr,
-            out_knn, out_distances, nullptr
-        );
-    }
-
-    bool IsFitted() const override { return fitted; }
-    bool SupportsPruning() const override { return false; }
-    bool UsesSparseVoting() const override { return true; }
-
     /**
      * @brief Update centroids via sparse voting in the PQ code domain.
      *
@@ -298,6 +267,10 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
     ) const override {
         // Not used — PQ uses SparseVotingUpdate instead
     }
+
+    bool IsFitted() const override { return fitted; }
+    bool SupportsPruning() const override { return false; }
+    bool UsesSparseVoting() const override { return true; }
 
   private:
     size_t M_;
