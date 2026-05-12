@@ -19,6 +19,7 @@
 #include <cpuinfo.h>
 #include <Eigen/Dense>
 #include <numkong/numkong.h>
+#include "ruy/ruy.h"
 
 namespace skmeans {
 
@@ -89,7 +90,8 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         bool a_changed = true,
         bool b_changed = true
     ) const {
-        if (has_amx) {
+        // On-the-fly decoding path: unpack u4→u8, then use u8 GEMM (NumKong or Ruy)
+        if (has_amx || on_the_fly_decoding) {
             {
                 SKM_PROFILE_SCOPE("search/unpack");
                 if (a_changed) {
@@ -101,35 +103,78 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
                     const size_t b_u8_size = n * k;
                     if (decoded_b_buf.size() < b_u8_size) decoded_b_buf.resize(b_u8_size);
                     UnpackU4x2ToU8(b, decoded_b_buf.data(), n, k, b_stride);
+                }
+            }
+
+#if !defined(__ARM_NEON)
+            if (has_amx || k > THIN_MATRIX_THRESHOLD) {
+                if (b_changed) {
                     const size_t pack_size = nk_dots_packed_size_u8(n, k);
                     if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
                     nk_dots_pack_u8(decoded_b_buf.data(), n, k, k, packed_buf.data());
                 }
-            }
 
-            const size_t c_stride = n * sizeof(uint32_t);
+                const size_t c_stride = n * sizeof(uint32_t);
 
 #pragma omp parallel num_threads(g_n_threads)
-            {
-                nk_configure_thread(nk_capabilities());
-                int tid = omp_get_thread_num();
-                int nt = omp_get_num_threads();
-                size_t rows_per_t = (m + nt - 1) / nt;
-                size_t start = tid * rows_per_t;
-                size_t count = std::min(rows_per_t, m - start);
-                if (start < m && count > 0) {
-                    nk_dots_packed_u8(
-                        decoded_a_buf.data() + start * k,
-                        packed_buf.data(),
-                        out + start * n,
-                        count, n, k,
-                        k, c_stride
-                    );
+                {
+                    nk_configure_thread(nk_capabilities());
+                    int tid = omp_get_thread_num();
+                    int nt = omp_get_num_threads();
+                    size_t rows_per_t = (m + nt - 1) / nt;
+                    size_t start = tid * rows_per_t;
+                    size_t count = std::min(rows_per_t, m - start);
+                    if (start < m && count > 0) {
+                        nk_dots_packed_u8(
+                            decoded_a_buf.data() + start * k,
+                            packed_buf.data(),
+                            out + start * n,
+                            count, n, k,
+                            k, c_stride
+                        );
+                    }
                 }
+                return;
+            }
+#endif
+            // Ruy u8 path: OMP over row strips, single-threaded ruy per strip
+#pragma omp parallel for num_threads(g_n_threads) schedule(static)
+            for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
+                const size_t row_start = t * m / g_n_threads;
+                const size_t row_end = (t + 1) * m / g_n_threads;
+                const size_t local_rows = row_end - row_start;
+                if (local_rows == 0) continue;
+
+                thread_local ruy::Context ctx;
+
+                ruy::Matrix<std::uint8_t> lhs;
+                lhs.mutable_layout()->set_rows(local_rows);
+                lhs.mutable_layout()->set_cols(k);
+                lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                lhs.mutable_layout()->set_stride(k);
+                lhs.set_data(decoded_a_buf.data() + row_start * k);
+
+                ruy::Matrix<std::uint8_t> rhs;
+                rhs.mutable_layout()->set_rows(k);
+                rhs.mutable_layout()->set_cols(n);
+                rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
+                rhs.mutable_layout()->set_stride(k);
+                rhs.set_data(decoded_b_buf.data());
+
+                ruy::Matrix<std::int32_t> dst;
+                dst.mutable_layout()->set_rows(local_rows);
+                dst.mutable_layout()->set_cols(n);
+                dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
+                dst.mutable_layout()->set_stride(n);
+                dst.set_data(reinterpret_cast<std::int32_t*>(out + row_start * n));
+
+                ruy::MulParams<std::int32_t, std::int32_t> mul_params;
+                ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
             }
             return;
         }
 
+        // Native u4 NumKong path (no decoding)
         const auto* a_u4 = reinterpret_cast<const nk_u4x2_t*>(a);
         const auto* b_u4 = reinterpret_cast<const nk_u4x2_t*>(b);
 
@@ -574,6 +619,7 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
     ScalarQuantizationParams params{};
     bool fitted = false;
     bool has_amx = false;
+    bool on_the_fly_decoding = true;
     std::vector<uint32_t> cached_data_partial_norms;
     std::vector<uint32_t> cached_centroid_partial_norms;
     mutable std::vector<uint32_t> pruning_dots_buf;
