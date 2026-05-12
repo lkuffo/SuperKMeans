@@ -43,6 +43,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     using quantized_t = IQuantizer::quantized_t;
     using u4_computer = DistanceComputer<DistanceFunction::l2, Quantization::u4>;
     using u4_utils = UtilsComputer<Quantization::u4>;
+    using f32_utils = UtilsComputer<Quantization::f32>;
 
     LVQ4Quantizer() : has_amx(DetectAMX()) {}
 
@@ -536,21 +537,34 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                             best_idx = out_knn[i_idx];
                         }
 
+                        // Phase 2: vectorized front partial distances
+                        thread_local float partial_dists[Y_BATCH_SIZE];
+                        thread_local uint32_t survivor_positions[Y_BATCH_SIZE];
+
+                        SKM_VECTORIZE_LOOP
                         for (size_t c = 0; c < batch_n_y; ++c) {
+                            const size_t j_idx = j + c;
+                            partial_dists[c] = norm_x_front_i + cf.norm_y_front[j_idx]
+                                - two_si * cf.scales[j_idx] * static_cast<float>(dots_row[c])
+                                - two_A_x_front_i * cf.biases[j_idx]
+                                - two_bi * cf.sj_sum_cy_front_f[j_idx];
+                        }
+
+                        // Compact survivor indices via SIMD
+                        size_t n_survivors = 0;
+                        const float front_threshold = best_dist * ad_ratio_front;
+                        f32_utils::InitPositionsArray(
+                            batch_n_y, n_survivors, survivor_positions,
+                            front_threshold, partial_dists
+                        );
+                        out_not_pruned_counts[i_idx] += n_survivors;
+
+                        // Phase 3+: resolve survivors only
+                        for (size_t s = 0; s < n_survivors; ++s) {
+                            const size_t c = survivor_positions[s];
                             const size_t j_idx = j + c;
                             const float sj = cf.scales[j_idx];
                             const float bj = cf.biases[j_idx];
-
-                            // Front checkpoint: optimized partial LVQ4 distance
-                            float partial_l2 = norm_x_front_i + cf.norm_y_front[j_idx]
-                                - two_si * sj * static_cast<float>(dots_row[c])
-                                - two_A_x_front_i * bj
-                                - two_bi * cf.sj_sum_cy_front_f[j_idx];
-
-                            if (partial_l2 > best_dist * ad_ratio_front)
-                                continue;
-
-                            out_not_pruned_counts[i_idx]++;
                             uint32_t dot_accumulated = dots_row[c];
 
                             const uint8_t* y_code = y_codes + j_idx * code_size_;
