@@ -85,21 +85,26 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         size_t n,
         size_t k,
         size_t a_stride,
-        size_t b_stride
+        size_t b_stride,
+        bool a_changed = true,
+        bool b_changed = true
     ) const {
         if (has_amx) {
-            const size_t a_u8_size = m * k;
-            const size_t b_u8_size = n * k;
-            if (decoded_a_buf.size() < a_u8_size) decoded_a_buf.resize(a_u8_size);
-            if (decoded_b_buf.size() < b_u8_size) decoded_b_buf.resize(b_u8_size);
-
             {
                 SKM_PROFILE_SCOPE("search/unpack");
-                UnpackU4x2ToU8(a, decoded_a_buf.data(), m, k, a_stride);
-                UnpackU4x2ToU8(b, decoded_b_buf.data(), n, k, b_stride);
-                const size_t pack_size = nk_dots_packed_size_u8(n, k);
-                if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
-                nk_dots_pack_u8(decoded_b_buf.data(), n, k, k, packed_buf.data());
+                if (a_changed) {
+                    const size_t a_u8_size = m * k;
+                    if (decoded_a_buf.size() < a_u8_size) decoded_a_buf.resize(a_u8_size);
+                    UnpackU4x2ToU8(a, decoded_a_buf.data(), m, k, a_stride);
+                }
+                if (b_changed) {
+                    const size_t b_u8_size = n * k;
+                    if (decoded_b_buf.size() < b_u8_size) decoded_b_buf.resize(b_u8_size);
+                    UnpackU4x2ToU8(b, decoded_b_buf.data(), n, k, b_stride);
+                    const size_t pack_size = nk_dots_packed_size_u8(n, k);
+                    if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
+                    nk_dots_pack_u8(decoded_b_buf.data(), n, k, k, packed_buf.data());
+                }
             }
 
             const size_t c_stride = n * sizeof(uint32_t);
@@ -128,9 +133,11 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         const auto* a_u4 = reinterpret_cast<const nk_u4x2_t*>(a);
         const auto* b_u4 = reinterpret_cast<const nk_u4x2_t*>(b);
 
-        const size_t pack_size = nk_dots_packed_size_u4(n, k);
-        if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
-        nk_dots_pack_u4(b_u4, n, k, b_stride, packed_buf.data());
+        if (b_changed) {
+            const size_t pack_size = nk_dots_packed_size_u4(n, k);
+            if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
+            nk_dots_pack_u4(b_u4, n, k, b_stride, packed_buf.data());
+        }
 
         const size_t c_stride = n * sizeof(uint32_t);
 
@@ -163,7 +170,6 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
         }
         const size_t total_elements = n * d;
         params = ComputeQuantizationParams(embeddings, total_elements);
-        // Pre-allocate scratch buffers (avoids expensive per-call allocation)
         pruning_dots_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         packed_buf.resize(nk_dots_packed_size_u4(Y_BATCH_SIZE, d));
         fitted = true;
@@ -332,11 +338,14 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
 
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
+                const bool a_changed = (j == 0);
+                const bool b_changed = true;
 
                 MatrixMultiplication(
                     x + i * d_packed, y + j * d_packed,
                     pruning_dots_buf.data(),
-                    batch_n_x, batch_n_y, d, d_packed, d_packed
+                    batch_n_x, batch_n_y, d, d_packed, d_packed,
+                    a_changed, b_changed
                 );
 
                 // Convert dots to L2² and find nearest neighbor per row
@@ -446,8 +455,6 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
             params.inv_quantization_scale * params.inv_quantization_scale;
         const size_t d_packed = d / 2;
         const size_t partial_d_packed = partial_d / 2;
-
-        // Set scale factors on the PDX index for threshold conversion
         pdx_centroids.index->quantization_scale_squared =
             params.quantization_scale * params.quantization_scale;
         pdx_centroids.index->inverse_scale_factor_squared = inv_scale_sq;
@@ -459,13 +466,16 @@ class SQ4Quantizer : public IQuantizer<Quantization::u4> {
 
             for (size_t j = 0; j < n_y; j += Y_BATCH_SIZE) {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
+                const bool a_changed = (j == 0);
+                const bool b_changed = true;
 
                 {
                     SKM_PROFILE_SCOPE("search/blas");
                     MatrixMultiplication(
                         x + i * d_packed, y + j * d_packed,
                         pruning_dots_buf.data(),
-                        batch_n_x, batch_n_y, partial_d, d_packed, d_packed
+                        batch_n_x, batch_n_y, partial_d, d_packed, d_packed,
+                        a_changed, b_changed
                     );
                 }
 
