@@ -399,24 +399,63 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-    void AverageCentroids(
-        const uint32_t* accumulators,
+    void ResetCentroidAccumulators(size_t n_clusters, size_t d) override {
+        const size_t total = n_clusters * d;
+        if (centroid_accumulators.size() < total) centroid_accumulators.resize(total);
+        std::fill_n(centroid_accumulators.data(), total, 0u);
+    }
+
+    void UpdateCentroids(
+        const quantized_t* encoded_data,
+        const uint32_t* assignments,
+        float* /*centroid_accumulators_float*/,
+        uint32_t* cluster_sizes,
+        size_t n, size_t n_clusters, size_t d,
+        uint32_t n_threads
+    ) const override {
+        SKM_PROFILE_SCOPE("SQ8::UpdateCentroids");
+        assert(fitted);
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+        {
+            uint32_t nt = n_threads;
+            uint32_t rank = omp_get_thread_num();
+            size_t c0 = (n_clusters * rank) / nt;
+            size_t c1 = (n_clusters * (rank + 1)) / nt;
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t ci = assignments[i];
+                if (ci >= c0 && ci < c1) {
+                    cluster_sizes[ci] += 1;
+                    const auto* vec = encoded_data + i * d;
+                    auto* acc = centroid_accumulators.data() + ci * d;
+                    SKM_VECTORIZE_LOOP
+                    for (size_t j = 0; j < d; ++j) {
+                        acc[j] += vec[j];
+                    }
+                }
+            }
+        }
+    }
+
+    void FinalizeCentroids(
+        float* centroids,
         const uint32_t* cluster_sizes,
-        quantized_t* out,
-        size_t n_clusters,
-        size_t d
+        size_t n_clusters, size_t d
     ) const override {
         assert(fitted);
+        const float quantization_base = params.quantization_base;
+        const float inv_quantization_scale = params.inv_quantization_scale;
+
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n_clusters; ++i) {
             if (cluster_sizes[i] == 0) continue;
-            const uint32_t* acc = accumulators + i * d;
-            quantized_t* row = out + i * d;
+            const uint32_t* acc = centroid_accumulators.data() + i * d;
+            float* row = centroids + i * d;
             const uint32_t half = cluster_sizes[i] / 2;
             const float inv_size = 1.0f / static_cast<float>(cluster_sizes[i]);
             SKM_VECTORIZE_LOOP
             for (size_t j = 0; j < d; ++j) {
-                row[j] = static_cast<uint8_t>(static_cast<float>(acc[j] + half) * inv_size);
+                uint8_t qval = static_cast<uint8_t>(static_cast<float>(acc[j] + half) * inv_size);
+                row[j] = static_cast<float>(qval) * inv_quantization_scale + quantization_base;
             }
         }
     }
@@ -449,6 +488,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     bool has_amx = false;
     std::vector<uint32_t> cached_data_partial_norms;
     std::vector<uint32_t> cached_centroid_partial_norms;
+    mutable std::vector<uint32_t> centroid_accumulators;
     mutable std::vector<uint32_t> tmp_dots_buf;
     mutable std::vector<char> centroids_nk_packed_buf;
 };

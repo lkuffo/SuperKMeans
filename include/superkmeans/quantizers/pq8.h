@@ -181,19 +181,27 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
      *
      * Step 2 is batched across all clusters as a BLAS sgemm:
      *   votes[n_clusters × Ks] = freq[n_clusters × Ks] × SDC_m[Ks × Ks]
+     *
+     * The voted quantized centroids are decoded to float centroid_accumulators.
+     * These are final values (not sums), so FinalizeCentroids is a no-op.
      */
-    void SparseVotingUpdate(
-        const quantized_t* codes, const uint32_t* assignments,
-        quantized_t* out_centroids, uint32_t* out_cluster_sizes,
-        size_t n, size_t n_clusters, size_t /*d*/
+    void UpdateCentroids(
+        const quantized_t* encoded_data,
+        const uint32_t* assignments,
+        float* centroid_accumulators,
+        uint32_t* cluster_sizes,
+        size_t n, size_t n_clusters, size_t d,
+        uint32_t n_threads
     ) const override {
-        SKM_PROFILE_SCOPE("sparse_voting");
+        SKM_PROFILE_SCOPE("PQ8::UpdateCentroids");
         assert(fitted);
 
-        // Count cluster sizes and build per-cluster member lists
-        std::fill_n(out_cluster_sizes, n_clusters, 0u);
+        voted_centroids_.resize(n_clusters * M_);
+
+        // Count cluster sizes
+        std::fill_n(cluster_sizes, n_clusters, 0u);
         for (size_t i = 0; i < n; ++i) {
-            out_cluster_sizes[assignments[i]]++;
+            cluster_sizes[assignments[i]]++;
         }
 
         // Frequency matrix: freq[cluster × Ks] per subspace
@@ -206,7 +214,7 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
             std::fill(freq.begin(), freq.end(), 0.0f);
             for (size_t i = 0; i < n; ++i) {
                 uint32_t cluster = assignments[i];
-                uint8_t code = codes[i * M_ + m];
+                uint8_t code = encoded_data[i * M_ + m];
                 freq[cluster * Ks + code] += 1.0f;
             }
 
@@ -238,10 +246,10 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
             );
 
             // Pick argmin per cluster
-#pragma omp parallel for num_threads(g_n_threads)
+#pragma omp parallel for num_threads(n_threads)
             for (size_t c = 0; c < n_clusters; ++c) {
-                if (out_cluster_sizes[c] == 0) {
-                    out_centroids[c * M_ + m] = 0;
+                if (cluster_sizes[c] == 0) {
+                    voted_centroids_[c * M_ + m] = 0;
                     continue;
                 }
                 const float* row = votes.data() + c * Ks;
@@ -253,24 +261,24 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
                         best_k = k;
                     }
                 }
-                out_centroids[c * M_ + m] = static_cast<uint8_t>(best_k);
+                voted_centroids_[c * M_ + m] = static_cast<uint8_t>(best_k);
             }
         }
+
+        // Decode voted quantized centroids to float
+        faiss_pq_->decode(voted_centroids_.data(), centroid_accumulators, n_clusters);
     }
 
-    void AverageCentroids(
-        const uint32_t* /*accumulators*/,
+    void FinalizeCentroids(
+        float* /*centroids*/,
         const uint32_t* /*cluster_sizes*/,
-        quantized_t* /*out*/,
-        size_t /*n_clusters*/,
-        size_t /*d*/
+        size_t /*n_clusters*/, size_t /*d*/
     ) const override {
-        // Not used — PQ uses SparseVotingUpdate instead
+        // No-op: UpdateCentroids already produced final float centroids
     }
 
     bool IsFitted() const override { return fitted; }
     bool SupportsPruning() const override { return false; }
-    bool UsesSparseVoting() const override { return true; }
 
   private:
     size_t M_;
@@ -279,6 +287,7 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
     bool fitted = false;
     std::unique_ptr<faiss::ProductQuantizer> faiss_pq_;
     std::vector<float> sdc_table_; // [M_ × Ks × Ks]
+    mutable std::vector<quantized_t> voted_centroids_; // [n_clusters × M_]
 };
 
 } // namespace skmeans

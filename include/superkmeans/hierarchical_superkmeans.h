@@ -137,11 +137,9 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             new centroid_value_t[this->n_clusters * this->vertical_d]
         );
 
-        this->partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->vertical_d / 2);
-
-        if (this->partial_d > this->vertical_d) {
-            this->partial_d = this->vertical_d;
-        }
+        // Quantizer not created yet; use default formula (quantizer overrides later)
+        this->partial_d = std::min(
+            std::max<uint32_t>(MIN_PARTIAL_D, this->vertical_d / 2), this->vertical_d);
         auto initial_partial_d = this->partial_d;
 
         if (this->hierarchical_config.verbose) {
@@ -456,7 +454,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
 
         // In the refinement phase, we use an even smaller partial d (around 8% of d) because the
         // clusters are already well-formed, and pruning rate is expected to be high.
-        this->partial_d = std::max<uint32_t>(MIN_PARTIAL_D, this->vertical_d / 3);
+        this->partial_d = this->quantizer->AlignPartialD(
+            std::max<uint32_t>(MIN_PARTIAL_D, this->vertical_d / 3), this->vertical_d);
 
         // We just transfer the state of centroids to the proper class variables, no rotation.
         auto final_refinement_pdx_wrapper = SetupCentroids(final_centroids.get(), this->n_clusters);

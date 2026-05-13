@@ -662,74 +662,94 @@ TEST_F(SuperKMeansU4PruningTest, SLOW_PruningMatchesGemmOnly) {
 // (Old RaBitQ quantizer removed — only rabitq remains)
 #endif // HAS_FAISS
 
-// ── AverageCentroids unit tests ──
+// ── FinalizeCentroids unit tests ──
 
-TEST(AverageCentroidsTest, SQ8_CorrectAverage) {
+TEST(FinalizeCentroidsTest, SQ8_CorrectFinalize) {
     SQ8Quantizer quantizer;
     const size_t d = 8;
     const size_t n_clusters = 3;
+    const size_t n_vectors = 6;
 
-    // Fit on dummy data to mark as fitted
-    std::vector<float> dummy(100 * d, 0.5f);
-    quantizer.Fit(dummy.data(), 100, d);
+    // Fit on data spanning [0, 1] so scale maps [0,255]
+    std::vector<float> fit_data(100 * d);
+    for (size_t i = 0; i < fit_data.size(); ++i) fit_data[i] = static_cast<float>(i % 256) / 255.0f;
+    quantizer.Fit(fit_data.data(), 100, d);
 
-    // Cluster 0: 2 vectors, each dim = 100 → avg = 100
-    // Cluster 1: 4 vectors, dims alternate 10 and 14 → avg = 12 (truncated from 12.0)
-    // Cluster 2: 0 vectors (empty — should be skipped)
-    std::vector<uint32_t> accumulators(n_clusters * d, 0);
-    std::vector<uint32_t> cluster_sizes = {2, 4, 0};
+    // Encode some known vectors, then accumulate via UpdateCentroids
+    // Use uniform value per cluster so the average is predictable
+    std::vector<float> vectors(n_vectors * d);
+    // Cluster 0: 2 vectors with value 0.5
+    for (size_t j = 0; j < 2 * d; ++j) vectors[j] = 0.5f;
+    // Cluster 1: 3 vectors with value 0.25
+    for (size_t j = 2 * d; j < 5 * d; ++j) vectors[j] = 0.25f;
+    // Cluster 2: 1 vector with value 0.75
+    for (size_t j = 5 * d; j < 6 * d; ++j) vectors[j] = 0.75f;
 
-    for (size_t j = 0; j < d; ++j) accumulators[0 * d + j] = 200;
-    for (size_t j = 0; j < d; ++j) accumulators[1 * d + j] = 48;
+    std::vector<uint8_t> encoded(n_vectors * d);
+    quantizer.Encode(vectors.data(), encoded.data(), n_vectors, d);
 
-    std::vector<uint8_t> out(n_clusters * d, 0xFF);
-    quantizer.AverageCentroids(
-        accumulators.data(), cluster_sizes.data(), out.data(), n_clusters, d
+    std::vector<uint32_t> assignments = {0, 0, 1, 1, 1, 2};
+    std::vector<float> centroid_buf(n_clusters * d, 0.0f);
+    std::vector<uint32_t> cluster_sizes(n_clusters, 0);
+
+    quantizer.ResetCentroidAccumulators(n_clusters, d);
+    quantizer.UpdateCentroids(
+        encoded.data(), assignments.data(),
+        centroid_buf.data(), cluster_sizes.data(),
+        n_vectors, n_clusters, d, 1
     );
+    quantizer.FinalizeCentroids(centroid_buf.data(), cluster_sizes.data(), n_clusters, d);
 
+    EXPECT_EQ(cluster_sizes[0], 2u);
+    EXPECT_EQ(cluster_sizes[1], 3u);
+    EXPECT_EQ(cluster_sizes[2], 1u);
+
+    // Check centroids are close to the original values (within quantization error)
     for (size_t j = 0; j < d; ++j) {
-        EXPECT_EQ(out[0 * d + j], 100) << "cluster 0, dim " << j;
-        EXPECT_EQ(out[1 * d + j], 12) << "cluster 1, dim " << j;
-    }
-    // Cluster 2 should be untouched (0xFF)
-    for (size_t j = 0; j < d; ++j) {
-        EXPECT_EQ(out[2 * d + j], 0xFF) << "cluster 2 (empty) should be untouched, dim " << j;
+        EXPECT_NEAR(centroid_buf[0 * d + j], 0.5f, 0.02f) << "cluster 0, dim " << j;
+        EXPECT_NEAR(centroid_buf[1 * d + j], 0.25f, 0.02f) << "cluster 1, dim " << j;
+        EXPECT_NEAR(centroid_buf[2 * d + j], 0.75f, 0.02f) << "cluster 2, dim " << j;
     }
 }
 
-TEST(AverageCentroidsTest, SQ4_CorrectAverage) {
+TEST(FinalizeCentroidsTest, SQ4_CorrectFinalize) {
     SQ4Quantizer quantizer;
-    const size_t d = 8; // real dims
-    const size_t d_packed = d / 2;
+    const size_t d = 8;
     const size_t n_clusters = 2;
+    const size_t n_vectors = 5;
 
-    std::vector<float> dummy(100 * d, 0.5f);
-    quantizer.Fit(dummy.data(), 100, d);
+    std::vector<float> fit_data(100 * d);
+    for (size_t i = 0; i < fit_data.size(); ++i) fit_data[i] = static_cast<float>(i % 16) / 15.0f;
+    quantizer.Fit(fit_data.data(), 100, d);
 
-    // Cluster 0: 3 vectors, all nibbles sum to 30 → avg = 10
-    // Cluster 1: 5 vectors, all nibbles sum to 50 → avg = 10
-    std::vector<uint32_t> accumulators(n_clusters * d, 0);
-    std::vector<uint32_t> cluster_sizes = {3, 5};
+    std::vector<float> vectors(n_vectors * d);
+    // Cluster 0: 2 vectors with value 0.5
+    for (size_t j = 0; j < 2 * d; ++j) vectors[j] = 0.5f;
+    // Cluster 1: 3 vectors with value 0.25
+    for (size_t j = 2 * d; j < 5 * d; ++j) vectors[j] = 0.25f;
 
-    for (size_t j = 0; j < d; ++j) accumulators[0 * d + j] = 30;
-    for (size_t j = 0; j < d; ++j) accumulators[1 * d + j] = 50;
+    const size_t code_size = quantizer.CodeSize(d);
+    std::vector<uint8_t> encoded(n_vectors * code_size);
+    quantizer.Encode(vectors.data(), encoded.data(), n_vectors, d);
 
-    std::vector<uint8_t> out(n_clusters * d_packed, 0xFF);
-    quantizer.AverageCentroids(
-        accumulators.data(), cluster_sizes.data(), out.data(), n_clusters, d
+    std::vector<uint32_t> assignments = {0, 0, 1, 1, 1};
+    std::vector<float> centroid_buf(n_clusters * d, 0.0f);
+    std::vector<uint32_t> cluster_sizes(n_clusters, 0);
+
+    quantizer.ResetCentroidAccumulators(n_clusters, d);
+    quantizer.UpdateCentroids(
+        encoded.data(), assignments.data(),
+        centroid_buf.data(), cluster_sizes.data(),
+        n_vectors, n_clusters, d, 1
     );
+    quantizer.FinalizeCentroids(centroid_buf.data(), cluster_sizes.data(), n_clusters, d);
 
-    for (size_t k = 0; k < d_packed; ++k) {
-        uint8_t lo = out[0 * d_packed + k] & 0x0F;
-        uint8_t hi = (out[0 * d_packed + k] >> 4) & 0x0F;
-        EXPECT_EQ(lo, 10) << "cluster 0, packed " << k << " lo";
-        EXPECT_EQ(hi, 10) << "cluster 0, packed " << k << " hi";
-    }
-    for (size_t k = 0; k < d_packed; ++k) {
-        uint8_t lo = out[1 * d_packed + k] & 0x0F;
-        uint8_t hi = (out[1 * d_packed + k] >> 4) & 0x0F;
-        EXPECT_EQ(lo, 10) << "cluster 1, packed " << k << " lo";
-        EXPECT_EQ(hi, 10) << "cluster 1, packed " << k << " hi";
+    EXPECT_EQ(cluster_sizes[0], 2u);
+    EXPECT_EQ(cluster_sizes[1], 3u);
+
+    for (size_t j = 0; j < d; ++j) {
+        EXPECT_NEAR(centroid_buf[0 * d + j], 0.5f, 0.1f) << "cluster 0, dim " << j;
+        EXPECT_NEAR(centroid_buf[1 * d + j], 0.25f, 0.1f) << "cluster 1, dim " << j;
     }
 }
 

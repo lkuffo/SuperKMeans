@@ -234,10 +234,17 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     bool IsFitted() const override { return fitted_; }
     bool SupportsPruning() const override { return true; }
     bool NeedsPDXLayout() const override { return false; }
-    bool UsesFixedPartialD() const override { return true; }
-    bool UsesDecodeAccumulate() const override { return true; }
 
-    void DecodeAccumulate(
+    /// Fixed at 12.5% of d, aligned to 8 for cache-aligned bitplane layout.
+    uint32_t InitialPartialD(uint32_t vertical_d) const override {
+        return (vertical_d / 8 + 7) & ~7u;
+    }
+
+    /// Always returns the fixed value — tuning has no effect on RaBitQ.
+    uint32_t AlignPartialD(uint32_t /*partial_d*/, uint32_t vertical_d) const override {
+        return InitialPartialD(vertical_d);
+    }
+    void UpdateCentroids(
         const quantized_t* encoded_data,
         const uint32_t* assignments,
         float* centroid_accumulators,
@@ -245,7 +252,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         size_t n, size_t n_clusters, size_t d,
         uint32_t n_threads
     ) const override {
-        SKM_PROFILE_SCOPE("RQ::DecodeAccumulate");
+        SKM_PROFILE_SCOPE("RQ::UpdateCentroids");
         assert(fitted_ && d == d_);
         const uint8_t* codes = reinterpret_cast<const uint8_t*>(encoded_data);
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)

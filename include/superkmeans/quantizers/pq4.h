@@ -359,23 +359,29 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
      *
      * Same BLAS sgemm approach as PQ8 but with Ks=16:
      *   votes[n_clusters × 16] = freq[n_clusters × 16] × SDC_m[16 × 16]
+     *
+     * The voted quantized centroids are decoded to float centroid_accumulators.
+     * These are final values (not sums), so FinalizeCentroids is a no-op.
      */
-    void SparseVotingUpdate(
-        const quantized_t* codes, const uint32_t* assignments,
-        quantized_t* out_centroids, uint32_t* out_cluster_sizes,
-        size_t n, size_t n_clusters, size_t /*d*/
+    void UpdateCentroids(
+        const quantized_t* encoded_data,
+        const uint32_t* assignments,
+        float* centroid_accumulators,
+        uint32_t* cluster_sizes,
+        size_t n, size_t n_clusters, size_t d,
+        uint32_t n_threads
     ) const override {
-        SKM_PROFILE_SCOPE("PQ4::sparse_voting");
+        SKM_PROFILE_SCOPE("PQ4::UpdateCentroids");
         assert(fitted);
 
-        // Count cluster sizes
-        std::fill_n(out_cluster_sizes, n_clusters, 0u);
-        for (size_t i = 0; i < n; ++i) {
-            out_cluster_sizes[assignments[i]]++;
-        }
+        voted_centroids_.resize(n_clusters * code_size_);
+        std::fill_n(voted_centroids_.data(), n_clusters * code_size_, quantized_t{0});
 
-        // Zero output centroids
-        std::fill_n(out_centroids, n_clusters * code_size_, 0u);
+        // Count cluster sizes
+        std::fill_n(cluster_sizes, n_clusters, 0u);
+        for (size_t i = 0; i < n; ++i) {
+            cluster_sizes[assignments[i]]++;
+        }
 
         // Frequency matrix and votes per subspace
         std::vector<float> freq(n_clusters * Ks);
@@ -386,7 +392,7 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
             std::fill(freq.begin(), freq.end(), 0.0f);
             for (size_t i = 0; i < n; ++i) {
                 uint32_t cluster = assignments[i];
-                uint8_t code = GetCode(codes + i * code_size_, m);
+                uint8_t code = GetCode(encoded_data + i * code_size_, m);
                 freq[cluster * Ks + code] += 1.0f;
             }
 
@@ -412,10 +418,10 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
             );
 
             // Pick argmin per cluster and pack into nibbles
-#pragma omp parallel for num_threads(g_n_threads)
+#pragma omp parallel for num_threads(n_threads)
             for (size_t c = 0; c < n_clusters; ++c) {
-                if (out_cluster_sizes[c] == 0) {
-                    SetCode(out_centroids + c * code_size_, m, 0);
+                if (cluster_sizes[c] == 0) {
+                    SetCode(voted_centroids_.data() + c * code_size_, m, 0);
                     continue;
                 }
                 const float* row = votes.data() + c * Ks;
@@ -427,25 +433,35 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
                         best_k = k;
                     }
                 }
-                SetCode(out_centroids + c * code_size_, m, static_cast<uint8_t>(best_k));
+                SetCode(voted_centroids_.data() + c * code_size_, m, static_cast<uint8_t>(best_k));
             }
         }
+
+        // Decode voted quantized centroids to float
+        faiss_pq_->decode(voted_centroids_.data(), centroid_accumulators, n_clusters);
     }
 
-    void AverageCentroids(
-        const uint32_t* /*accumulators*/,
+    void FinalizeCentroids(
+        float* /*centroids*/,
         const uint32_t* /*cluster_sizes*/,
-        quantized_t* /*out*/,
-        size_t /*n_clusters*/,
-        size_t /*d*/
+        size_t /*n_clusters*/, size_t /*d*/
     ) const override {
-        // Not used — PQ4 uses SparseVotingUpdate instead
+        // No-op: UpdateCentroids already produced final float centroids
     }
 
     bool IsFitted() const override { return fitted; }
     bool SupportsPruning() const override { return true; }
     bool NeedsPDXLayout() const override { return false; }
-    bool UsesSparseVoting() const override { return true; }
+
+    /// ~12.5% of d, aligned to 8 for byte-aligned PQ code boundaries.
+    uint32_t InitialPartialD(uint32_t vertical_d) const override {
+        return std::max<uint32_t>(MIN_PARTIAL_D, ((vertical_d / 8) + 7) & ~7u);
+    }
+
+    /// Round up to multiple of 8 after tuning adjustment.
+    uint32_t AlignPartialD(uint32_t partial_d, uint32_t vertical_d) const override {
+        return std::min((partial_d + 7) & ~7u, vertical_d);
+    }
 
   private:
     /// Extract 4-bit code for subspace m from a packed code vector.
@@ -622,6 +638,7 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
     std::unique_ptr<faiss::ProductQuantizer> faiss_pq_;
     std::vector<float> sdc_table_; // [M_ × Ks × Ks]
     std::vector<float> progressive_ratios_; // precomputed ADSampling ratios per chunk
+    mutable std::vector<quantized_t> voted_centroids_; // [n_clusters × code_size_]
 
     // LUT cache: quantized LUTs + normalization factors per data point
     mutable const quantized_t* cached_x_ptr_ = nullptr;

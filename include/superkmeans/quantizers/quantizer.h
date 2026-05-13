@@ -98,31 +98,6 @@ class IQuantizer {
     virtual bool IsFitted() const = 0;
 
     /**
-     * @brief Average quantized centroid accumulators into quantized output.
-     *
-     * Divides uint32 per-dimension accumulators by cluster sizes (with rounding)
-     * and writes the result directly in the quantized domain.
-     * Only applicable for scalar quantizers (SQ8, SQ4). Other quantizers assert false.
-     *
-     * @param accumulators Per-centroid per-dimension uint32 sums [n_clusters × d]
-     * @param cluster_sizes Number of vectors assigned to each centroid [n_clusters]
-     * @param out Quantized centroid output [n_clusters × code_size]
-     * @param n_clusters Number of centroids
-     * @param d Real dimensionality (not packed)
-     */
-    virtual void AverageCentroids(
-        const uint32_t* accumulators,
-        const uint32_t* cluster_sizes,
-        quantized_t* out,
-        size_t n_clusters,
-        size_t d
-    ) const {
-        (void) accumulators; (void) cluster_sizes; (void) out;
-        (void) n_clusters; (void) d;
-        assert(false && "AverageCentroids not supported by this quantizer");
-    }
-
-    /**
      * @brief Whether this quantizer supports PDX pruning.
      */
     virtual bool SupportsPruning() const { return false; }
@@ -137,24 +112,39 @@ class IQuantizer {
     virtual bool NeedsPDXLayout() const { return SupportsPruning(); }
 
     /**
-     * @brief Whether partial_d should be locked to a fixed percentage of d.
-     * RaBitQ uses fixed 12.5% front / 25% mid for cache-aligned bitplane layout.
+     * @brief Compute the initial partial_d for a given vertical_d.
+     * Default: max(MIN_PARTIAL_D, vertical_d / 2), clamped to vertical_d.
      */
-    virtual bool UsesFixedPartialD() const { return false; }
+    virtual uint32_t InitialPartialD(uint32_t vertical_d) const {
+        return std::min(std::max<uint32_t>(MIN_PARTIAL_D, vertical_d / 2), vertical_d);
+    }
 
     /**
-     * @brief Whether this quantizer uses fused decode-accumulate for centroid updates.
-     * When true, the k-means loop calls DecodeAccumulate instead of
-     * Decode + UpdateCentroids (avoiding a full n×d float intermediate buffer).
+     * @brief Align partial_d after tuning (enforce quantizer-specific constraints).
+     * Default: clamp to vertical_d.
+     * Quantizers with fixed partial_d (e.g. RaBitQ) override to always return
+     * the fixed value, making tuning a no-op.
      */
-    virtual bool UsesDecodeAccumulate() const { return false; }
+    virtual uint32_t AlignPartialD(uint32_t partial_d, uint32_t vertical_d) const {
+        return std::min(partial_d, vertical_d);
+    }
 
     /**
-     * @brief Fused decode + centroid accumulation in a single pass.
+     * @brief Reset quantizer-internal centroid accumulators.
      *
-     * Decodes each encoded vector on-the-fly and accumulates into the
-     * centroid accumulators, avoiding materialization of the full decoded
-     * dataset. Threading partitions by centroid range (same as UpdateCentroids).
+     * Called before each assignment pass. SQ quantizers override to zero
+     * their internal uint32 accumulator buffer. Default: no-op.
+     */
+    virtual void ResetCentroidAccumulators(size_t n_clusters, size_t d) {
+        (void) n_clusters; (void) d;
+    }
+
+    /**
+     * @brief Accumulate encoded vectors into centroid state.
+     *
+     * Float-accumulating quantizers (f32, RaBitQ, LVQ4) write directly to
+     * centroid_accumulators. SQ quantizers accumulate into internal uint32 buffers.
+     * Threading partitions by centroid range.
      *
      * @param encoded_data Encoded vectors (n × code_size)
      * @param assignments Cluster assignment per vector (length n)
@@ -165,7 +155,7 @@ class IQuantizer {
      * @param d Dimensionality
      * @param n_threads Number of threads to use
      */
-    virtual void DecodeAccumulate(
+    virtual void UpdateCentroids(
         const quantized_t* encoded_data,
         const uint32_t* assignments,
         float* centroid_accumulators,
@@ -175,38 +165,28 @@ class IQuantizer {
     ) const {
         (void) encoded_data; (void) assignments; (void) centroid_accumulators;
         (void) cluster_sizes; (void) n; (void) n_clusters; (void) d; (void) n_threads;
-        assert(false && "DecodeAccumulate not supported by this quantizer");
+        assert(false && "UpdateCentroids not supported by this quantizer");
     }
 
     /**
-     * @brief Whether this quantizer uses sparse voting for centroid updates.
-     * When true, the k-means loop calls SparseVotingUpdate instead of
-     * UpdateCentroidsQuantized + AverageCentroids.
-     */
-    virtual bool UsesSparseVoting() const { return false; }
-
-    /**
-     * @brief Update centroids via sparse voting in the quantized code domain.
+     * @brief Produce final float centroids from accumulated state.
      *
-     * For each cluster and each subspace, builds a frequency histogram of codes
-     * assigned to that cluster, then selects the codeword that minimizes the
-     * weighted sum of distances to all members.
-     *
-     * @param codes Encoded data vectors (n × code_size)
-     * @param assignments Cluster assignment for each vector (n)
-     * @param out_centroids Output centroid codes (n_clusters × code_size)
-     * @param out_cluster_sizes Output cluster sizes (n_clusters)
-     * @param n Number of data vectors
-     * @param n_clusters Number of clusters
-     * @param d Dimensionality (used to determine code_size)
+     * Default: divide float centroid_accumulators by cluster_sizes in-place.
+     * SQ overrides: integer-divide internal uint32 → quantized → decode → float.
      */
-    virtual void SparseVotingUpdate(
-        const quantized_t* codes, const uint32_t* assignments,
-        quantized_t* out_centroids, uint32_t* out_cluster_sizes,
-        size_t n, size_t n_clusters, size_t d
+    virtual void FinalizeCentroids(
+        float* centroids,
+        const uint32_t* cluster_sizes,
+        size_t n_clusters, size_t d
     ) const {
-        (void) codes; (void) assignments; (void) out_centroids;
-        (void) out_cluster_sizes; (void) n; (void) n_clusters; (void) d;
+        for (size_t i = 0; i < n_clusters; ++i) {
+            if (cluster_sizes[i] == 0) continue;
+            float mult = 1.0f / static_cast<float>(cluster_sizes[i]);
+            float* row = centroids + i * d;
+            for (size_t j = 0; j < d; ++j) {
+                row[j] *= mult;
+            }
+        }
     }
 
     /**

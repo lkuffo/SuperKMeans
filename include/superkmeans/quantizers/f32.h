@@ -131,6 +131,37 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
         );
     }
 
+    void UpdateCentroids(
+        const quantized_t* encoded_data,
+        const uint32_t* assignments,
+        float* centroid_accumulators,
+        uint32_t* cluster_sizes,
+        size_t n, size_t n_clusters, size_t d,
+        uint32_t n_threads
+    ) const override {
+        SKM_PROFILE_SCOPE("F32::UpdateCentroids");
+        assert(fitted);
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+        {
+            uint32_t nt = n_threads;
+            uint32_t rank = omp_get_thread_num();
+            size_t c0 = (n_clusters * rank) / nt;
+            size_t c1 = (n_clusters * (rank + 1)) / nt;
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t ci = assignments[i];
+                if (ci >= c0 && ci < c1) {
+                    const float* vec = encoded_data + i * d;
+                    float* acc = centroid_accumulators + ci * d;
+                    cluster_sizes[ci] += 1;
+                    SKM_VECTORIZE_LOOP
+                    for (size_t j = 0; j < d; ++j) {
+                        acc[j] += vec[j];
+                    }
+                }
+            }
+        }
+    }
+
     bool IsFitted() const override { return fitted; }
     bool SupportsPruning() const override { return true; }
     size_t CodeSize(size_t d) const override { return d; }

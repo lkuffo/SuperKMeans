@@ -636,9 +636,17 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     bool IsFitted() const override { return fitted_; }
     bool SupportsPruning() const override { return true; }
     bool NeedsPDXLayout() const override { return false; }
-    bool UsesDecodeAccumulate() const override { return true; }
 
-    void DecodeAccumulate(
+    /// ~12.5% of d, aligned to 8 for byte-aligned code boundaries.
+    uint32_t InitialPartialD(uint32_t vertical_d) const override {
+        return std::max<uint32_t>(MIN_PARTIAL_D, ((vertical_d / 8) + 7) & ~7u);
+    }
+
+    /// Round up to multiple of 8 after tuning adjustment.
+    uint32_t AlignPartialD(uint32_t partial_d, uint32_t vertical_d) const override {
+        return std::min((partial_d + 7) & ~7u, vertical_d);
+    }
+    void UpdateCentroids(
         const quantized_t* encoded_data,
         const uint32_t* assignments,
         float* centroid_accumulators,
@@ -646,7 +654,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         size_t n, size_t n_clusters, size_t d,
         uint32_t n_threads
     ) const override {
-        SKM_PROFILE_SCOPE("LVQ4::DecodeAccumulate");
+        SKM_PROFILE_SCOPE("LVQ4::UpdateCentroids");
         assert(fitted_ && d == d_);
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)
         {

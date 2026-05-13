@@ -328,40 +328,18 @@ class SuperKMeans {
                 prev_assignments_buf.reset(new uint32_t[n_samples]);
             }
         }
-        if constexpr (q != Quantization::f32) {
-            if (config.quantized_centroid_update) {
-                if (config.quantizer_type == QuantizerType::pq8
-                        || config.quantizer_type == QuantizerType::pq4) {
-                    // PQ uses sparse voting — no extra buffers needed
-                } else {
-                    quantized_centroid_accumulators.reset(new uint32_t[n_clusters * d]);
-                }
-            }
-        }
+        // SQ quantizers manage their own uint32 accumulator buffers internally
         std::vector<size_t> not_pruned_counts;
         not_pruned_counts.reserve(n_samples);
         std::vector<distance_t> tmp_distances_buf;
         tmp_distances_buf.reserve(X_BATCH_SIZE * Y_BATCH_SIZE);
-        // For u4, PDX operates on d/2 packed bytes; convert split back to real dims
+        // PDX vertical_d setup (partial_d is set after quantizer is created)
         vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(PDXDim(d)).vertical_d;
         if constexpr (q == Quantization::u4) {
             vertical_d *= 2;
             assert(vertical_d % 2 == 0 && "vertical_d must be even for u4");
         }
         partial_horizontal_centroids.reset(new centroid_value_t[n_clusters * vertical_d]);
-
-        // Set partial_d (d') dynamically
-        partial_d = std::max<uint32_t>(MIN_PARTIAL_D, vertical_d / 2);
-        if constexpr (q == Quantization::u4) {
-            partial_d = (partial_d + 1) & ~1u;
-        }
-        if (partial_d > vertical_d) {
-            partial_d = vertical_d;
-        }
-        if (config.verbose) {
-            std::cout << "Front dimensions (d') = " << partial_d << std::endl;
-            std::cout << "Trailing dimensions (d'') = " << d - vertical_d << std::endl;
-        }
 
         auto centroids_pdx_wrapper =
             GenerateCentroids(data_p, n_samples, n_clusters, !config.data_already_rotated);
@@ -392,9 +370,9 @@ class SuperKMeans {
                 quantizer = std::make_unique<SQ8Quantizer>();
             } else if (config.quantizer_type == QuantizerType::lvq4) {
                 quantizer = std::make_unique<LVQ4Quantizer>();
-#ifdef HAS_FAISS
             } else if (config.quantizer_type == QuantizerType::rabitq) {
                 quantizer = std::make_unique<RaBitQQuantizer>();
+#ifdef HAS_FAISS
             } else if (config.quantizer_type == QuantizerType::pq8) {
                 quantizer = std::make_unique<PQ8Quantizer>(config.pq_m);
             } else if (config.quantizer_type == QuantizerType::pq4) {
@@ -407,23 +385,17 @@ class SuperKMeans {
         quantizer->Fit(data_to_cluster, n_samples, d);
         code_size = quantizer->CodeSize(d);
 
-        // Override partial_d/vertical_d for quantizers with custom pruning (no PDX layout)
-        if constexpr (q != Quantization::f32) {
-            if (quantizer->SupportsPruning() && !quantizer->NeedsPDXLayout()) {
-                vertical_d = d;
-                if (quantizer->UsesFixedPartialD()) {
-                    partial_d = d / 8;  // Fixed 12.5% (mid is 25% in rabitq.h)
-                } else {
-                    partial_d = std::max<uint32_t>(MIN_PARTIAL_D, ((d / 8) + 7) & ~7u);
-                }
-                if (config.verbose) {
-                    std::cout << "Custom pruning: Front dimensions (d') = " << partial_d
-                              << std::endl;
-                }
-            }
+        // Compute partial_d: non-PDX quantizers override vertical_d to full d
+        if (quantizer->SupportsPruning() && !quantizer->NeedsPDXLayout()) {
+            vertical_d = d;
+        }
+        partial_d = quantizer->InitialPartialD(vertical_d);
+        if (config.verbose) {
+            std::cout << "Front dimensions (d') = " << partial_d << std::endl;
+            std::cout << "Trailing dimensions (d'') = " << d - vertical_d << std::endl;
         }
 
-        // Encode data: for f32 use float data directly (zero-copy), for u8 allocate & encode
+        // Data encoding (for f32 this is a no-op)
         const vector_value_t* encoded_data_p;
         if constexpr (q == Quantization::f32) {
             encoded_data_p = data_to_cluster;
@@ -558,17 +530,14 @@ class SuperKMeans {
         if constexpr (q != Quantization::f32) {
             if (config.quantized_centroid_update && config.full_precision_final_centroids) {
                 ResetCentroids(n_clusters);
-                UpdateCentroids(data_to_cluster, n_samples, n_clusters);
-#pragma omp parallel for if (n_threads > 1) num_threads(n_threads)
-                for (size_t i = 0; i < n_clusters; ++i) {
-                    if (cluster_sizes[i] == 0) continue;
-                    float mult = 1.0f / cluster_sizes[i];
-                    auto p = horizontal_centroids.get() + i * d;
-                    SKM_VECTORIZE_LOOP
-                    for (size_t j = 0; j < d; ++j) {
-                        p[j] *= mult;
-                    }
-                }
+                F32Quantizer().UpdateCentroids(
+                    data_to_cluster, assignments.get(),
+                    horizontal_centroids.get(), cluster_sizes.get(),
+                    n_samples, n_clusters, d, n_threads
+                );
+                F32Quantizer().FinalizeCentroids(
+                    horizontal_centroids.get(), cluster_sizes.get(), n_clusters, d
+                );
                 if (config.angular) {
                     PostprocessCentroids(n_clusters);
                 }
@@ -804,10 +773,7 @@ class SuperKMeans {
         std::vector<uint32_t> result_assignments(n_vectors);
         std::vector<distance_t> tmp_distances_buf(X_BATCH_SIZE * Y_BATCH_SIZE);
 
-        partial_d = std::max<uint32_t>(MIN_PARTIAL_D, vertical_d / 2);
-        if constexpr (q == Quantization::u4) {
-            partial_d = std::min((partial_d + 1) & ~1u, vertical_d);
-        }
+        partial_d = quantizer->InitialPartialD(vertical_d);
 
         std::vector<size_t> not_pruned_counts;
         not_pruned_counts.reserve(n_vectors);
@@ -1124,31 +1090,6 @@ class SuperKMeans {
      * @param n_samples
      * @param n_clusters
      */
-    void UpdateCentroids(
-        const float* SKM_RESTRICT data,
-        const size_t n_samples,
-        const size_t n_clusters
-    ) {
-        SKM_PROFILE_SCOPE("update_centroids");
-#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
-        {
-            uint32_t nt = n_threads;
-            uint32_t rank = omp_get_thread_num();
-            // This thread is taking care of centroids c0:c1
-            size_t c0 = (n_clusters * rank) / nt;
-            size_t c1 = (n_clusters * (rank + 1)) / nt;
-            for (size_t i = 0; i < n_samples; i++) {
-                uint32_t ci = assignments[i];
-                assert(ci < n_clusters);
-                if (ci >= c0 && ci < c1) {
-                    auto vector_p = data + i * d;
-                    cluster_sizes[ci] += 1;
-                    UpdateCentroid(vector_p, ci);
-                }
-            }
-        }
-    }
-
     /**
      * @brief Zeros the centroid accumulators and cluster sizes for a new assignment pass.
      */
@@ -1158,74 +1099,7 @@ class SuperKMeans {
         std::fill(cluster_sizes.get(), cluster_sizes.get() + n_clusters, 0);
     }
 
-    /**
-     * @brief Adds a vector to its assigned centroid's accumulator.
-     */
-    SKM_ALWAYS_INLINE void UpdateCentroid(
-        const float* SKM_RESTRICT vector,
-        const uint32_t cluster_idx
-    ) {
-        SKM_VECTORIZE_LOOP
-        for (size_t i = 0; i < d; ++i) {
-            horizontal_centroids[cluster_idx * d + i] += vector[i];
-        }
-    }
 
-    /**
-     * @brief Zeros the quantized centroid accumulators and cluster sizes.
-     */
-    void ResetQuantizedCentroids(const size_t n_clusters) {
-        SKM_PROFILE_SCOPE("fill");
-        std::fill(
-            quantized_centroid_accumulators.get(),
-            quantized_centroid_accumulators.get() + n_clusters * d,
-            0u
-        );
-        std::fill(cluster_sizes.get(), cluster_sizes.get() + n_clusters, 0);
-    }
-
-    /**
-     * @brief Updates centroids by accumulating quantized vectors into uint32 accumulators.
-     *
-     * For u4, unpacks nibbles before accumulating. For u8, accumulates directly.
-     */
-    void UpdateCentroidsQuantized(
-        const vector_value_t* SKM_RESTRICT quantized_data_p,
-        const size_t n_samples,
-        const size_t n_clusters
-    ) {
-        SKM_PROFILE_SCOPE("update_centroids_quantized");
-        const size_t code_sz = quantizer->CodeSize(d);
-#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
-        {
-            uint32_t nt = n_threads;
-            uint32_t rank = omp_get_thread_num();
-            size_t c0 = (n_clusters * rank) / nt;
-            size_t c1 = (n_clusters * (rank + 1)) / nt;
-            for (size_t i = 0; i < n_samples; i++) {
-                uint32_t ci = assignments[i];
-                assert(ci < n_clusters);
-                if (ci >= c0 && ci < c1) {
-                    cluster_sizes[ci] += 1;
-                    const auto* vec = quantized_data_p + i * code_sz;
-                    auto* acc = quantized_centroid_accumulators.get() + ci * d;
-                    if constexpr (q == Quantization::u4) {
-                        const size_t d_packed = d / 2;
-                        SKM_VECTORIZE_LOOP
-                        for (size_t k = 0; k < d_packed; ++k) {
-                            acc[2 * k] += vec[k] & 0x0F;
-                            acc[2 * k + 1] += (vec[k] >> 4) & 0x0F;
-                        }
-                    } else {
-                        SKM_VECTORIZE_LOOP
-                        for (size_t j = 0; j < d; ++j) {
-                            acc[j] += vec[j];
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     /**
      * @brief Runs a single K-Means iteration with either GEMM-only or GEMM+PRUNING strategy.
@@ -1285,17 +1159,8 @@ class SuperKMeans {
                 data_norms.get(), centroid_norms.get(),
                 assignments.get(), distances.get(), tmp_distances_buf
             );
-            if constexpr (q != Quantization::f32) {
-                if (config.quantized_centroid_update && !quantizer->UsesDecodeAccumulate()
-                    && !quantizer->UsesSparseVoting()) {
-                    ResetQuantizedCentroids(n_clusters);
-                } else if (!quantizer->UsesSparseVoting()) {
-                    ResetCentroids(n_clusters);
-                }
-                // Sparse voting resets internally — nothing to do here
-            } else {
-                ResetCentroids(n_clusters);
-            }
+            ResetCentroids(n_clusters);
+            quantizer->ResetCentroidAccumulators(n_clusters, d);
         } else {
             std::fill(not_pruned_counts.data(), not_pruned_counts.data() + n_samples, 0);
             // Cache centroid partial norms and run pruned search
@@ -1310,16 +1175,8 @@ class SuperKMeans {
                 assignments.get(), distances.get(),
                 centroids_pdx_wrapper, partial_d, not_pruned_counts.data()
             );
-            if constexpr (q != Quantization::f32) {
-                if (config.quantized_centroid_update && !quantizer->UsesDecodeAccumulate()
-                    && !quantizer->UsesSparseVoting()) {
-                    ResetQuantizedCentroids(n_clusters);
-                } else if (!quantizer->UsesSparseVoting()) {
-                    ResetCentroids(n_clusters);
-                }
-            } else {
-                ResetCentroids(n_clusters);
-            }
+            ResetCentroids(n_clusters);
+            quantizer->ResetCentroidAccumulators(n_clusters, d);
         }
 
         // Count assignment movements (only after first iteration, only if verbose)
@@ -1331,47 +1188,28 @@ class SuperKMeans {
             );
         }
 
-        if constexpr (q != Quantization::f32) {
-            if (config.quantized_centroid_update) {
-                if (quantizer->UsesSparseVoting()) {
-                    // PQ: sparse voting produces quantized_centroids + cluster_sizes directly
-                    quantizer->SparseVotingUpdate(
-                        encoded_data_p, assignments.get(),
-                        quantized_centroids.get(), cluster_sizes.get(),
-                        n_samples, n_clusters, d
-                    );
-                    // Decode to float for shift computation and empty cluster handling
-                    quantizer->Decode(
-                        quantized_centroids.get(), horizontal_centroids.get(), n_clusters, d
-                    );
-                } else if (quantizer->UsesDecodeAccumulate()) {
-                    // RaBitQ/LVQ4: fused decode + accumulate (no intermediate buffer)
-                    quantizer->DecodeAccumulate(
-                        encoded_data_p, assignments.get(),
-                        horizontal_centroids.get(), cluster_sizes.get(),
-                        n_samples, n_clusters, d, n_threads
-                    );
-                } else {
-                    // SQ8/SQ4: accumulate directly in quantized domain
-                    UpdateCentroidsQuantized(encoded_data_p, n_samples, n_clusters);
-                }
-            } else {
-                UpdateCentroids(data_to_cluster, n_samples, n_clusters);
-            }
+        if (config.quantized_centroid_update) {
+            quantizer->UpdateCentroids(
+                encoded_data_p, assignments.get(),
+                horizontal_centroids.get(), cluster_sizes.get(),
+                n_samples, n_clusters, d, n_threads
+            );
         } else {
-            UpdateCentroids(data_to_cluster, n_samples, n_clusters);
+            F32Quantizer().UpdateCentroids(
+                data_to_cluster, assignments.get(),
+                horizontal_centroids.get(), cluster_sizes.get(),
+                n_samples, n_clusters, d, n_threads
+            );
         }
 
         float avg_not_pruned_pct = -1.0f;
         uint32_t old_partial_d = partial_d;
         if constexpr (!GEMM_ONLY) {
-            if (!quantizer->UsesFixedPartialD()) {
-                bool partial_d_changed = false;
-                avg_not_pruned_pct =
-                    TunePartialD(not_pruned_counts.data(), n_samples, n_clusters, partial_d_changed);
-                if (partial_d_changed) {
-                    quantizer->CacheDataPartialNorms(encoded_data_p, n_samples, d, partial_d);
-                }
+            bool partial_d_changed = false;
+            avg_not_pruned_pct =
+                TunePartialD(not_pruned_counts.data(), n_samples, n_clusters, partial_d_changed);
+            if (partial_d_changed) {
+                quantizer->CacheDataPartialNorms(encoded_data_p, n_samples, d, partial_d);
             }
         }
 
@@ -1483,75 +1321,22 @@ class SuperKMeans {
      */
     void ConsolidateCentroids(const size_t n_samples, const size_t n_clusters) {
         SKM_PROFILE_SCOPE("consolidate");
-
-        if constexpr (q != Quantization::f32) {
-            if (config.quantized_centroid_update && !quantizer->UsesDecodeAccumulate()) {
-                {
-                    SKM_PROFILE_SCOPE("consolidate/splitting");
-                    if (!quantizer->UsesSparseVoting()) {
-                        // SQ: average uint32 accumulators → quantized_centroids
-                        quantizer->AverageCentroids(
-                            quantized_centroid_accumulators.get(),
-                            cluster_sizes.get(),
-                            quantized_centroids.get(),
-                            n_clusters, d
-                        );
-                        // Decode to float for auxiliary operations (shift, split, angular)
-                        quantizer->Decode(
-                            quantized_centroids.get(), horizontal_centroids.get(), n_clusters, d
-                        );
-                    }
-                    // For sparse voting: quantized_centroids and horizontal_centroids
-                    // are already set by SparseVotingUpdate + Decode in the update step
-                    SplitClusters(n_samples, n_clusters);
-                }
-                {
-                    SKM_PROFILE_SCOPE("consolidate/normalize");
-                    if (config.angular) {
-                        PostprocessCentroids(n_clusters);
-                    }
-                }
-                // If splits or angular modified float centroids, re-encode
-                if (n_split > 0 || config.angular) {
-                    quantizer->Encode(
-                        horizontal_centroids.get(), quantized_centroids.get(), n_clusters, d
-                    );
-                }
-                if (quantizer->SupportsPruning() && quantizer->NeedsPDXLayout()) {
-                    SKM_PROFILE_SCOPE("consolidate/pdxify");
-                    PDXLayout<q, alpha>::template PDXify<false>(
-                        quantized_centroids.get(),
-                        pdxified_quantized_centroids.get(),
-                        n_clusters,
-                        PDXDim(d)
-                    );
-                    QuantizedCentroidsToAuxiliaryHorizontal(n_clusters);
-                }
-                return;
-            }
-        }
-
         {
             SKM_PROFILE_SCOPE("consolidate/splitting");
-#pragma omp parallel for if (n_threads > 1) num_threads(n_threads)
-            for (size_t i = 0; i < n_clusters; ++i) {
-                auto horizontal_centroids_p = horizontal_centroids.get() + i * d;
-                if (cluster_sizes[i] == 0) {
-                    continue;
-                }
-                float mult_factor = 1.0 / cluster_sizes[i];
-                SKM_VECTORIZE_LOOP
-                for (size_t j = 0; j < d; ++j) {
-                    horizontal_centroids_p[j] *= mult_factor;
-                }
+            if (config.quantized_centroid_update) {
+                quantizer->FinalizeCentroids(
+                    horizontal_centroids.get(), cluster_sizes.get(), n_clusters, d
+                );
+            } else {
+                F32Quantizer().FinalizeCentroids(
+                    horizontal_centroids.get(), cluster_sizes.get(), n_clusters, d
+                );
             }
             SplitClusters(n_samples, n_clusters);
         }
         {
             SKM_PROFILE_SCOPE("consolidate/normalize");
-            if (config.angular) {
-                PostprocessCentroids(n_clusters);
-            }
+            if (config.angular) PostprocessCentroids(n_clusters);
         }
         if (quantizer->SupportsPruning()) {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
@@ -1568,8 +1353,7 @@ class SuperKMeans {
                     PDXLayout<q, alpha>::template PDXify<false>(
                         quantized_centroids.get(),
                         pdxified_quantized_centroids.get(),
-                        n_clusters,
-                        PDXDim(d)
+                        n_clusters, PDXDim(d)
                     );
                     QuantizedCentroidsToAuxiliaryHorizontal(n_clusters);
                 }
@@ -1954,19 +1738,7 @@ class SuperKMeans {
                 static_cast<uint32_t>(partial_d * config.adjustment_factor_for_partial_d);
             partial_d = std::max(partial_d - std::max(decrease, 1u), MIN_PARTIAL_D);
         }
-        // u4 packs two 4-bit values per byte; partial_d must be even
-        if constexpr (q == Quantization::u4) {
-            partial_d = (partial_d + 1) & ~1u;
-            partial_d = std::min(partial_d, vertical_d);
-        }
-        // Non-PDX quantizers (e.g. RaBitQ) use byte-aligned binary codes;
-        // partial_d must be a multiple of 8 so front_bytes = partial_d / 8 is exact.
-        if constexpr (q != Quantization::f32) {
-            if (quantizer->SupportsPruning() && !quantizer->NeedsPDXLayout()) {
-                partial_d = (partial_d + 7) & ~7u;
-                partial_d = std::min(partial_d, vertical_d);
-            }
-        }
+        partial_d = quantizer->AlignPartialD(partial_d, vertical_d);
         partial_d_changed = (old_partial_d != partial_d);
         return avg_not_pruned_pct;
     }
@@ -2200,7 +1972,6 @@ class SuperKMeans {
     std::unique_ptr<vector_value_t[]> quantized_centroids;
     std::unique_ptr<vector_value_t[]> pdxified_quantized_centroids;
     std::unique_ptr<vector_value_t[]> partial_hor_quantized_centroids;
-    std::unique_ptr<uint32_t[]> quantized_centroid_accumulators; // uint32 accumulation for quantized centroid update
 
     // Buffers for ground truth and recall computation
     std::unique_ptr<uint32_t[]> gt_assignments;
