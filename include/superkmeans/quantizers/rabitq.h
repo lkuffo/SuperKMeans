@@ -145,7 +145,6 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         std::fill_n(out_knn, n_x, 0u);
 
         {
-            SKM_PROFILE_SCOPE("RQ::Search::FastScanLoop");
             constexpr size_t kSuperBlock = 4;
             constexpr size_t kBS = FastScanComputer::kBlockSize;
             const size_t n_groups = (n_blocks + kSuperBlock - 1) / kSuperBlock;
