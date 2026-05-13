@@ -372,6 +372,40 @@ class ScalarFastScanComputer {
         }
     }
 
+    /**
+     * @brief Fused RaBitQ correction + survivor compaction (scalar fallback).
+     *
+     * Computes partial L2 distances and immediately compacts survivors whose
+     * distance <= threshold, avoiding the intermediate partial_l2 buffer.
+     */
+    template<bool U32Dot = false>
+    static void RabitQCorrectionAndCompact(
+        const void* partial_dot,
+        float c1j, float c2j, float c34j, float qr_j,
+        const float* sum_q_f32,
+        const float* or_c_l2sqr,
+        const float* dp_mult,
+        const float* threshold,
+        uint32_t* survivor_positions,
+        size_t& n_survivors,
+        size_t blk_count
+    ) {
+        n_survivors = 0;
+        for (size_t k = 0; k < blk_count; ++k) {
+            float dot_f;
+            if constexpr (U32Dot) {
+                dot_f = static_cast<float>(static_cast<const uint32_t*>(partial_dot)[k]);
+            } else {
+                dot_f = static_cast<float>(static_cast<const uint16_t*>(partial_dot)[k]);
+            }
+            const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
+            const float dist = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
+            if (dist <= threshold[k]) {
+                survivor_positions[n_survivors++] = static_cast<uint32_t>(k);
+            }
+        }
+    }
+
     /// kPerm0 interleaving used by nibble-split TransposeBlock.
     static constexpr int kPerm0[16] = {
         0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15

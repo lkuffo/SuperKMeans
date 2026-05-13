@@ -544,6 +544,75 @@ class SIMDFastScanComputer {
         }
     }
 
+    /// Fused correction + compaction: no intermediate buffer store/load.
+    template<bool U32Dot = false>
+    static void RabitQCorrectionAndCompact(
+        const void* partial_dot,
+        float c1j, float c2j, float c34j, float qr_j,
+        const float* sum_q_f32,
+        const float* or_c_l2sqr,
+        const float* dp_mult,
+        const float* threshold,
+        uint32_t* survivor_positions,
+        size_t& n_survivors,
+        size_t blk_count
+    ) {
+        const float32x4_t v_c1j = vdupq_n_f32(c1j);
+        const float32x4_t v_c2j = vdupq_n_f32(c2j);
+        const float32x4_t v_c34j = vdupq_n_f32(c34j);
+        const float32x4_t v_qr_j = vdupq_n_f32(qr_j);
+        const float32x4_t v_neg2 = vdupq_n_f32(-2.0f);
+
+        const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
+        const auto* pd_u32 = static_cast<const uint32_t*>(partial_dot);
+
+        n_survivors = 0;
+        size_t k = 0;
+        for (; k + 4 <= blk_count; k += 4) {
+            float32x4_t v_pd;
+            if constexpr (U32Dot) {
+                v_pd = vcvtq_f32_u32(vld1q_u32(pd_u32 + k));
+            } else {
+                v_pd = vcvtq_f32_u32(vmovl_u16(vld1_u16(pd_u16 + k)));
+            }
+
+            float32x4_t v_sq = vld1q_f32(sum_q_f32 + k);
+            float32x4_t fdt = vmlaq_f32(
+                vmlaq_f32(vnegq_f32(v_c34j), v_c1j, v_pd),
+                v_c2j, v_sq
+            );
+
+            float32x4_t v_or = vld1q_f32(or_c_l2sqr + k);
+            float32x4_t v_dp = vld1q_f32(dp_mult + k);
+            float32x4_t or_plus_qr = vaddq_f32(v_or, v_qr_j);
+            float32x4_t result = vmlaq_f32(or_plus_qr, v_neg2, vmulq_f32(v_dp, fdt));
+
+            float32x4_t thresh = vld1q_f32(threshold + k);
+            uint32x4_t cmp_result = vcleq_f32(result, thresh);
+            uint32_t any_passed = vmaxvq_u32(cmp_result);
+            if (SKM_UNLIKELY(any_passed)) {
+                uint32_t mask[4];
+                vst1q_u32(mask, cmp_result);
+                for (size_t i = 0; i < 4; ++i) {
+                    survivor_positions[n_survivors] = static_cast<uint32_t>(k + i);
+                    n_survivors += (mask[i] != 0);
+                }
+            }
+        }
+        for (; k < blk_count; ++k) {
+            float dot_f;
+            if constexpr (U32Dot) {
+                dot_f = static_cast<float>(pd_u32[k]);
+            } else {
+                dot_f = static_cast<float>(pd_u16[k]);
+            }
+            const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
+            float dist = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
+            survivor_positions[n_survivors] = static_cast<uint32_t>(k);
+            n_survivors += dist <= threshold[k];
+        }
+    }
+
     template<bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,

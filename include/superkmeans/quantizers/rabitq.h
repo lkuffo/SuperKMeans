@@ -467,7 +467,6 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     }
 
                     // Precompute per-block buffers (reused across all centroids)
-                    float partial_l2_buf[kBS];
                     float threshold_buf[kBS];
                     float sum_q_front_f32[kBS];
                     float sum_q_mid_f32[kBS];
@@ -488,21 +487,18 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         const uint16_t* partial_dot_qo =
                             all_partial_dots.get() + (bi * n_y + j) * kBS;
 
-                        // Checkpoint 1: front correction + compact
-                        FastScanComputer::RabitQCorrection(
+                        // Checkpoint 1: fused front correction + survivor compaction
+                        size_t n_survivors = 0;
+                        FastScanComputer::RabitQCorrectionAndCompact(
                             partial_dot_qo,
                             c1[j], c2[j], c34_front[j], qr_to_c_l2sqr_front[j],
                             sum_q_front_f32,
                             or_c_l2sqr_front + blk_start,
                             dp_mult + blk_start,
-                            partial_l2_buf,
+                            threshold_buf,
+                            local_survivors,
+                            n_survivors,
                             blk_count
-                        );
-
-                        size_t n_survivors = 0;
-                        FastScanComputer::RabitQCompactSurvivors(
-                            blk_count, n_survivors,
-                            local_survivors, partial_l2_buf, threshold_buf
                         );
 
                         if (n_survivors == 0) continue;
