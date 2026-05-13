@@ -398,7 +398,6 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         using b8_computer = DistanceComputer<DistanceFunction::l2, Quantization::b8>;
 
         {
-            SKM_PROFILE_SCOPE("RQ::PrunedScan");
             constexpr size_t kSuperBlock = 4;
             constexpr size_t kBS = FastScanComputer::kBlockSize;
             const size_t n_groups = (n_blocks + kSuperBlock - 1) / kSuperBlock;
@@ -419,7 +418,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
                 // ── Pass 1a: Multi-block FastScan all centroids ──
                 {
-                    SKM_PROFILE_SCOPE("RQ::PrunedScan/fastscan");
+                    SKM_PROFILE_SCOPE("RQ::FindNearestNeighborWithPruning/fastscan");
                     if (n_blks == kSuperBlock) {
                         for (size_t j = 0; j < n_y; ++j) {
                             uint16_t* out_ptrs[kSuperBlock];
