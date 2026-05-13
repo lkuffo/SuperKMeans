@@ -67,7 +67,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     void Encode(const float* in, quantized_t* out, size_t n, size_t d) const override {
         SKM_PROFILE_SCOPE("RQ::Encode");
         uint8_t* codes = reinterpret_cast<uint8_t*>(out);
-#pragma omp parallel for num_threads(g_n_threads) schedule(static) if(n > 1000)
+#pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             RaBitQCodec::EncodeOne(
                 in + i * d, codes + i * code_size_, d, binary_bytes_, centroid_.data());
@@ -77,7 +77,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     void Decode(const quantized_t* in, float* out, size_t n, size_t d) const override {
         SKM_PROFILE_SCOPE("RQ::Decode");
         const uint8_t* codes = reinterpret_cast<const uint8_t*>(in);
-#pragma omp parallel for num_threads(g_n_threads) schedule(static) if(n > 1000)
+#pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             RaBitQCodec::DecodeOne(
                 codes + i * code_size_, out + i * d, d, binary_bytes_, centroid_.data());
@@ -145,7 +145,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         std::fill_n(out_knn, n_x, 0u);
 
         {
-            SKM_PROFILE_SCOPE("RQ::Search::FastScanDistance");
+            SKM_PROFILE_SCOPE("RQ::Search::FastScanLoop");
             constexpr size_t kSuperBlock = 4;
             constexpr size_t kBS = FastScanComputer::kBlockSize;
             const size_t n_groups = (n_blocks + kSuperBlock - 1) / kSuperBlock;
