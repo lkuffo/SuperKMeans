@@ -478,4 +478,54 @@ class ScalarRaBitQCodec {
     }
 };
 
+class ScalarLVQ4Codec {
+  public:
+    static void EncodeOne(
+        const float* SKM_RESTRICT x,
+        uint8_t* SKM_RESTRICT code,
+        size_t d,
+        size_t nibble_bytes
+    ) {
+        float v_min = x[0], v_max = x[0];
+        for (size_t dim = 1; dim < d; ++dim) {
+            v_min = std::min(v_min, x[dim]);
+            v_max = std::max(v_max, x[dim]);
+        }
+
+        float range = v_max - v_min;
+        if (range < 1e-30f) range = 1e-30f;
+        float scale = range / 15.0f;
+        float inv_scale = 1.0f / scale;
+        float bias = v_min;
+
+        for (size_t dim = 0; dim < d; dim += 2) {
+            int q_lo = static_cast<int>(std::lround((x[dim] - bias) * inv_scale));
+            int q_hi = static_cast<int>(std::lround((x[dim + 1] - bias) * inv_scale));
+            q_lo = std::max(0, std::min(15, q_lo));
+            q_hi = std::max(0, std::min(15, q_hi));
+            code[dim / 2] = static_cast<uint8_t>(q_lo | (q_hi << 4));
+        }
+
+        float* footer = (float*)(code + nibble_bytes);
+        footer[0] = scale;
+        footer[1] = bias;
+    }
+
+    static void DecodeOne(
+        const uint8_t* SKM_RESTRICT code,
+        float* SKM_RESTRICT x,
+        size_t d,
+        size_t nibble_bytes
+    ) {
+        const float* footer = (const float*)(code + nibble_bytes);
+        const float scale = footer[0];
+        const float bias = footer[1];
+
+        for (size_t b = 0; b < nibble_bytes; ++b) {
+            x[2 * b]     = scale * static_cast<float>(code[b] & 0x0F) + bias;
+            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4)   + bias;
+        }
+    }
+};
+
 } // namespace skmeans

@@ -126,4 +126,16 @@ class RaBitQCodec {
     constexpr static auto DecodeOne = codec::DecodeOne;
 };
 
+class LVQ4Codec {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+    using codec = ScalarLVQ4Codec;
+#else
+    using codec = SIMDLVQ4Codec;
+#endif
+
+  public:
+    constexpr static auto EncodeOne = codec::EncodeOne;
+    constexpr static auto DecodeOne = codec::DecodeOne;
+};
+
 } // namespace skmeans

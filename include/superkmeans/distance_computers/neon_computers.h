@@ -764,4 +764,126 @@ class SIMDRaBitQCodec {
     }
 };
 
+class SIMDLVQ4Codec {
+  public:
+    /**
+     * @brief NEON LVQ4 encode: min/max reduction 4 floats/iter, quantize 8 floats/iter, pack via vuzp.
+     */
+    static void EncodeOne(
+        const float* SKM_RESTRICT x,
+        uint8_t* SKM_RESTRICT code,
+        size_t d,
+        size_t nibble_bytes
+    ) {
+        // Min/max reduction: 4 floats per iteration
+        float32x4_t v_min_vec = vdupq_n_f32(std::numeric_limits<float>::max());
+        float32x4_t v_max_vec = vdupq_n_f32(std::numeric_limits<float>::lowest());
+        size_t j = 0;
+        for (; j + 4 <= d; j += 4) {
+            float32x4_t v = vld1q_f32(x + j);
+            v_min_vec = vminq_f32(v_min_vec, v);
+            v_max_vec = vmaxq_f32(v_max_vec, v);
+        }
+        float v_min = vminvq_f32(v_min_vec);
+        float v_max = vmaxvq_f32(v_max_vec);
+        for (; j < d; ++j) {
+            v_min = std::min(v_min, x[j]);
+            v_max = std::max(v_max, x[j]);
+        }
+
+        float range = v_max - v_min;
+        if (range < 1e-30f) range = 1e-30f;
+        const float scale = range / 15.0f;
+        const float inv_scale = 1.0f / scale;
+        const float bias = v_min;
+
+        const float32x4_t v_bias_vec = vdupq_n_f32(bias);
+        const float32x4_t v_inv_scale_vec = vdupq_n_f32(inv_scale);
+        const int32x4_t v_zero4 = vdupq_n_s32(0);
+        const int32x4_t v_fifteen4 = vdupq_n_s32(15);
+
+        j = 0;
+        size_t out_off = 0;
+        for (; j + 8 <= d; j += 8, out_off += 4) {
+            float32x4_t v0 = vld1q_f32(x + j);
+            float32x4_t v1 = vld1q_f32(x + j + 4);
+            float32x4_t q0 = vmulq_f32(vsubq_f32(v0, v_bias_vec), v_inv_scale_vec);
+            float32x4_t q1 = vmulq_f32(vsubq_f32(v1, v_bias_vec), v_inv_scale_vec);
+
+            // Round to nearest and convert to int
+            int32x4_t qi0 = vcvtnq_s32_f32(q0);
+            int32x4_t qi1 = vcvtnq_s32_f32(q1);
+            qi0 = vmaxq_s32(qi0, v_zero4);
+            qi0 = vminq_s32(qi0, v_fifteen4);
+            qi1 = vmaxq_s32(qi1, v_zero4);
+            qi1 = vminq_s32(qi1, v_fifteen4);
+
+            // Narrow 8 × int32 → 8 × uint8
+            uint16x4_t n0 = vmovn_u32(vreinterpretq_u32_s32(qi0));
+            uint16x4_t n1 = vmovn_u32(vreinterpretq_u32_s32(qi1));
+            uint8x8_t n8 = vmovn_u16(vcombine_u16(n0, n1));
+
+            // Pack pairs via vuzp: even→lo nibbles, odd→hi nibbles
+            uint8x8x2_t pairs = vuzp_u8(n8, vdup_n_u8(0));
+            uint8x8_t packed = vorr_u8(pairs.val[0], vshl_n_u8(pairs.val[1], 4));
+            vst1_lane_u32((uint32_t*)(code + out_off), vreinterpret_u32_u8(packed), 0);
+        }
+        // Scalar tail
+        for (; j + 2 <= d; j += 2, ++out_off) {
+            int q_lo = static_cast<int>(std::lround((x[j] - bias) * inv_scale));
+            int q_hi = static_cast<int>(std::lround((x[j + 1] - bias) * inv_scale));
+            q_lo = std::max(0, std::min(15, q_lo));
+            q_hi = std::max(0, std::min(15, q_hi));
+            code[out_off] = static_cast<uint8_t>(q_lo | (q_hi << 4));
+        }
+
+        float* footer = (float*)(code + nibble_bytes);
+        footer[0] = scale;
+        footer[1] = bias;
+    }
+
+    /**
+     * @brief NEON LVQ4 decode: 4 packed bytes → 8 floats per iteration via vzip interleave.
+     */
+    static void DecodeOne(
+        const uint8_t* SKM_RESTRICT code,
+        float* SKM_RESTRICT x,
+        size_t d,
+        size_t nibble_bytes
+    ) {
+        const float* footer = (const float*)(code + nibble_bytes);
+        const float scale = footer[0];
+        const float bias = footer[1];
+
+        const float32x4_t v_scale = vdupq_n_f32(scale);
+        const float32x4_t v_bias = vdupq_n_f32(bias);
+
+        size_t b = 0;
+        for (; b + 4 <= nibble_bytes; b += 4) {
+            uint32_t four_bytes = *(const uint32_t*)(code + b);
+            uint8x8_t packed = vreinterpret_u8_u32(vdup_n_u32(four_bytes));
+
+            uint8x8_t lo = vand_u8(packed, vdup_n_u8(0x0F));
+            uint8x8_t hi = vshr_n_u8(packed, 4);
+
+            // Interleave: [lo0,hi0,lo1,hi1,lo2,hi2,lo3,hi3]
+            uint8x8x2_t zipped = vzip_u8(lo, hi);
+            uint16x8_t wide16 = vmovl_u8(zipped.val[0]);
+
+            uint32x4_t wide32_lo = vmovl_u16(vget_low_u16(wide16));
+            float32x4_t floats_lo = vcvtq_f32_u32(wide32_lo);
+            vst1q_f32(x + b * 2, vmlaq_f32(v_bias, floats_lo, v_scale));
+
+            uint32x4_t wide32_hi = vmovl_u16(vget_high_u16(wide16));
+            float32x4_t floats_hi = vcvtq_f32_u32(wide32_hi);
+            vst1q_f32(x + b * 2 + 4, vmlaq_f32(v_bias, floats_hi, v_scale));
+        }
+        // Scalar tail
+        for (; b < nibble_bytes; ++b) {
+            x[2 * b]     = scale * static_cast<float>(code[b] & 0x0F) + bias;
+            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4)   + bias;
+        }
+    }
+};
+
 } // namespace skmeans

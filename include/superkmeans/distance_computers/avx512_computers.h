@@ -937,4 +937,118 @@ class SIMDRaBitQCodec {
     }
 };
 
+class SIMDLVQ4Codec {
+  public:
+    /**
+     * @brief AVX-512 LVQ4 encode: min/max reduction, quantize 16 floats/iter, pack nibbles.
+     */
+    static void EncodeOne(
+        const float* SKM_RESTRICT x,
+        uint8_t* SKM_RESTRICT code,
+        size_t d,
+        size_t nibble_bytes
+    ) {
+        // Min/max reduction: 16 floats per iteration
+        __m512 v_min_vec = _mm512_set1_ps(std::numeric_limits<float>::max());
+        __m512 v_max_vec = _mm512_set1_ps(std::numeric_limits<float>::lowest());
+        size_t j = 0;
+        for (; j + 16 <= d; j += 16) {
+            __m512 v = _mm512_loadu_ps(x + j);
+            v_min_vec = _mm512_min_ps(v_min_vec, v);
+            v_max_vec = _mm512_max_ps(v_max_vec, v);
+        }
+        float v_min = _mm512_reduce_min_ps(v_min_vec);
+        float v_max = _mm512_reduce_max_ps(v_max_vec);
+        for (; j < d; ++j) {
+            v_min = std::min(v_min, x[j]);
+            v_max = std::max(v_max, x[j]);
+        }
+
+        float range = v_max - v_min;
+        if (range < 1e-30f) range = 1e-30f;
+        const float scale = range / 15.0f;
+        const float inv_scale = 1.0f / scale;
+        const float bias = v_min;
+
+        const __m512 v_bias = _mm512_set1_ps(bias);
+        const __m512 v_inv_scale = _mm512_set1_ps(inv_scale);
+        const __m512i v_zero = _mm512_setzero_si512();
+        const __m512i v_fifteen = _mm512_set1_epi32(15);
+        const __m128i v_mul = _mm_set1_epi16(0x1001);
+
+        j = 0;
+        size_t out_off = 0;
+        for (; j + 16 <= d; j += 16, out_off += 8) {
+            __m512 v = _mm512_loadu_ps(x + j);
+            __m512 q = _mm512_mul_ps(_mm512_sub_ps(v, v_bias), v_inv_scale);
+            __m512i qi = _mm512_cvtps_epi32(q);
+            qi = _mm512_max_epi32(qi, v_zero);
+            qi = _mm512_min_epi32(qi, v_fifteen);
+
+            // Narrow 16 × epi32 → 16 × epi8
+            __m128i narrow = _mm512_cvtepi32_epi8(qi);
+            // Pack nibble pairs: maddubs with [1, 16] → val[2k] + val[2k+1]*16
+            __m128i packed16 = _mm_maddubs_epi16(narrow, v_mul);
+            __m128i packed8 = _mm_packus_epi16(packed16, _mm_setzero_si128());
+            _mm_storel_epi64((__m128i*)(code + out_off), packed8);
+        }
+        // Scalar tail
+        for (; j + 2 <= d; j += 2, ++out_off) {
+            int q_lo = static_cast<int>(std::lround((x[j] - bias) * inv_scale));
+            int q_hi = static_cast<int>(std::lround((x[j + 1] - bias) * inv_scale));
+            q_lo = std::max(0, std::min(15, q_lo));
+            q_hi = std::max(0, std::min(15, q_hi));
+            code[out_off] = static_cast<uint8_t>(q_lo | (q_hi << 4));
+        }
+
+        float* footer = (float*)(code + nibble_bytes);
+        footer[0] = scale;
+        footer[1] = bias;
+    }
+
+    /**
+     * @brief AVX-512 LVQ4 decode: 8 packed bytes → 16 floats per iteration via permutex2var interleave.
+     */
+    static void DecodeOne(
+        const uint8_t* SKM_RESTRICT code,
+        float* SKM_RESTRICT x,
+        size_t d,
+        size_t nibble_bytes
+    ) {
+        const float* footer = (const float*)(code + nibble_bytes);
+        const float scale = footer[0];
+        const float bias = footer[1];
+
+        const __m512 v_scale = _mm512_set1_ps(scale);
+        const __m512 v_bias = _mm512_set1_ps(bias);
+        // Interleave index: lo[0], hi[0], lo[1], hi[1], ..., lo[7], hi[7]
+        // lo indices 0-7 from src1, hi indices 16-23 from src2
+        const __m512i interleave_idx = _mm512_set_epi32(
+            23, 7, 22, 6, 21, 5, 20, 4, 19, 3, 18, 2, 17, 1, 16, 0
+        );
+
+        size_t b = 0;
+        for (; b + 8 <= nibble_bytes; b += 8) {
+            __m128i packed = _mm_loadl_epi64((const __m128i*)(code + b));
+            __m256i wide = _mm256_cvtepu8_epi32(packed);
+
+            __m256i lo = _mm256_and_si256(wide, _mm256_set1_epi32(0x0F));
+            __m256i hi = _mm256_srli_epi32(wide, 4);
+
+            __m512i lo_512 = _mm512_castsi256_si512(lo);
+            __m512i hi_512 = _mm512_castsi256_si512(hi);
+            __m512i interleaved = _mm512_permutex2var_epi32(lo_512, interleave_idx, hi_512);
+
+            __m512 floats = _mm512_cvtepi32_ps(interleaved);
+            __m512 result = _mm512_fmadd_ps(floats, v_scale, v_bias);
+            _mm512_storeu_ps(x + b * 2, result);
+        }
+        // Scalar tail
+        for (; b < nibble_bytes; ++b) {
+            x[2 * b]     = scale * static_cast<float>(code[b] & 0x0F) + bias;
+            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4)   + bias;
+        }
+    }
+};
+
 } // namespace skmeans

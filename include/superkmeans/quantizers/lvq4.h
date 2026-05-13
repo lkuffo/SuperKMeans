@@ -204,32 +204,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
-            const float* x = in + i * d;
-            uint8_t* code = out + i * code_size_;
-
-            float v_min = x[0], v_max = x[0];
-            for (size_t dim = 1; dim < d; ++dim) {
-                v_min = std::min(v_min, x[dim]);
-                v_max = std::max(v_max, x[dim]);
-            }
-
-            float range = v_max - v_min;
-            if (range < 1e-30f) range = 1e-30f;
-            float scale = range / 15.0f;
-            float inv_scale = 1.0f / scale;
-            float bias = v_min;
-
-            for (size_t dim = 0; dim < d; dim += 2) {
-                int q_lo = static_cast<int>(std::lround((x[dim] - bias) * inv_scale));
-                int q_hi = static_cast<int>(std::lround((x[dim + 1] - bias) * inv_scale));
-                q_lo = std::max(0, std::min(15, q_lo));
-                q_hi = std::max(0, std::min(15, q_hi));
-                code[dim / 2] = static_cast<uint8_t>(q_lo | (q_hi << 4));
-            }
-
-            float* footer = (float*)(code + nibble_bytes_);
-            footer[0] = scale;
-            footer[1] = bias;
+            LVQ4Codec::EncodeOne(in + i * d, out + i * code_size_, d, nibble_bytes_);
         }
     }
 
@@ -239,17 +214,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
-            const uint8_t* code = in + i * code_size_;
-            float* dst = out + i * d;
-
-            const float* footer = (const float*)(code + nibble_bytes_);
-            float scale = footer[0];
-            float bias = footer[1];
-
-            for (size_t b = 0; b < nibble_bytes_; ++b) {
-                dst[2 * b]     = scale * static_cast<float>(code[b] & 0x0F) + bias;
-                dst[2 * b + 1] = scale * static_cast<float>(code[b] >> 4)   + bias;
-            }
+            LVQ4Codec::DecodeOne(in + i * code_size_, out + i * d, d, nibble_bytes_);
         }
     }
 
@@ -452,7 +417,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         uint32_t partial_d,
         size_t* out_not_pruned_counts
     ) const override {
-        SKM_PROFILE_SCOPE("LVQ4::FindNearestNeighborWithPruning");
+        SKM_PROFILE_SCOPE("search");
         assert(fitted_);
 
         const uint8_t* x_codes = reinterpret_cast<const uint8_t*>(x);
@@ -466,7 +431,6 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         const size_t mid_bytes = d / 8;  // d/4, in packed bytes
         const size_t mid_d = mid_bytes * 2;
         const bool use_mid = (front_bytes < mid_bytes) && (mid_bytes < nibble_bytes_);
-        const size_t phase3_start = use_mid ? mid_bytes : front_bytes;
 
         // ADSampling ratios
         const float ad_ratio_front = ComputeADSamplingRatio(front_d, d);
@@ -494,7 +458,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                 }
 
                 {
-                    SKM_PROFILE_SCOPE("LVQ4::FindNearestNeighborWithPruning/prune_and_resolve");
+                    SKM_PROFILE_SCOPE("search/pdx");
 #if defined(__clang__)
 #pragma omp parallel for num_threads(g_n_threads) schedule(dynamic, 8)
 #else
@@ -559,57 +523,93 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                         );
                         out_not_pruned_counts[i_idx] += n_survivors;
 
-                        // Phase 3+: resolve survivors only
-                        for (size_t s = 0; s < n_survivors; ++s) {
-                            const size_t c = survivor_positions[s];
-                            const size_t j_idx = j + c;
-                            const float sj = cf.scales[j_idx];
-                            const float bj = cf.biases[j_idx];
-                            uint32_t dot_accumulated = dots_row[c];
+                        // Phase 3+: resolve survivors
+                        thread_local uint32_t mid_dots[Y_BATCH_SIZE];
+                        thread_local uint32_t mid_survivor_positions[Y_BATCH_SIZE];
 
-                            const uint8_t* y_code = y_codes + j_idx * code_size_;
+                        // Pointers/counts for the final rest+full loop
+                        const uint32_t* rest_positions = survivor_positions;
+                        const uint32_t* rest_dots = nullptr; // use dots_row[c] directly
+                        size_t n_rest = n_survivors;
+                        size_t rest_start_byte = front_bytes;
+                        uint32_t sum_cx_sq_at_rest = cached_sum_cx_sq_front_[i_idx];
 
-                            // Mid checkpoint: u4 Horizontal on [front_bytes, mid_bytes)
-                            if (use_mid) {
+                        if (use_mid) {
+                            // Phase 3a: compute mid gap dots for all front survivors
+                            const uint32_t sum_cx_sq_gap =
+                                cached_sum_cx_sq_mid_[i_idx] - cached_sum_cx_sq_front_[i_idx];
+
+                            for (size_t s = 0; s < n_survivors; ++s) {
+                                const size_t c = survivor_positions[s];
+                                const size_t j_idx = j + c;
+                                const uint8_t* y_code = y_codes + j_idx * code_size_;
+
                                 uint32_t gap_l2_int = u4_computer::Horizontal(
                                     (const nk_u4x2_t*)(x_code + front_bytes),
                                     (const nk_u4x2_t*)(y_code + front_bytes),
                                     mid_bytes - front_bytes
                                 );
-                                uint32_t sum_cx_sq_gap =
-                                    cached_sum_cx_sq_mid_[i_idx] - cached_sum_cx_sq_front_[i_idx];
                                 uint32_t sum_cy_sq_gap =
                                     cf.sum_cy_sq_mid[j_idx] - cf.sum_cy_sq_front[j_idx];
-                                uint32_t gap_dot = (sum_cx_sq_gap + sum_cy_sq_gap - gap_l2_int) / 2;
-                                dot_accumulated += gap_dot;
-
-                                float mid_l2 = norm_x_mid_i + cf.norm_y_mid[j_idx]
-                                    - two_si * sj * static_cast<float>(dot_accumulated)
-                                    - two_A_x_mid_i * bj
-                                    - two_bi * cf.sj_sum_cy_mid_f[j_idx];
-
-                                if (mid_l2 > best_dist * ad_ratio_mid)
-                                    continue;
+                                uint32_t gap_dot =
+                                    (sum_cx_sq_gap + sum_cy_sq_gap - gap_l2_int) / 2;
+                                mid_dots[s] = dots_row[c] + gap_dot;
                             }
 
-                            // Rest: u4 Horizontal on [phase3_start, nibble_bytes)
-                            uint32_t rest_l2_int = u4_computer::Horizontal(
-                                (const nk_u4x2_t*)(x_code + phase3_start),
-                                (const nk_u4x2_t*)(y_code + phase3_start),
-                                nibble_bytes_ - phase3_start
+                            // Phase 3b: vectorized mid distance computation
+                            SKM_VECTORIZE_LOOP
+                            for (size_t s = 0; s < n_survivors; ++s) {
+                                const size_t j_idx = j + survivor_positions[s];
+                                partial_dists[s] = norm_x_mid_i + cf.norm_y_mid[j_idx]
+                                    - two_si * cf.scales[j_idx]
+                                        * static_cast<float>(mid_dots[s])
+                                    - two_A_x_mid_i * cf.biases[j_idx]
+                                    - two_bi * cf.sj_sum_cy_mid_f[j_idx];
+                            }
+
+                            // Phase 3c: compact mid survivors
+                            size_t n_mid_survivors = 0;
+                            const float mid_threshold = best_dist * ad_ratio_mid;
+                            f32_utils::InitPositionsArray(
+                                n_survivors, n_mid_survivors, mid_survivor_positions,
+                                mid_threshold, partial_dists
                             );
-                            uint32_t sum_cx_sq_at_start = use_mid
-                                ? cached_sum_cx_sq_mid_[i_idx]
-                                : cached_sum_cx_sq_front_[i_idx];
+
+                            rest_positions = mid_survivor_positions;
+                            rest_dots = mid_dots;
+                            n_rest = n_mid_survivors;
+                            rest_start_byte = mid_bytes;
+                            sum_cx_sq_at_rest = cached_sum_cx_sq_mid_[i_idx];
+                        }
+
+                        // Phase 4: rest + full for surviving candidates
+                        const uint32_t sum_cx_sq_rest_i =
+                            cached_sum_cx_sq_[i_idx] - sum_cx_sq_at_rest;
+
+                        for (size_t rs = 0; rs < n_rest; ++rs) {
+                            const size_t s = rest_positions[rs];
+                            const size_t c = use_mid
+                                ? survivor_positions[s] : s;
+                            const size_t j_idx = j + c;
+                            const float sj = cf.scales[j_idx];
+                            const float bj = cf.biases[j_idx];
+                            const uint8_t* y_code = y_codes + j_idx * code_size_;
+
+                            uint32_t dot_accumulated = use_mid
+                                ? rest_dots[s] : dots_row[c];
+
+                            uint32_t rest_l2_int = u4_computer::Horizontal(
+                                (const nk_u4x2_t*)(x_code + rest_start_byte),
+                                (const nk_u4x2_t*)(y_code + rest_start_byte),
+                                nibble_bytes_ - rest_start_byte
+                            );
                             uint32_t sum_cy_sq_at_start = use_mid
                                 ? cf.sum_cy_sq_mid[j_idx]
                                 : cf.sum_cy_sq_front[j_idx];
-                            uint32_t sum_cx_sq_rest =
-                                cached_sum_cx_sq_[i_idx] - sum_cx_sq_at_start;
                             uint32_t sum_cy_sq_rest =
                                 cf.sum_cy_sq[j_idx] - sum_cy_sq_at_start;
                             uint32_t rest_dot =
-                                (sum_cx_sq_rest + sum_cy_sq_rest - rest_l2_int) / 2;
+                                (sum_cx_sq_rest_i + sum_cy_sq_rest - rest_l2_int) / 2;
                             uint32_t full_dot = dot_accumulated + rest_dot;
 
                             float full_l2 = norm_x_full_i + cf.norm_y_full[j_idx]

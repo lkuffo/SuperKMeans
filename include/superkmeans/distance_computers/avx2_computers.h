@@ -864,4 +864,133 @@ class SIMDRaBitQCodec {
     }
 };
 
+class SIMDLVQ4Codec {
+  public:
+    /**
+     * @brief AVX2 LVQ4 encode: min/max reduction 8 floats/iter, quantize, pack nibbles.
+     */
+    static void EncodeOne(
+        const float* SKM_RESTRICT x,
+        uint8_t* SKM_RESTRICT code,
+        size_t d,
+        size_t nibble_bytes
+    ) {
+        // Min/max reduction: 8 floats per iteration
+        __m256 v_min_vec = _mm256_set1_ps(std::numeric_limits<float>::max());
+        __m256 v_max_vec = _mm256_set1_ps(std::numeric_limits<float>::lowest());
+        size_t j = 0;
+        for (; j + 8 <= d; j += 8) {
+            __m256 v = _mm256_loadu_ps(x + j);
+            v_min_vec = _mm256_min_ps(v_min_vec, v);
+            v_max_vec = _mm256_max_ps(v_max_vec, v);
+        }
+        // Horizontal reduce 8 → scalar
+        __m128 min_lo = _mm256_castps256_ps128(v_min_vec);
+        __m128 min_hi = _mm256_extractf128_ps(v_min_vec, 1);
+        __m128 min4 = _mm_min_ps(min_lo, min_hi);
+        min4 = _mm_min_ps(min4, _mm_movehl_ps(min4, min4));
+        min4 = _mm_min_ss(min4, _mm_movehdup_ps(min4));
+        float v_min = _mm_cvtss_f32(min4);
+
+        __m128 max_lo = _mm256_castps256_ps128(v_max_vec);
+        __m128 max_hi = _mm256_extractf128_ps(v_max_vec, 1);
+        __m128 max4 = _mm_max_ps(max_lo, max_hi);
+        max4 = _mm_max_ps(max4, _mm_movehl_ps(max4, max4));
+        max4 = _mm_max_ss(max4, _mm_movehdup_ps(max4));
+        float v_max = _mm_cvtss_f32(max4);
+
+        for (; j < d; ++j) {
+            v_min = std::min(v_min, x[j]);
+            v_max = std::max(v_max, x[j]);
+        }
+
+        float range = v_max - v_min;
+        if (range < 1e-30f) range = 1e-30f;
+        const float scale = range / 15.0f;
+        const float inv_scale = 1.0f / scale;
+        const float bias = v_min;
+
+        const __m256 v_bias = _mm256_set1_ps(bias);
+        const __m256 v_inv_scale = _mm256_set1_ps(inv_scale);
+        const __m256i v_zero = _mm256_setzero_si256();
+        const __m256i v_fifteen = _mm256_set1_epi32(15);
+        const __m128i v_mul = _mm_set1_epi16(0x1001);
+
+        j = 0;
+        size_t out_off = 0;
+        for (; j + 8 <= d; j += 8, out_off += 4) {
+            __m256 v = _mm256_loadu_ps(x + j);
+            __m256 q = _mm256_mul_ps(_mm256_sub_ps(v, v_bias), v_inv_scale);
+            __m256i qi = _mm256_cvtps_epi32(q);
+            qi = _mm256_max_epi32(qi, v_zero);
+            qi = _mm256_min_epi32(qi, v_fifteen);
+
+            // Narrow 8 × epi32 → 8 × epi8 (cross-lane safe)
+            __m128i lo = _mm256_castsi256_si128(qi);
+            __m128i hi = _mm256_extracti128_si256(qi, 1);
+            __m128i packed16 = _mm_packs_epi32(lo, hi);              // 8 × int16
+            __m128i packed8 = _mm_packus_epi16(packed16, _mm_setzero_si128()); // 8 × uint8
+
+            // Pack nibble pairs: maddubs → 4 packed bytes
+            __m128i nibbles16 = _mm_maddubs_epi16(packed8, v_mul);
+            __m128i nibbles8 = _mm_packus_epi16(nibbles16, _mm_setzero_si128());
+            *(uint32_t*)(code + out_off) = static_cast<uint32_t>(_mm_cvtsi128_si32(nibbles8));
+        }
+        // Scalar tail
+        for (; j + 2 <= d; j += 2, ++out_off) {
+            int q_lo = static_cast<int>(std::lround((x[j] - bias) * inv_scale));
+            int q_hi = static_cast<int>(std::lround((x[j + 1] - bias) * inv_scale));
+            q_lo = std::max(0, std::min(15, q_lo));
+            q_hi = std::max(0, std::min(15, q_hi));
+            code[out_off] = static_cast<uint8_t>(q_lo | (q_hi << 4));
+        }
+
+        float* footer = (float*)(code + nibble_bytes);
+        footer[0] = scale;
+        footer[1] = bias;
+    }
+
+    /**
+     * @brief AVX2 LVQ4 decode: 4 packed bytes → 8 floats per iteration via unpack interleave.
+     */
+    static void DecodeOne(
+        const uint8_t* SKM_RESTRICT code,
+        float* SKM_RESTRICT x,
+        size_t d,
+        size_t nibble_bytes
+    ) {
+        const float* footer = (const float*)(code + nibble_bytes);
+        const float scale = footer[0];
+        const float bias = footer[1];
+
+        const __m256 v_scale = _mm256_set1_ps(scale);
+        const __m256 v_bias = _mm256_set1_ps(bias);
+
+        size_t b = 0;
+        for (; b + 4 <= nibble_bytes; b += 4) {
+            __m128i packed = _mm_cvtsi32_si128(*(const int32_t*)(code + b));
+            __m128i wide = _mm_cvtepu8_epi32(packed);  // 4 × epi32
+
+            __m128i lo = _mm_and_si128(wide, _mm_set1_epi32(0x0F));
+            __m128i hi = _mm_srli_epi32(wide, 4);
+
+            // Interleave: [lo0,hi0,lo1,hi1] and [lo2,hi2,lo3,hi3]
+            __m128i first = _mm_unpacklo_epi32(lo, hi);
+            __m128i second = _mm_unpackhi_epi32(lo, hi);
+            __m256i interleaved = _mm256_inserti128_si256(
+                _mm256_castsi128_si256(first), second, 1
+            );
+
+            __m256 floats = _mm256_cvtepi32_ps(interleaved);
+            __m256 result = _mm256_fmadd_ps(floats, v_scale, v_bias);
+            _mm256_storeu_ps(x + b * 2, result);
+        }
+        // Scalar tail
+        for (; b < nibble_bytes; ++b) {
+            x[2 * b]     = scale * static_cast<float>(code[b] & 0x0F) + bias;
+            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4)   + bias;
+        }
+    }
+};
+
 } // namespace skmeans
