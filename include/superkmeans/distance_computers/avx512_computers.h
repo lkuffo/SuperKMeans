@@ -1019,6 +1019,7 @@ class SIMDLVQ4Codec {
   public:
     /**
      * @brief AVX-512 LVQ4 encode: min/max reduction, quantize 16 floats/iter, pack nibbles.
+     * @TODO(lkuffo, low): This could be optimized further
      */
     static void EncodeOne(
         const float* SKM_RESTRICT x,
@@ -1086,6 +1087,7 @@ class SIMDLVQ4Codec {
 
     /**
      * @brief AVX-512 LVQ4 decode: 8 packed bytes → 16 floats per iteration via permutex2var interleave.
+     * @TODO(lkuffo, low): This could be optimized further
      */
     static void DecodeOne(
         const uint8_t* SKM_RESTRICT code,
