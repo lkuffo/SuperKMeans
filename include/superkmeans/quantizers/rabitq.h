@@ -235,6 +235,43 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     bool SupportsPruning() const override { return true; }
     bool NeedsPDXLayout() const override { return false; }
     bool UsesFixedPartialD() const override { return true; }
+    bool UsesDecodeAccumulate() const override { return true; }
+
+    void DecodeAccumulate(
+        const quantized_t* encoded_data,
+        const uint32_t* assignments,
+        float* centroid_accumulators,
+        uint32_t* cluster_sizes,
+        size_t n, size_t n_clusters, size_t d,
+        uint32_t n_threads
+    ) const override {
+        SKM_PROFILE_SCOPE("RQ::DecodeAccumulate");
+        assert(fitted_ && d == d_);
+        const uint8_t* codes = reinterpret_cast<const uint8_t*>(encoded_data);
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+        {
+            uint32_t nt = n_threads;
+            uint32_t rank = omp_get_thread_num();
+            size_t c0 = (n_clusters * rank) / nt;
+            size_t c1 = (n_clusters * (rank + 1)) / nt;
+            std::unique_ptr<float[]> decode_buf(new float[d]);
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t ci = assignments[i];
+                if (ci >= c0 && ci < c1) {
+                    RaBitQCodec::DecodeOne(
+                        codes + i * code_size_, decode_buf.get(),
+                        d, binary_bytes_, centroid_.data()
+                    );
+                    cluster_sizes[ci] += 1;
+                    float* acc = centroid_accumulators + ci * d;
+                    SKM_VECTORIZE_LOOP
+                    for (size_t j = 0; j < d; ++j) {
+                        acc[j] += decode_buf[j];
+                    }
+                }
+            }
+        }
+    }
 
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t /*d*/, uint32_t partial_d

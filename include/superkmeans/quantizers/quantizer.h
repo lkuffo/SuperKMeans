@@ -143,6 +143,42 @@ class IQuantizer {
     virtual bool UsesFixedPartialD() const { return false; }
 
     /**
+     * @brief Whether this quantizer uses fused decode-accumulate for centroid updates.
+     * When true, the k-means loop calls DecodeAccumulate instead of
+     * Decode + UpdateCentroids (avoiding a full n×d float intermediate buffer).
+     */
+    virtual bool UsesDecodeAccumulate() const { return false; }
+
+    /**
+     * @brief Fused decode + centroid accumulation in a single pass.
+     *
+     * Decodes each encoded vector on-the-fly and accumulates into the
+     * centroid accumulators, avoiding materialization of the full decoded
+     * dataset. Threading partitions by centroid range (same as UpdateCentroids).
+     *
+     * @param encoded_data Encoded vectors (n × code_size)
+     * @param assignments Cluster assignment per vector (length n)
+     * @param centroid_accumulators Float centroid sums [n_clusters × d], pre-zeroed
+     * @param cluster_sizes Counts per cluster [n_clusters], pre-zeroed
+     * @param n Number of data vectors
+     * @param n_clusters Number of centroids
+     * @param d Dimensionality
+     * @param n_threads Number of threads to use
+     */
+    virtual void DecodeAccumulate(
+        const quantized_t* encoded_data,
+        const uint32_t* assignments,
+        float* centroid_accumulators,
+        uint32_t* cluster_sizes,
+        size_t n, size_t n_clusters, size_t d,
+        uint32_t n_threads
+    ) const {
+        (void) encoded_data; (void) assignments; (void) centroid_accumulators;
+        (void) cluster_sizes; (void) n; (void) n_clusters; (void) d; (void) n_threads;
+        assert(false && "DecodeAccumulate not supported by this quantizer");
+    }
+
+    /**
      * @brief Whether this quantizer uses sparse voting for centroid updates.
      * When true, the k-means loop calls SparseVotingUpdate instead of
      * UpdateCentroidsQuantized + AverageCentroids.

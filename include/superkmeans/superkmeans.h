@@ -330,10 +330,7 @@ class SuperKMeans {
         }
         if constexpr (q != Quantization::f32) {
             if (config.quantized_centroid_update) {
-                if (config.quantizer_type == QuantizerType::rabitq
-                    || config.quantizer_type == QuantizerType::lvq4) {
-                    decoded_data_buffer.reset(new float[n_samples * d]);
-                } else if (config.quantizer_type == QuantizerType::pq8
+                if (config.quantizer_type == QuantizerType::pq8
                         || config.quantizer_type == QuantizerType::pq4) {
                     // PQ uses sparse voting — no extra buffers needed
                 } else {
@@ -1289,7 +1286,7 @@ class SuperKMeans {
                 assignments.get(), distances.get(), tmp_distances_buf
             );
             if constexpr (q != Quantization::f32) {
-                if (config.quantized_centroid_update && !decoded_data_buffer
+                if (config.quantized_centroid_update && !quantizer->UsesDecodeAccumulate()
                     && !quantizer->UsesSparseVoting()) {
                     ResetQuantizedCentroids(n_clusters);
                 } else if (!quantizer->UsesSparseVoting()) {
@@ -1314,7 +1311,7 @@ class SuperKMeans {
                 centroids_pdx_wrapper, partial_d, not_pruned_counts.data()
             );
             if constexpr (q != Quantization::f32) {
-                if (config.quantized_centroid_update && !decoded_data_buffer
+                if (config.quantized_centroid_update && !quantizer->UsesDecodeAccumulate()
                     && !quantizer->UsesSparseVoting()) {
                     ResetQuantizedCentroids(n_clusters);
                 } else if (!quantizer->UsesSparseVoting()) {
@@ -1347,10 +1344,13 @@ class SuperKMeans {
                     quantizer->Decode(
                         quantized_centroids.get(), horizontal_centroids.get(), n_clusters, d
                     );
-                } else if (decoded_data_buffer) {
-                    // RaBitQ: decode all quantized data to float, then accumulate floats
-                    quantizer->Decode(encoded_data_p, decoded_data_buffer.get(), n_samples, d);
-                    UpdateCentroids(decoded_data_buffer.get(), n_samples, n_clusters);
+                } else if (quantizer->UsesDecodeAccumulate()) {
+                    // RaBitQ/LVQ4: fused decode + accumulate (no intermediate buffer)
+                    quantizer->DecodeAccumulate(
+                        encoded_data_p, assignments.get(),
+                        horizontal_centroids.get(), cluster_sizes.get(),
+                        n_samples, n_clusters, d, n_threads
+                    );
                 } else {
                     // SQ8/SQ4: accumulate directly in quantized domain
                     UpdateCentroidsQuantized(encoded_data_p, n_samples, n_clusters);
@@ -1485,7 +1485,7 @@ class SuperKMeans {
         SKM_PROFILE_SCOPE("consolidate");
 
         if constexpr (q != Quantization::f32) {
-            if (config.quantized_centroid_update && !decoded_data_buffer) {
+            if (config.quantized_centroid_update && !quantizer->UsesDecodeAccumulate()) {
                 {
                     SKM_PROFILE_SCOPE("consolidate/splitting");
                     if (!quantizer->UsesSparseVoting()) {
@@ -2201,7 +2201,6 @@ class SuperKMeans {
     std::unique_ptr<vector_value_t[]> pdxified_quantized_centroids;
     std::unique_ptr<vector_value_t[]> partial_hor_quantized_centroids;
     std::unique_ptr<uint32_t[]> quantized_centroid_accumulators; // uint32 accumulation for quantized centroid update
-    std::unique_ptr<float[]> decoded_data_buffer; // Temporary buffer for RaBitQ decode-all centroid update
 
     // Buffers for ground truth and recall computation
     std::unique_ptr<uint32_t[]> gt_assignments;
