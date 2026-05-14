@@ -479,7 +479,6 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     float sum_q_mid_f32[kBS];
                     float sum_q_f32[kBS];
                     uint32_t accumulated_dots[kBS];
-                    float correction_buf[kBS];
                     uint32_t local_survivors[kBS];
 
                     for (size_t k = 0; k < blk_count; ++k) {
@@ -514,14 +513,15 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             out_not_pruned_counts[blk_start + local_survivors[si]]++;
                         }
 
-                        // Initialize accumulated dots from front partial dots
-                        for (size_t k = 0; k < blk_count; ++k) {
+                        // Initialize accumulated dots only for survivors
+                        for (size_t si = 0; si < n_survivors; ++si) {
+                            const uint32_t k = local_survivors[si];
                             accumulated_dots[k] = static_cast<uint32_t>(partial_dot_qo[k]);
                         }
 
                         size_t n_phase3 = n_survivors;
 
-                        // Checkpoint 2: extend to mid_d dims
+                        // Checkpoint 2: extend to mid_d dims (sparse)
                         if (use_mid_checkpoint) {
                             for (size_t si = 0; si < n_survivors; ++si) {
                                 const size_t k = local_survivors[si];
@@ -533,20 +533,17 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                                 );
                             }
 
-                            FastScanComputer::RabitQCorrectionU32(
-                                accumulated_dots,
-                                c1[j], c2[j], c34_mid[j], qr_to_c_l2sqr_mid[j],
-                                sum_q_mid_f32,
-                                or_c_l2sqr_mid + blk_start,
-                                dp_mult + blk_start,
-                                correction_buf,
-                                blk_count
-                            );
-
+                            // Fused mid correction + filter (scalar, ~1 survivor)
                             size_t write = 0;
                             for (size_t si = 0; si < n_survivors; ++si) {
                                 const uint32_t k = local_survivors[si];
-                                if (correction_buf[k] <= best_dist[k] * adsampling_ratio_mid) {
+                                const float dot_f = static_cast<float>(accumulated_dots[k]);
+                                const float fdt = c1[j] * dot_f
+                                    + c2[j] * sum_q_mid_f32[k] - c34_mid[j];
+                                const float dist = or_c_l2sqr_mid[blk_start + k]
+                                    + qr_to_c_l2sqr_mid[j]
+                                    - 2.0f * dp_mult[blk_start + k] * fdt;
+                                if (dist <= best_dist[k] * adsampling_ratio_mid) {
                                     local_survivors[write++] = k;
                                 }
                             }
@@ -565,22 +562,17 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             );
                         }
 
-                        // Final correction
-                        FastScanComputer::RabitQCorrectionU32(
-                            accumulated_dots,
-                            c1[j], c2[j], c34[j], qr_to_c_l2sqr[j],
-                            sum_q_f32,
-                            or_c_l2sqr + blk_start,
-                            dp_mult + blk_start,
-                            correction_buf,
-                            blk_count
-                        );
-
-                        // Update best + tighten thresholds for subsequent centroids
+                        // Fused final correction + best update (scalar, ~1 survivor)
                         for (size_t si = 0; si < n_phase3; ++si) {
                             const uint32_t k = local_survivors[si];
-                            if (correction_buf[k] < best_dist[k]) {
-                                best_dist[k] = correction_buf[k];
+                            const float dot_f = static_cast<float>(accumulated_dots[k]);
+                            const float fdt = c1[j] * dot_f
+                                + c2[j] * sum_q_f32[k] - c34[j];
+                            const float dist = or_c_l2sqr[blk_start + k]
+                                + qr_to_c_l2sqr[j]
+                                - 2.0f * dp_mult[blk_start + k] * fdt;
+                            if (dist < best_dist[k]) {
+                                best_dist[k] = dist;
                                 best_idx[k] = static_cast<uint32_t>(j);
                                 threshold_buf[k] = best_dist[k] * adsampling_ratio_front;
                             }
