@@ -334,6 +334,8 @@ void RunPipeline(
     for (size_t target_d : target_d_list) {
         const size_t working_d = target_d;
 
+        skmeans::Profiler::Get().Reset();
+
         std::cout << "\n════════════════════════════════════════════════" << std::endl;
         std::cout << "target_d = " << target_d << " / " << d << std::endl;
         std::cout << "════════════════════════════════════════════════" << std::endl;
