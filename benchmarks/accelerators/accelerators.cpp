@@ -367,6 +367,15 @@ void RunPipeline(
             Eigen::Map<MatrixR> proj_mat(projected_data.data(), n, target_d);
             proj_mat.noalias() = data_mat * jl_matrix.transpose();
             working_data = projected_data.data();
+        } else if (dim_reduction == "mat") {
+            std::cout << "Truncating to first " << target_d
+                      << " dimensions (matryoshka)..." << std::endl;
+            projected_data.resize(n * target_d);
+            for (size_t i = 0; i < n; ++i) {
+                std::copy_n(data.data() + i * d, target_d,
+                            projected_data.data() + i * target_d);
+            }
+            working_data = projected_data.data();
         }
 
         preprocess_timer.Toc();
@@ -395,6 +404,8 @@ void RunPipeline(
             config.quantizer_type = skmeans::QuantizerType::sq4;
         else if (quantizer_name == "rabitq")
             config.quantizer_type = skmeans::QuantizerType::rabitq;
+        else if (quantizer_name == "lvq4")
+            config.quantizer_type = skmeans::QuantizerType::lvq4;
         else if (quantizer_name == "pq8")
             config.quantizer_type = skmeans::QuantizerType::pq8;
         else if (quantizer_name == "pq4")
@@ -453,58 +464,60 @@ void RunPipeline(
             );
 
         } else {
-            // ── PREPROCESSING: two rows per target_d ──
+            // ── PREPROCESSING: two rows per target_d (except matryoshka: only recompute) ──
 
-            // --- Row 1: UNPROJECT=true ---
-            std::cout << "\n--- UNPROJECT=true ---" << std::endl;
-            std::vector<float> full_d_centroids(n_clusters * d);
+            // --- Row 1: UNPROJECT=true (PCA/JLT only — matryoshka has no inverse) ---
+            if (dim_reduction != "mat") {
+                std::cout << "\n--- UNPROJECT=true ---" << std::endl;
+                std::vector<float> full_d_centroids(n_clusters * d);
 
-            if (dim_reduction == "pca") {
-                pca_holder->reverse_transform(
-                    n_clusters, working_centroids.data(), full_d_centroids.data()
-                );
-            } else { // jlt: c_full = c_proj * P
-                Eigen::Map<const MatrixR> proj_c(
-                    working_centroids.data(), n_clusters, target_d
-                );
-                Eigen::Map<MatrixR> full_c(full_d_centroids.data(), n_clusters, d);
-                full_c.noalias() = proj_c * jl_matrix;
-            }
+                if (dim_reduction == "pca") {
+                    pca_holder->reverse_transform(
+                        n_clusters, working_centroids.data(), full_d_centroids.data()
+                    );
+                } else { // jlt: c_full = c_proj * P
+                    Eigen::Map<const MatrixR> proj_c(
+                        working_centroids.data(), n_clusters, target_d
+                    );
+                    Eigen::Map<MatrixR> full_c(full_d_centroids.data(), n_clusters, d);
+                    full_c.noalias() = proj_c * jl_matrix;
+                }
 
-            auto assignments_unproj = kmeans_fulld.Assign(
-                data.data(), full_d_centroids.data(), n, n_clusters
-            );
-
-            // Requantize in full-d: fit quantizer on full-d data (1 cheap iter),
-            // then QuantizedAssign with unprojected centroids
-            std::vector<uint32_t> q_assignments_unproj;
-            if (has_quantizer) {
-                skmeans::SuperKMeansConfig refit_cfg;
-                refit_cfg.iters = 1;
-                refit_cfg.n_threads = THREADS;
-                refit_cfg.use_blas_only = true;
-                refit_cfg.verbose = false;
-                refit_cfg.quantizer_type = config.quantizer_type;
-                refit_cfg.data_already_rotated = true; // skip rotation so quantizer fits unrotated data
-                refit_cfg.sampling_fraction = 1.0f;    // use all data for quantizer fitting
-
-                auto kmeans_refit = SKM(n_clusters, d, refit_cfg);
-                kmeans_refit.Train(data.data(), n);
-
-                q_assignments_unproj = kmeans_refit.QuantizedAssign(
+                auto assignments_unproj = kmeans_fulld.Assign(
                     data.data(), full_d_centroids.data(), n, n_clusters
                 );
+
+                // Requantize in full-d: fit quantizer on full-d data (1 cheap iter),
+                // then QuantizedAssign with unprojected centroids
+                std::vector<uint32_t> q_assignments_unproj;
+                if (has_quantizer) {
+                    skmeans::SuperKMeansConfig refit_cfg;
+                    refit_cfg.iters = 1;
+                    refit_cfg.n_threads = THREADS;
+                    refit_cfg.use_blas_only = true;
+                    refit_cfg.verbose = false;
+                    refit_cfg.quantizer_type = config.quantizer_type;
+                    refit_cfg.data_already_rotated = true; // skip rotation so quantizer fits unrotated data
+                    refit_cfg.sampling_fraction = 1.0f;    // use all data for quantizer fitting
+
+                    auto kmeans_refit = SKM(n_clusters, d, refit_cfg);
+                    kmeans_refit.Train(data.data(), n);
+
+                    q_assignments_unproj = kmeans_refit.QuantizedAssign(
+                        data.data(), full_d_centroids.data(), n, n_clusters
+                    );
+                }
+
+                write_row(
+                    target_d, construction_time_ms, preprocess_timer.GetMilliseconds(),
+                    actual_iterations,
+                    kmeans.iteration_stats,
+                    assignments_unproj, q_assignments_unproj,
+                    full_d_centroids.data(), "true", config
+                );
             }
 
-            write_row(
-                target_d, construction_time_ms, preprocess_timer.GetMilliseconds(),
-                actual_iterations,
-                kmeans.iteration_stats,
-                assignments_unproj, q_assignments_unproj,
-                full_d_centroids.data(), "true", config
-            );
-
-            // --- Row 2: UNPROJECT=false ---
+            // --- Row 2: UNPROJECT=false (recompute centroids from full-d vectors) ---
             std::cout << "\n--- UNPROJECT=false ---" << std::endl;
 
             // Assign in projected space to get cluster membership
@@ -556,7 +569,7 @@ void RunPipeline(
 int main(int argc, char* argv[]) {
     if (argc < 7) {
         std::cerr << "Usage: " << argv[0]
-                  << " <dataset> <pca|jlt|raw> <f32|sq8|sq4|rabitq|pq8|pq4>"
+                  << " <dataset> <pca|jlt|mat|raw> <f32|sq8|sq4|rabitq|lvq4|pq8|pq4>"
                   << " <quantized_centroid_update=true|false>"
                   << " <full_precision_final_centroids=true|false>"
                   << " <use_blas_only=true|false>"
@@ -572,9 +585,10 @@ int main(int argc, char* argv[]) {
     const bool use_blas_only = ParseBool(argv[6]);
 
     // Validate dim_reduction
-    if (dim_reduction != "raw" && dim_reduction != "pca" && dim_reduction != "jlt") {
+    if (dim_reduction != "raw" && dim_reduction != "pca" && dim_reduction != "jlt"
+        && dim_reduction != "mat") {
         std::cerr << "Invalid dim_reduction: " << dim_reduction
-                  << " (expected: raw, pca, jlt)\n";
+                  << " (expected: raw, pca, jlt, mat)\n";
         return 1;
     }
 
@@ -594,7 +608,7 @@ int main(int argc, char* argv[]) {
             dataset, dim_reduction, quantizer,
             quantized_centroid_update, full_precision_final_centroids, use_blas_only
         );
-    } else if (quantizer == "rabitq") {
+    } else if (quantizer == "rabitq" || quantizer == "lvq4") {
         RunPipeline<skmeans::Quantization::u8>(
             dataset, dim_reduction, quantizer,
             quantized_centroid_update, full_precision_final_centroids, use_blas_only
@@ -616,7 +630,7 @@ int main(int argc, char* argv[]) {
         }
     } else {
         std::cerr << "Invalid quantizer: " << quantizer
-                  << " (expected: f32, sq8, sq4, rabitq, pq8, pq4)\n";
+                  << " (expected: f32, sq8, sq4, rabitq, lvq4, pq8, pq4)\n";
         return 1;
     }
 

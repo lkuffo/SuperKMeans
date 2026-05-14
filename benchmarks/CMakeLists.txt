@@ -73,6 +73,7 @@ skmeans_add_benchmark(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp)
 skmeans_add_benchmark(ad_hoc_hierarchical_superkmeans.out ad_hoc_hierarchical_superkmeans.cpp)
 skmeans_add_benchmark(ad_hoc_assign.out ad_hoc_assign.cpp)
 skmeans_add_benchmark(ad_hoc_jlt.out ad_hoc_jlt.cpp)
+skmeans_add_benchmark(ad_hoc_mat.out ad_hoc_mat.cpp)
 skmeans_add_faiss_benchmark(ad_hoc_pca.out ad_hoc_pca.cpp)
 skmeans_add_benchmark(ad_hoc_superkmeans_sq8.out ad_hoc_superkmeans_sq8.cpp)
 skmeans_add_benchmark(ad_hoc_superkmeans_sq4.out ad_hoc_superkmeans_sq4.cpp)
@@ -210,6 +211,7 @@ add_custom_target(benchmarks
         ad_hoc_hierarchical_superkmeans.out
         ad_hoc_assign.out
         ad_hoc_jlt.out
+        ad_hoc_mat.out
         ad_hoc_pca.out
         ad_hoc_superkmeans_sq8.out
         ad_hoc_superkmeans_sq4.out

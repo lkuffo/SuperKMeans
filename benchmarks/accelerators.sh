@@ -108,6 +108,14 @@ for DATASET in "${DATASETS[@]}"; do
     run "raw / sq4 / quant-update / blas-only"                      "$DATASET" raw sq4 true false true
     run "raw / sq4 / quant-update + full-prec-final / blas-only"    "$DATASET" raw sq4 true true true
 
+    # ── raw + lvq4 ──
+    run "raw / lvq4 / no-quant-update / pruning"                     "$DATASET" raw lvq4 false false false
+    run "raw / lvq4 / quant-update / pruning"                        "$DATASET" raw lvq4 true false false
+    run "raw / lvq4 / quant-update + full-prec-final / pruning"      "$DATASET" raw lvq4 true true false
+    run "raw / lvq4 / no-quant-update / blas-only"                   "$DATASET" raw lvq4 false false true
+    run "raw / lvq4 / quant-update / blas-only"                      "$DATASET" raw lvq4 true false true
+    run "raw / lvq4 / quant-update + full-prec-final / blas-only"    "$DATASET" raw lvq4 true true true
+
     # # ── raw + rabitq (no pruning support — blas-only) ──
     run "raw / rabitq / no-quant-update / blas-only"                "$DATASET" raw rabitq false false true
     run "raw / rabitq / quant-update / blas-only"                   "$DATASET" raw rabitq true false true
@@ -137,6 +145,14 @@ for DATASET in "${DATASETS[@]}"; do
     run "pca / sq4 / quant-update / blas-only"                      "$DATASET" pca sq4 true false true
     run "pca / sq4 / quant-update + full-prec-final / blas-only"    "$DATASET" pca sq4 true true true
 
+    # ── pca + lvq4 ──
+    run "pca / lvq4 / no-quant-update / pruning"                     "$DATASET" pca lvq4 false false false
+    run "pca / lvq4 / quant-update / pruning"                        "$DATASET" pca lvq4 true false false
+    run "pca / lvq4 / quant-update + full-prec-final / pruning"      "$DATASET" pca lvq4 true true false
+    run "pca / lvq4 / no-quant-update / blas-only"                   "$DATASET" pca lvq4 false false true
+    run "pca / lvq4 / quant-update / blas-only"                      "$DATASET" pca lvq4 true false true
+    run "pca / lvq4 / quant-update + full-prec-final / blas-only"    "$DATASET" pca lvq4 true true true
+
     # ── pca + rabitq (no pruning support — blas-only) ──
     run "pca / rabitq / no-quant-update / blas-only"                "$DATASET" pca rabitq false false true
     run "pca / rabitq / quant-update / blas-only"                   "$DATASET" pca rabitq true false true
@@ -144,32 +160,50 @@ for DATASET in "${DATASETS[@]}"; do
 
     # ==================================================================
     #  JLT (dimensionality reduction, iterates over TARGET_D internally)
+    #  Deactivated with Quantization as PCA always perform better
     # ==================================================================
 
     # ── jlt + f32 ──
     run "jlt / f32 / pruning"                                       "$DATASET" jlt f32 false false false
     run "jlt / f32 / blas-only"                                     "$DATASET" jlt f32 false false true
 
-    # ── jlt + sq8 ──
-    run "jlt / sq8 / no-quant-update / pruning"                     "$DATASET" jlt sq8 false false false
-    run "jlt / sq8 / quant-update / pruning"                        "$DATASET" jlt sq8 true false false
-    run "jlt / sq8 / quant-update + full-prec-final / pruning"      "$DATASET" jlt sq8 true true false
-    run "jlt / sq8 / no-quant-update / blas-only"                   "$DATASET" jlt sq8 false false true
-    run "jlt / sq8 / quant-update / blas-only"                      "$DATASET" jlt sq8 true false true
-    run "jlt / sq8 / quant-update + full-prec-final / blas-only"    "$DATASET" jlt sq8 true true true
+    # # ── jlt + sq8 ──
+    # run "jlt / sq8 / no-quant-update / pruning"                     "$DATASET" jlt sq8 false false false
+    # run "jlt / sq8 / quant-update / pruning"                        "$DATASET" jlt sq8 true false false
+    # run "jlt / sq8 / quant-update + full-prec-final / pruning"      "$DATASET" jlt sq8 true true false
+    # run "jlt / sq8 / no-quant-update / blas-only"                   "$DATASET" jlt sq8 false false true
+    # run "jlt / sq8 / quant-update / blas-only"                      "$DATASET" jlt sq8 true false true
+    # run "jlt / sq8 / quant-update + full-prec-final / blas-only"    "$DATASET" jlt sq8 true true true
 
-    # ── jlt + sq4 ──
-    run "jlt / sq4 / no-quant-update / pruning"                     "$DATASET" jlt sq4 false false false
-    run "jlt / sq4 / quant-update / pruning"                        "$DATASET" jlt sq4 true false false
-    run "jlt / sq4 / quant-update + full-prec-final / pruning"      "$DATASET" jlt sq4 true true false
-    run "jlt / sq4 / no-quant-update / blas-only"                   "$DATASET" jlt sq4 false false true
-    run "jlt / sq4 / quant-update / blas-only"                      "$DATASET" jlt sq4 true false true
-    run "jlt / sq4 / quant-update + full-prec-final / blas-only"    "$DATASET" jlt sq4 true true true
+    # # ── jlt + sq4 ──
+    # run "jlt / sq4 / no-quant-update / pruning"                     "$DATASET" jlt sq4 false false false
+    # run "jlt / sq4 / quant-update / pruning"                        "$DATASET" jlt sq4 true false false
+    # run "jlt / sq4 / quant-update + full-prec-final / pruning"      "$DATASET" jlt sq4 true true false
+    # run "jlt / sq4 / no-quant-update / blas-only"                   "$DATASET" jlt sq4 false false true
+    # run "jlt / sq4 / quant-update / blas-only"                      "$DATASET" jlt sq4 true false true
+    # run "jlt / sq4 / quant-update + full-prec-final / blas-only"    "$DATASET" jlt sq4 true true true
 
-    # ── jlt + rabitq (no pruning support — blas-only) ──
-    run "jlt / rabitq / no-quant-update / blas-only"                "$DATASET" jlt rabitq false false true
-    run "jlt / rabitq / quant-update / blas-only"                   "$DATASET" jlt rabitq true false true
-    run "jlt / rabitq / quant-update + full-prec-final / blas-only" "$DATASET" jlt rabitq true true true
+    # # ── jlt + lvq4 ──
+    # run "jlt / lvq4 / no-quant-update / pruning"                     "$DATASET" jlt lvq4 false false false
+    # run "jlt / lvq4 / quant-update / pruning"                        "$DATASET" jlt lvq4 true false false
+    # run "jlt / lvq4 / quant-update + full-prec-final / pruning"      "$DATASET" jlt lvq4 true true false
+    # run "jlt / lvq4 / no-quant-update / blas-only"                   "$DATASET" jlt lvq4 false false true
+    # run "jlt / lvq4 / quant-update / blas-only"                      "$DATASET" jlt lvq4 true false true
+    # run "jlt / lvq4 / quant-update + full-prec-final / blas-only"    "$DATASET" jlt lvq4 true true true
+
+    # # ── jlt + rabitq (no pruning support — blas-only) ──
+    # run "jlt / rabitq / no-quant-update / blas-only"                "$DATASET" jlt rabitq false false true
+    # run "jlt / rabitq / quant-update / blas-only"                   "$DATASET" jlt rabitq true false true
+    # run "jlt / rabitq / quant-update + full-prec-final / blas-only" "$DATASET" jlt rabitq true true true
+
+    # ==================================================================
+    #  Matryoshka (truncation, no quantizer combinations)
+    #  Deactivated with Quantization as PCA always perform better
+    # ==================================================================
+
+    # ── mat + f32 ──
+    run "mat / f32 / pruning"                                       "$DATASET" mat f32 false false false
+    run "mat / f32 / blas-only"                                     "$DATASET" mat f32 false false true
 
     # ==================================================================
     #  PQ (Product Quantization — raw only, sparse voting, blas-only)

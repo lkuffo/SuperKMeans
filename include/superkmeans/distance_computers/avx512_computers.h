@@ -277,8 +277,30 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::b8> {
             __m512i popcnt = _mm512_popcnt_epi64(_mm512_and_si512(x, bp));
             acc = _mm512_add_epi64(acc, _mm512_sllv_epi64(popcnt, shift_vec));
         }
+        // 256-bit tail: process 8 bytes with _mm256_popcnt_epi64
+        // After the 512-bit loop, i is a multiple of 16 so byte_in_chunk=0.
+        // Gather 8B from each bitplane at stride-16 (all within one cache line).
+        if (i + 8 <= num_bytes) {
+            const data_t* chunk_ptr = planes_interleaved + (i / 16) * qb * 16;
+            const __m256i shift_vec_256 = _mm256_set_epi64x(3, 2, 1, 0);
+            __m256i x = _mm256_set1_epi64x(*reinterpret_cast<const int64_t*>(data + i));
+            __m256i bp = _mm256_set_epi64x(
+                *reinterpret_cast<const int64_t*>(chunk_ptr + 3 * 16),
+                *reinterpret_cast<const int64_t*>(chunk_ptr + 2 * 16),
+                *reinterpret_cast<const int64_t*>(chunk_ptr + 1 * 16),
+                *reinterpret_cast<const int64_t*>(chunk_ptr)
+            );
+            __m256i popcnt = _mm256_popcnt_epi64(_mm256_and_si256(x, bp));
+            __m256i shifted = _mm256_sllv_epi64(popcnt, shift_vec_256);
+            // Zero-extend to 512-bit and accumulate
+            acc = _mm512_add_epi64(
+                acc, _mm512_inserti64x4(_mm512_setzero_si512(), shifted, 0)
+            );
+            i += 8;
+        }
+        // Single reduce after both SIMD paths
         uint32_t result = static_cast<uint32_t>(_mm512_reduce_add_epi64(acc));
-        // Scalar tail for remaining < 16 bytes
+        // Scalar tail for remaining < 8 bytes
         for (; i < num_bytes; ++i) {
             size_t chunk = i / 16;
             size_t byte_in_chunk = i % 16;
