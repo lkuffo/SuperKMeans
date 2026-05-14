@@ -236,11 +236,11 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
     /// Front checkpoint fraction, 8-aligned for bitplane layout.
     /// Note: vertical_d == d for RaBitQ (NeedsPDXLayout() is false).
-    /// d ≤ 512: 25% front (= mid_d), eliminating the gap checkpoint whose
-    ///          HorizontalMultiPlane would be ≤ 8 bytes — not worth the overhead.
-    /// d > 512: 12.5% front, gap checkpoint between front and mid_d is active.
+    /// d ≤ 768: 25% front (= mid_d), eliminating the gap checkpoint whose
+    ///          HorizontalMultiPlane would be ≤ 12 bytes — not worth the overhead.
+    /// d > 768: 12.5% front, gap checkpoint between front and mid_d is active.
     uint32_t InitialPartialD(uint32_t vertical_d) const override {
-        if (vertical_d <= 512) {
+        if (vertical_d <= 768) {
             return (vertical_d / 4 + 7) & ~7u;
         }
         return (vertical_d / 8 + 7) & ~7u;
