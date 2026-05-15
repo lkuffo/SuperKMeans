@@ -116,7 +116,9 @@ for DATASET in "${DATASETS[@]}"; do
     run "raw / lvq4 / quant-update / blas-only"                      "$DATASET" raw lvq4 true false true
     run "raw / lvq4 / quant-update + full-prec-final / blas-only"    "$DATASET" raw lvq4 true true true
 
-    # # ── raw + rabitq (no pruning support — blas-only) ──
+    # # ── raw + rabitq ──
+    run "raw / rabitq / quant-update / pruning"                   "$DATASET" raw rabitq true false false
+    run "raw / rabitq / quant-update + full-prec-final / pruning" "$DATASET" raw rabitq true true false
     # run "raw / rabitq / no-quant-update / blas-only"                "$DATASET" raw rabitq false false true
     run "raw / rabitq / quant-update / blas-only"                   "$DATASET" raw rabitq true false true
     run "raw / rabitq / quant-update + full-prec-final / blas-only" "$DATASET" raw rabitq true true true
@@ -153,7 +155,9 @@ for DATASET in "${DATASETS[@]}"; do
     run "pca / lvq4 / quant-update / blas-only"                      "$DATASET" pca lvq4 true false true
     run "pca / lvq4 / quant-update + full-prec-final / blas-only"    "$DATASET" pca lvq4 true true true
 
-    # ── pca + rabitq (no pruning support — blas-only) ──
+    # ── pca + rabitq ──
+    run "pca / rabitq / quant-update / pruning"                   "$DATASET" pca rabitq true false false
+    run "pca / rabitq / quant-update + full-prec-final / pruning" "$DATASET" pca rabitq true true false
     # run "pca / rabitq / no-quant-update / blas-only"                "$DATASET" pca rabitq false false true
     run "pca / rabitq / quant-update / blas-only"                   "$DATASET" pca rabitq true false true
     run "pca / rabitq / quant-update + full-prec-final / blas-only" "$DATASET" pca rabitq true true true
