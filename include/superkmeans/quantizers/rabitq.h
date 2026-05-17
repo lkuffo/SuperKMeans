@@ -35,6 +35,13 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
   public:
     using quantized_t = IQuantizer::quantized_t;
 
+    void InvalidateCaches() override {
+        cached_x_ptr_ = nullptr;
+        cached_n_x_ = 0;
+        cached_n_blocks_ = 0;
+        pruning_partial_norms_dirty_ = true;
+    }
+
     void Fit(const float* data, size_t n, size_t d) override {
         SKM_PROFILE_SCOPE("RQ::Fit");
         assert(d % 8 == 0 && "RaBitQ-GEMM requires dimensionality divisible by 8");
@@ -747,6 +754,11 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     void EnsureCodeFactorsCache(const uint8_t* x_codes, size_t n_x) const {
         SKM_PROFILE_SCOPE("RQ::EnsureCodeFactorsCache");
         if (cached_x_ptr_ == x_codes && cached_n_x_ == n_x) return;
+
+        // Data changed → transposed blocks cache is also stale.
+        // Reset so EnsureTransposedBlocksCache doesn't skip recomputation
+        // after we update cached_x_ptr_ below.
+        cached_n_blocks_ = 0;
 
         cached_sum_q_.resize(n_x);
         cached_or_c_l2sqr_.resize(n_x);

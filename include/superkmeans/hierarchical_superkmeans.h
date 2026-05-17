@@ -82,9 +82,9 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
      * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
      */
     std::vector<skmeans_centroid_value_t<q>> Train(
-        const vector_value_t* SKM_RESTRICT data,
+        const float* SKM_RESTRICT data,
         const size_t n,
-        const vector_value_t* SKM_RESTRICT queries = nullptr,
+        const float* SKM_RESTRICT queries = nullptr,
         const size_t n_queries = 0
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
@@ -107,7 +107,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 "The number of points should be at least as large as the number of clusters"
             );
         }
-        const vector_value_t* SKM_RESTRICT data_p = data;
+        const float* SKM_RESTRICT data_p = data;
         this->n_samples = this->GetNVectorsToSample(n, this->n_clusters);
         if (this->n_samples < this->n_clusters) {
             throw std::runtime_error(
@@ -156,7 +156,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             std::cout << "Sampling data..." << std::endl;
         }
         // Samples for both mesoclustering and fineclustering
-        std::vector<vector_value_t> data_samples_buffer;
+        std::vector<float> data_samples_buffer;
         data_samples_buffer.reserve(this->n_samples * this->d);
         auto data_to_cluster = this->SampleAndRotateVectors(
             data_p,
@@ -385,7 +385,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         size_t max_mesocluster_size = *std::max_element(
             this->cluster_sizes.get(), this->cluster_sizes.get() + n_mesoclusters
         );
-        std::vector<vector_value_t> mesocluster_buffer(max_mesocluster_size * this->d);
+        std::vector<float> mesocluster_buffer(max_mesocluster_size * this->d);
         std::vector<vector_value_t> encoded_mesocluster_buffer;
         if constexpr (q != Quantization::f32) {
             encoded_mesocluster_buffer.resize(max_mesocluster_size * this->code_size);
@@ -398,6 +398,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 continue;
             }
             this->partial_d = initial_partial_d;
+            this->quantizer->InvalidateCaches();
 
             auto mesocluster_size = mesoclusters_sizes[k];
             // auto points_per_finecluster = static_cast<float>(mesocluster_size) /
@@ -834,8 +835,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
      */
     void CompactMesoclusterToBuffer(
         const size_t mesocluster_size,
-        const vector_value_t* SKM_RESTRICT data,
-        vector_value_t* SKM_RESTRICT mesocluster_buffer,
+        const float* SKM_RESTRICT data,
+        float* SKM_RESTRICT mesocluster_buffer,
         uint32_t* SKM_RESTRICT assignments_indirection_buffer,
         const size_t* SKM_RESTRICT mesocluster_indices
     ) {
@@ -848,7 +849,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             memcpy(
                 static_cast<void*>(mesocluster_buffer + j * this->d),
                 static_cast<const void*>(data + i * this->d),
-                sizeof(vector_value_t) * this->d
+                sizeof(float) * this->d
             );
         }
     }

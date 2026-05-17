@@ -130,6 +130,15 @@ class IQuantizer {
     }
 
     /**
+     * @brief Invalidate any internal caches keyed on data pointers.
+     *
+     * Called when the underlying data buffer is reused with different content
+     * (e.g. between mesocluster fine-clustering phases in HierarchicalSuperKMeans).
+     * Quantizers with pointer-based caches (e.g. RaBitQ) override this.
+     */
+    virtual void InvalidateCaches() {}
+
+    /**
      * @brief Reset quantizer-internal centroid accumulators.
      *
      * Called before each assignment pass. SQ quantizers override to zero

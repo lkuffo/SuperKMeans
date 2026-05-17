@@ -47,6 +47,12 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 
     LVQ4Quantizer() : has_amx(DetectAMX()) {}
 
+    void InvalidateCaches() override {
+        cached_x_ptr_ = nullptr;
+        cached_n_x_ = 0;
+        cached_partial_d_ = 0;
+    }
+
     void Fit(const float* /*data*/, size_t /*n*/, size_t d) override {
         SKM_PROFILE_SCOPE("LVQ4::Fit");
         assert(d % 2 == 0 && "LVQ4 requires even dimensionality");
