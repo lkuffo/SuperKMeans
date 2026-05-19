@@ -152,7 +152,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         std::fill_n(out_knn, n_x, 0u);
 
         {
-            constexpr size_t kSuperBlock = 8;
+            constexpr size_t kSuperBlock = 2;
             constexpr size_t kBS = FastScanComputer::kBlockSize;
             const size_t n_groups = (n_blocks + kSuperBlock - 1) / kSuperBlock;
 
@@ -193,7 +193,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         for (size_t bi = 0; bi < kSuperBlock; ++bi) {
                             out_ptrs[bi] = dot_qo[bi];
                         }
-                        FastScanComputer::ScanBlockMulti<8>(
+                        FastScanComputer::ScanBlockMulti<2>(
                             packed_ptrs, lut_j, binary_bytes_, out_ptrs);
                     } else {
                         for (size_t bi = 0; bi < n_blks; ++bi) {
@@ -412,7 +412,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         using b8_computer = DistanceComputer<DistanceFunction::l2, Quantization::b8>;
 
         {
-            constexpr size_t kSuperBlock = 8;
+            constexpr size_t kSuperBlock = 2;
             constexpr size_t kBS = FastScanComputer::kBlockSize;
             const size_t n_groups = (n_blocks + kSuperBlock - 1) / kSuperBlock;
 
@@ -439,7 +439,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             for (size_t bi = 0; bi < kSuperBlock; ++bi) {
                                 out_ptrs[bi] = all_partial_dots.get() + (bi * n_y + j) * kBS;
                             }
-                            FastScanComputer::ScanBlockMulti<8>(
+                            FastScanComputer::ScanBlockMulti<2>(
                                 packed_ptrs, all_luts.data() + j * lut_stride,
                                 front_bytes, out_ptrs);
                         }
