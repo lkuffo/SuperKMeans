@@ -420,12 +420,48 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 const size_t blk_base = group * kSuperBlock;
                 const size_t n_blks = std::min(kSuperBlock, n_blocks - blk_base);
 
-                // ── Fully-fused pipeline: per (block, centroid), ScanBlock → Correction → ... ──
+                const uint8_t* packed_ptrs[kSuperBlock];
+                for (size_t bi = 0; bi < n_blks; ++bi) {
+                    packed_ptrs[bi] = cached_transposed_.get() + (blk_base + bi) * block_bytes;
+                }
+
+                // All partial dots for all blocks in super-block
+                std::unique_ptr<uint16_t[]> all_partial_dots(
+                    new uint16_t[n_blks * n_y * kBS]);
+
+                // ── Pass 1a: Multi-block FastScan all centroids ──
+                {
+                    SKM_PROFILE_SCOPE("RQ::FindNearestNeighborWithPruning/fastscan");
+                    if (n_blks == kSuperBlock) {
+                        for (size_t j = 0; j < n_y; ++j) {
+                            uint16_t* out_ptrs[kSuperBlock];
+                            for (size_t bi = 0; bi < kSuperBlock; ++bi) {
+                                out_ptrs[bi] = all_partial_dots.get() + (bi * n_y + j) * kBS;
+                            }
+                            FastScanComputer::ScanBlockMulti<4>(
+                                packed_ptrs, all_luts.data() + j * lut_stride,
+                                front_bytes, out_ptrs);
+                        }
+                    } else {
+                        for (size_t j = 0; j < n_y; ++j) {
+                            for (size_t bi = 0; bi < n_blks; ++bi) {
+                                const size_t blk = blk_base + bi;
+                                const size_t blk_count = std::min(kBS, n_x - blk * kBS);
+                                FastScanComputer::ScanBlock(
+                                    packed_ptrs[bi], all_luts.data() + j * lut_stride,
+                                    front_bytes,
+                                    all_partial_dots.get() + (bi * n_y + j) * kBS,
+                                    blk_count);
+                            }
+                        }
+                    }
+                }
+
+                // ── Per-block processing: fused correction + checkpoint pipeline ──
                 for (size_t bi = 0; bi < n_blks; ++bi) {
                     const size_t blk = blk_base + bi;
                     const size_t blk_start = blk * kBS;
                     const size_t blk_count = std::min(kBS, n_x - blk_start);
-                    const uint8_t* packed_blk = cached_transposed_.get() + blk * block_bytes;
 
                     float best_dist[kBS];
                     uint32_t best_idx[kBS];
@@ -463,20 +499,15 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         dp_sum_q_front_buf[k] = dp_mult[blk_start + k] * sum_q_front_f32[k];
                     }
 
-                    // Small stack buffer — partial dots live only between ScanBlock and Correction.
-                    alignas(64) uint16_t partial_dot[kBS];
-
-                    // ── Fused per-centroid pipeline: ScanBlock → Correction → checkpoint2 → phase3 ──
+                    // ── Fused loop: for each centroid, checkpoint1 → checkpoint2 → phase3 ──
                     for (size_t j = 0; j < n_y; ++j) {
-                        FastScanComputer::ScanBlock(
-                            packed_blk, all_luts.data() + j * lut_stride,
-                            front_bytes, partial_dot, blk_count
-                        );
+                        const uint16_t* partial_dot_qo =
+                            all_partial_dots.get() + (bi * n_y + j) * kBS;
 
                         // Checkpoint 1: fused front correction + survivor compaction
                         size_t n_survivors = 0;
                         FastScanComputer::RabitQCorrectionAndCompact(
-                            partial_dot,
+                            partial_dot_qo,
                             c1[j], c34_front[j], qr_to_c_l2sqr_front[j],
                             -2.0f * c2[j],
                             or_c_l2sqr_front + blk_start,
@@ -497,7 +528,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         // Initialize accumulated dots only for survivors
                         for (size_t si = 0; si < n_survivors; ++si) {
                             const uint32_t k = local_survivors[si];
-                            accumulated_dots[k] = static_cast<uint32_t>(partial_dot[k]);
+                            accumulated_dots[k] = static_cast<uint32_t>(partial_dot_qo[k]);
                         }
 
                         size_t n_phase3 = n_survivors;
