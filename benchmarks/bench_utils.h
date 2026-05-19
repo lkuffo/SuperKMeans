@@ -127,7 +127,9 @@ const std::vector<uint32_t> PQ_M_VALUES = {32, 64, 96, 128};
 
 // Target dimensionalities for PCA/JLT preprocessing (multiples of 64 up to 2048)
 const std::vector<size_t> TARGET_D_VALUES = {
-    32, 64, 128, 192, 256, 320, 512, 768, 1024
+    // 32, 64, 128, 192, 256, 
+    320, 
+    // 512, 768, 1024
 };
 
 // Sampling fraction values for sampling experiment

@@ -684,49 +684,100 @@ class SIMDFastScanComputer {
     template<bool U32Dot = false>
     static void RabitQCorrectionAndCompact(
         const void* partial_dot,
-        float c1j, float c2j, float c34j, float qr_j,
-        const float* sum_q_f32,
+        float c1j, float c34j, float qr_j,
+        float neg2_c2j,
         const float* or_c_l2sqr,
-        const float* dp_mult,
+        const float* neg2_dp,
+        const float* dp_sum_q,
         const float* threshold,
         uint32_t* survivor_positions,
         size_t& n_survivors,
         size_t blk_count
     ) {
-        const __m512 v_c1j = _mm512_set1_ps(c1j);
-        const __m512 v_c2j = _mm512_set1_ps(c2j);
-        const __m512 v_c34j = _mm512_set1_ps(c34j);
-        const __m512 v_qr_j = _mm512_set1_ps(qr_j);
-        const __m512 v_neg2 = _mm512_set1_ps(-2.0f);
-        const __m512i offsets = _mm512_set_epi32(
-            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+        const __m512 v_c1j     = _mm512_set1_ps(c1j);
+        const __m512 v_c34j    = _mm512_set1_ps(c34j);
+        const __m512 v_qr_j    = _mm512_set1_ps(qr_j);
+        const __m512 v_neg2c2j = _mm512_set1_ps(neg2_c2j);
 
         const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
         const auto* pd_u32 = static_cast<const uint32_t*>(partial_dot);
 
         n_survivors = 0;
+
+        // ── Fast path: blk_count == 32 → manually unrolled 2×16 with interleaved ILP ──
+        if (blk_count == 32) {
+            const __m512i offsets_lo = _mm512_set_epi32(
+                15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+            const __m512i offsets_hi = _mm512_set_epi32(
+                31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16);
+
+            // Load dot products for both halves
+            __m512 v_pd_lo, v_pd_hi;
+            if constexpr (U32Dot) {
+                v_pd_lo = _mm512_cvtepi32_ps(_mm512_loadu_si512(pd_u32));
+                v_pd_hi = _mm512_cvtepi32_ps(_mm512_loadu_si512(pd_u32 + 16));
+            } else {
+                v_pd_lo = _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16))));
+                v_pd_hi = _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16 + 16))));
+            }
+
+            // Chain A (dot-independent): base = or + qr + neg2_c2j * dp_sum_q
+            __m512 base_lo = _mm512_fmadd_ps(v_neg2c2j, _mm512_loadu_ps(dp_sum_q),
+                             _mm512_add_ps(_mm512_loadu_ps(or_c_l2sqr), v_qr_j));
+            __m512 base_hi = _mm512_fmadd_ps(v_neg2c2j, _mm512_loadu_ps(dp_sum_q + 16),
+                             _mm512_add_ps(_mm512_loadu_ps(or_c_l2sqr + 16), v_qr_j));
+
+            // Chain B (dot-dependent): shifted = c1j * dot - c34j
+            __m512 shifted_lo = _mm512_fmsub_ps(v_c1j, v_pd_lo, v_c34j);
+            __m512 shifted_hi = _mm512_fmsub_ps(v_c1j, v_pd_hi, v_c34j);
+
+            // Merge: dist = neg2_dp * shifted + base
+            __m512 dist_lo = _mm512_fmadd_ps(_mm512_loadu_ps(neg2_dp),      shifted_lo, base_lo);
+            __m512 dist_hi = _mm512_fmadd_ps(_mm512_loadu_ps(neg2_dp + 16), shifted_hi, base_hi);
+
+            // Compare + compact
+            __mmask16 mask_lo = _mm512_cmp_ps_mask(dist_lo, _mm512_loadu_ps(threshold),      _CMP_LE_OQ);
+            __mmask16 mask_hi = _mm512_cmp_ps_mask(dist_hi, _mm512_loadu_ps(threshold + 16), _CMP_LE_OQ);
+
+            if (SKM_UNLIKELY(mask_lo)) {
+                _mm512_mask_compressstoreu_epi32(
+                    survivor_positions, mask_lo, offsets_lo);
+                n_survivors = _mm_popcnt_u32(mask_lo);
+            }
+            if (SKM_UNLIKELY(mask_hi)) {
+                _mm512_mask_compressstoreu_epi32(
+                    survivor_positions + n_survivors, mask_hi, offsets_hi);
+                n_survivors += _mm_popcnt_u32(mask_hi);
+            }
+            return;
+        }
+
+        // ── General path: loop 16 at a time ──
+        const __m512i offsets = _mm512_set_epi32(
+            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+
         size_t k = 0;
         for (; k + 16 <= blk_count; k += 16) {
             __m512 v_pd;
             if constexpr (U32Dot) {
-                __m512i u32 = _mm512_loadu_si512(pd_u32 + k);
-                v_pd = _mm512_cvtepi32_ps(u32);
+                v_pd = _mm512_cvtepi32_ps(_mm512_loadu_si512(pd_u32 + k));
             } else {
-                __m256i u16 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16 + k));
-                v_pd = _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(u16));
+                v_pd = _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16 + k))));
             }
 
-            __m512 v_sq = _mm512_loadu_ps(sum_q_f32 + k);
-            __m512 fdt = _mm512_fmadd_ps(v_c2j, v_sq,
-                         _mm512_fmsub_ps(v_c1j, v_pd, v_c34j));
+            // Chain A: base = or + qr + neg2_c2j * dp_sum_q
+            __m512 base = _mm512_fmadd_ps(v_neg2c2j, _mm512_loadu_ps(dp_sum_q + k),
+                          _mm512_add_ps(_mm512_loadu_ps(or_c_l2sqr + k), v_qr_j));
 
-            __m512 v_or = _mm512_loadu_ps(or_c_l2sqr + k);
-            __m512 v_dp = _mm512_loadu_ps(dp_mult + k);
+            // Chain B: shifted = c1j * dot - c34j
+            __m512 shifted = _mm512_fmsub_ps(v_c1j, v_pd, v_c34j);
 
-            __m512 or_plus_qr = _mm512_add_ps(v_or, v_qr_j);
-            __m512 result = _mm512_fmadd_ps(v_neg2, _mm512_mul_ps(v_dp, fdt), or_plus_qr);
+            // Merge: dist = neg2_dp * shifted + base
+            __m512 result = _mm512_fmadd_ps(_mm512_loadu_ps(neg2_dp + k), shifted, base);
 
-            // Compare and compact directly from register — no store/load round-trip
             __m512 thresh = _mm512_loadu_ps(threshold + k);
             __mmask16 cmp_mask = _mm512_cmp_ps_mask(result, thresh, _CMP_LE_OQ);
             if (SKM_UNLIKELY(cmp_mask)) {
@@ -745,8 +796,9 @@ class SIMDFastScanComputer {
             } else {
                 dot_f = static_cast<float>(pd_u16[k]);
             }
-            const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
-            float dist = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
+            const float base = or_c_l2sqr[k] + qr_j + neg2_c2j * dp_sum_q[k];
+            const float shifted = c1j * dot_f - c34j;
+            const float dist = neg2_dp[k] * shifted + base;
             survivor_positions[n_survivors] = static_cast<uint32_t>(k);
             n_survivors += dist <= threshold[k];
         }

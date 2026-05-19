@@ -672,20 +672,20 @@ class SIMDFastScanComputer {
     template<bool U32Dot = false>
     static void RabitQCorrectionAndCompact(
         const void* partial_dot,
-        float c1j, float c2j, float c34j, float qr_j,
-        const float* sum_q_f32,
+        float c1j, float c34j, float qr_j,
+        float neg2_c2j,
         const float* or_c_l2sqr,
-        const float* dp_mult,
+        const float* neg2_dp,
+        const float* dp_sum_q,
         const float* threshold,
         uint32_t* survivor_positions,
         size_t& n_survivors,
         size_t blk_count
     ) {
-        const __m256 v_c1j = _mm256_set1_ps(c1j);
-        const __m256 v_c2j = _mm256_set1_ps(c2j);
-        const __m256 v_c34j = _mm256_set1_ps(c34j);
-        const __m256 v_qr_j = _mm256_set1_ps(qr_j);
-        const __m256 v_neg2 = _mm256_set1_ps(-2.0f);
+        const __m256 v_c1j     = _mm256_set1_ps(c1j);
+        const __m256 v_c34j    = _mm256_set1_ps(c34j);
+        const __m256 v_qr_j    = _mm256_set1_ps(qr_j);
+        const __m256 v_neg2c2j = _mm256_set1_ps(neg2_c2j);
 
         const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
         const auto* pd_u32 = static_cast<const uint32_t*>(partial_dot);
@@ -702,15 +702,15 @@ class SIMDFastScanComputer {
                 v_pd = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(u16));
             }
 
-            __m256 v_sq = _mm256_loadu_ps(sum_q_f32 + k);
-            __m256 fdt = _mm256_fmadd_ps(v_c2j, v_sq,
-                         _mm256_fmsub_ps(v_c1j, v_pd, v_c34j));
+            // Chain A: base = or + qr + neg2_c2j * dp_sum_q
+            __m256 base = _mm256_fmadd_ps(v_neg2c2j, _mm256_loadu_ps(dp_sum_q + k),
+                          _mm256_add_ps(_mm256_loadu_ps(or_c_l2sqr + k), v_qr_j));
 
-            __m256 v_or = _mm256_loadu_ps(or_c_l2sqr + k);
-            __m256 v_dp = _mm256_loadu_ps(dp_mult + k);
+            // Chain B: shifted = c1j * dot - c34j
+            __m256 shifted = _mm256_fmsub_ps(v_c1j, v_pd, v_c34j);
 
-            __m256 or_plus_qr = _mm256_add_ps(v_or, v_qr_j);
-            __m256 result = _mm256_fmadd_ps(v_neg2, _mm256_mul_ps(v_dp, fdt), or_plus_qr);
+            // Merge: dist = neg2_dp * shifted + base
+            __m256 result = _mm256_fmadd_ps(_mm256_loadu_ps(neg2_dp + k), shifted, base);
 
             __m256 thresh = _mm256_loadu_ps(threshold + k);
             __m256 cmp = _mm256_cmp_ps(result, thresh, _CMP_LE_OQ);
@@ -729,8 +729,9 @@ class SIMDFastScanComputer {
             } else {
                 dot_f = static_cast<float>(pd_u16[k]);
             }
-            const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
-            float dist = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
+            const float base = or_c_l2sqr[k] + qr_j + neg2_c2j * dp_sum_q[k];
+            const float shifted = c1j * dot_f - c34j;
+            const float dist = neg2_dp[k] * shifted + base;
             survivor_positions[n_survivors] = static_cast<uint32_t>(k);
             n_survivors += dist <= threshold[k];
         }

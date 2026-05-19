@@ -485,6 +485,8 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     float sum_q_front_f32[kBS];
                     float sum_q_mid_f32[kBS];
                     float sum_q_f32[kBS];
+                    float neg2_dp_buf[kBS];
+                    float dp_sum_q_front_buf[kBS];
                     uint32_t accumulated_dots[kBS];
                     uint32_t local_survivors[kBS];
 
@@ -493,6 +495,8 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         sum_q_mid_f32[k] = static_cast<float>(sum_q_mid[blk_start + k]);
                         sum_q_f32[k] = static_cast<float>(sum_q[blk_start + k]);
                         threshold_buf[k] = best_dist[k] * adsampling_ratio_front;
+                        neg2_dp_buf[k] = -2.0f * dp_mult[blk_start + k];
+                        dp_sum_q_front_buf[k] = dp_mult[blk_start + k] * sum_q_front_f32[k];
                     }
 
                     // ── Fused loop: for each centroid, checkpoint1 → checkpoint2 → phase3 ──
@@ -504,10 +508,11 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         size_t n_survivors = 0;
                         FastScanComputer::RabitQCorrectionAndCompact(
                             partial_dot_qo,
-                            c1[j], c2[j], c34_front[j], qr_to_c_l2sqr_front[j],
-                            sum_q_front_f32,
+                            c1[j], c34_front[j], qr_to_c_l2sqr_front[j],
+                            -2.0f * c2[j],
                             or_c_l2sqr_front + blk_start,
-                            dp_mult + blk_start,
+                            neg2_dp_buf,
+                            dp_sum_q_front_buf,
                             threshold_buf,
                             local_survivors,
                             n_survivors,

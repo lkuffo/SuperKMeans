@@ -548,20 +548,20 @@ class SIMDFastScanComputer {
     template<bool U32Dot = false>
     static void RabitQCorrectionAndCompact(
         const void* partial_dot,
-        float c1j, float c2j, float c34j, float qr_j,
-        const float* sum_q_f32,
+        float c1j, float c34j, float qr_j,
+        float neg2_c2j,
         const float* or_c_l2sqr,
-        const float* dp_mult,
+        const float* neg2_dp,
+        const float* dp_sum_q,
         const float* threshold,
         uint32_t* survivor_positions,
         size_t& n_survivors,
         size_t blk_count
     ) {
-        const float32x4_t v_c1j = vdupq_n_f32(c1j);
-        const float32x4_t v_c2j = vdupq_n_f32(c2j);
-        const float32x4_t v_c34j = vdupq_n_f32(c34j);
-        const float32x4_t v_qr_j = vdupq_n_f32(qr_j);
-        const float32x4_t v_neg2 = vdupq_n_f32(-2.0f);
+        const float32x4_t v_c1j     = vdupq_n_f32(c1j);
+        const float32x4_t v_c34j    = vdupq_n_f32(c34j);
+        const float32x4_t v_qr_j    = vdupq_n_f32(qr_j);
+        const float32x4_t v_neg2c2j = vdupq_n_f32(neg2_c2j);
 
         const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
         const auto* pd_u32 = static_cast<const uint32_t*>(partial_dot);
@@ -576,16 +576,16 @@ class SIMDFastScanComputer {
                 v_pd = vcvtq_f32_u32(vmovl_u16(vld1_u16(pd_u16 + k)));
             }
 
-            float32x4_t v_sq = vld1q_f32(sum_q_f32 + k);
-            float32x4_t fdt = vmlaq_f32(
-                vmlaq_f32(vnegq_f32(v_c34j), v_c1j, v_pd),
-                v_c2j, v_sq
-            );
+            // Chain A: base = or + qr + neg2_c2j * dp_sum_q
+            float32x4_t base = vmlaq_f32(
+                vaddq_f32(vld1q_f32(or_c_l2sqr + k), v_qr_j),
+                v_neg2c2j, vld1q_f32(dp_sum_q + k));
 
-            float32x4_t v_or = vld1q_f32(or_c_l2sqr + k);
-            float32x4_t v_dp = vld1q_f32(dp_mult + k);
-            float32x4_t or_plus_qr = vaddq_f32(v_or, v_qr_j);
-            float32x4_t result = vmlaq_f32(or_plus_qr, v_neg2, vmulq_f32(v_dp, fdt));
+            // Chain B: shifted = c1j * dot - c34j
+            float32x4_t shifted = vmlaq_f32(vnegq_f32(v_c34j), v_c1j, v_pd);
+
+            // Merge: dist = neg2_dp * shifted + base
+            float32x4_t result = vmlaq_f32(base, vld1q_f32(neg2_dp + k), shifted);
 
             float32x4_t thresh = vld1q_f32(threshold + k);
             uint32x4_t cmp_result = vcleq_f32(result, thresh);
@@ -606,8 +606,9 @@ class SIMDFastScanComputer {
             } else {
                 dot_f = static_cast<float>(pd_u16[k]);
             }
-            const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
-            float dist = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
+            const float base = or_c_l2sqr[k] + qr_j + neg2_c2j * dp_sum_q[k];
+            const float shifted = c1j * dot_f - c34j;
+            const float dist = neg2_dp[k] * shifted + base;
             survivor_positions[n_survivors] = static_cast<uint32_t>(k);
             n_survivors += dist <= threshold[k];
         }

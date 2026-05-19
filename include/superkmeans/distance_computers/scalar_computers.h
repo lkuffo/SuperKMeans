@@ -377,14 +377,24 @@ class ScalarFastScanComputer {
      *
      * Computes partial L2 distances and immediately compacts survivors whose
      * distance <= threshold, avoiding the intermediate partial_l2 buffer.
+     *
+     * Uses refactored formula with precomputed centroid-independent values:
+     *   base[k]    = or_c_l2sqr[k] + qr_j + neg2_c2j * dp_sum_q[k]   (dot-independent)
+     *   shifted[k] = c1j * dot[k] - c34j                               (dot-dependent)
+     *   dist[k]    = neg2_dp[k] * shifted[k] + base[k]
+     *
+     * @param neg2_c2j  Precomputed -2 * c2j (per-centroid scalar)
+     * @param neg2_dp   Precomputed -2 * dp_mult[k] (per-element, centroid-independent)
+     * @param dp_sum_q  Precomputed dp_mult[k] * sum_q[k] (per-element, centroid-independent)
      */
     template<bool U32Dot = false>
     static void RabitQCorrectionAndCompact(
         const void* partial_dot,
-        float c1j, float c2j, float c34j, float qr_j,
-        const float* sum_q_f32,
+        float c1j, float c34j, float qr_j,
+        float neg2_c2j,
         const float* or_c_l2sqr,
-        const float* dp_mult,
+        const float* neg2_dp,
+        const float* dp_sum_q,
         const float* threshold,
         uint32_t* survivor_positions,
         size_t& n_survivors,
@@ -398,8 +408,9 @@ class ScalarFastScanComputer {
             } else {
                 dot_f = static_cast<float>(static_cast<const uint16_t*>(partial_dot)[k]);
             }
-            const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
-            const float dist = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
+            const float base = or_c_l2sqr[k] + qr_j + neg2_c2j * dp_sum_q[k];
+            const float shifted = c1j * dot_f - c34j;
+            const float dist = neg2_dp[k] * shifted + base;
             if (dist <= threshold[k]) {
                 survivor_positions[n_survivors++] = static_cast<uint32_t>(k);
             }
