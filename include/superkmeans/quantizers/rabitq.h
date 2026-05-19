@@ -420,39 +420,57 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 const size_t blk_base = group * kSuperBlock;
                 const size_t n_blks = std::min(kSuperBlock, n_blocks - blk_base);
 
-                // Per-block addresses
                 const uint8_t* packed_ptrs[kSuperBlock];
-                size_t blk_starts[kSuperBlock];
-                size_t blk_counts[kSuperBlock];
                 for (size_t bi = 0; bi < n_blks; ++bi) {
-                    const size_t blk = blk_base + bi;
-                    packed_ptrs[bi] = cached_transposed_.get() + blk * block_bytes;
-                    blk_starts[bi] = blk * kBS;
-                    blk_counts[bi] = std::min(kBS, n_x - blk_starts[bi]);
+                    packed_ptrs[bi] = cached_transposed_.get() + (blk_base + bi) * block_bytes;
                 }
 
-                // Per-block state (transposed: [bi][k] layout)
-                float best_dist[kSuperBlock][kBS];
-                uint32_t best_idx[kSuperBlock][kBS];
-                float threshold_buf[kSuperBlock][kBS];
-                float sum_q_mid_f32[kSuperBlock][kBS];
-                float sum_q_f32[kSuperBlock][kBS];
-                float neg2_dp_buf[kSuperBlock][kBS];
-                float dp_sum_q_front_buf[kSuperBlock][kBS];
-                uint32_t accumulated_dots[kSuperBlock][kBS];
-                uint32_t local_survivors[kSuperBlock][kBS];
-                alignas(64) uint16_t partial_dot[kSuperBlock][kBS];
-                size_t n_survivors[kSuperBlock];
+                // All partial dots for all blocks in super-block
+                std::unique_ptr<uint16_t[]> all_partial_dots(
+                    new uint16_t[n_blks * n_y * kBS]);
 
-                // Initialize per-block state (best_dist via prev_j, sum_q, threshold, dp factors)
+                // ── Pass 1a: Multi-block FastScan all centroids ──
+                {
+                    SKM_PROFILE_SCOPE("RQ::FindNearestNeighborWithPruning/fastscan");
+                    if (n_blks == kSuperBlock) {
+                        for (size_t j = 0; j < n_y; ++j) {
+                            uint16_t* out_ptrs[kSuperBlock];
+                            for (size_t bi = 0; bi < kSuperBlock; ++bi) {
+                                out_ptrs[bi] = all_partial_dots.get() + (bi * n_y + j) * kBS;
+                            }
+                            FastScanComputer::ScanBlockMulti<4>(
+                                packed_ptrs, all_luts.data() + j * lut_stride,
+                                front_bytes, out_ptrs);
+                        }
+                    } else {
+                        for (size_t j = 0; j < n_y; ++j) {
+                            for (size_t bi = 0; bi < n_blks; ++bi) {
+                                const size_t blk = blk_base + bi;
+                                const size_t blk_count = std::min(kBS, n_x - blk * kBS);
+                                FastScanComputer::ScanBlock(
+                                    packed_ptrs[bi], all_luts.data() + j * lut_stride,
+                                    front_bytes,
+                                    all_partial_dots.get() + (bi * n_y + j) * kBS,
+                                    blk_count);
+                            }
+                        }
+                    }
+                }
+
+                // ── Per-block processing: fused correction + checkpoint pipeline ──
                 for (size_t bi = 0; bi < n_blks; ++bi) {
-                    const size_t blk_start = blk_starts[bi];
-                    const size_t blk_count = blk_counts[bi];
+                    const size_t blk = blk_base + bi;
+                    const size_t blk_start = blk * kBS;
+                    const size_t blk_count = std::min(kBS, n_x - blk_start);
+
+                    float best_dist[kBS];
+                    uint32_t best_idx[kBS];
+
                     for (size_t k = 0; k < blk_count; ++k) {
                         const size_t i = blk_start + k;
                         const uint32_t prev_j = out_knn[i];
-                        best_idx[bi][k] = prev_j;
-                        best_dist[bi][k] = ComputeFullDistanceViaLUT(
+                        best_idx[k] = prev_j;
+                        best_dist[k] = ComputeFullDistanceViaLUT(
                             x_codes + i * code_size_,
                             all_luts.data() + prev_j * lut_stride,
                             c1[prev_j], c2[prev_j], c34[prev_j],
@@ -461,109 +479,84 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         );
                         out_not_pruned_counts[i] = 0;
                     }
+
+                    // Precompute per-block buffers (reused across all centroids)
+                    float threshold_buf[kBS];
+                    float sum_q_front_f32[kBS];
+                    float sum_q_mid_f32[kBS];
+                    float sum_q_f32[kBS];
+                    float neg2_dp_buf[kBS];
+                    float dp_sum_q_front_buf[kBS];
+                    uint32_t accumulated_dots[kBS];
+                    uint32_t local_survivors[kBS];
+
                     for (size_t k = 0; k < blk_count; ++k) {
-                        const size_t i = blk_start + k;
-                        sum_q_mid_f32[bi][k] = static_cast<float>(sum_q_mid[i]);
-                        sum_q_f32[bi][k] = static_cast<float>(sum_q[i]);
-                        threshold_buf[bi][k] = best_dist[bi][k] * adsampling_ratio_front;
-                        neg2_dp_buf[bi][k] = -2.0f * dp_mult[i];
-                        dp_sum_q_front_buf[bi][k] =
-                            dp_mult[i] * static_cast<float>(sum_q_front[i]);
+                        sum_q_front_f32[k] = static_cast<float>(sum_q_front[blk_start + k]);
+                        sum_q_mid_f32[k] = static_cast<float>(sum_q_mid[blk_start + k]);
+                        sum_q_f32[k] = static_cast<float>(sum_q[blk_start + k]);
+                        threshold_buf[k] = best_dist[k] * adsampling_ratio_front;
+                        neg2_dp_buf[k] = -2.0f * dp_mult[blk_start + k];
+                        dp_sum_q_front_buf[k] = dp_mult[blk_start + k] * sum_q_front_f32[k];
                     }
-                }
 
-                // Pointer arrays for the fused kernel
-                const float* or_c_l2sqr_ptrs[kSuperBlock];
-                const float* neg2_dp_ptrs[kSuperBlock];
-                const float* dp_sum_q_ptrs[kSuperBlock];
-                const float* threshold_ptrs[kSuperBlock];
-                uint16_t* partial_dot_ptrs[kSuperBlock];
-                uint32_t* survivor_ptrs[kSuperBlock];
-                for (size_t bi = 0; bi < n_blks; ++bi) {
-                    or_c_l2sqr_ptrs[bi] = or_c_l2sqr_front + blk_starts[bi];
-                    neg2_dp_ptrs[bi] = neg2_dp_buf[bi];
-                    dp_sum_q_ptrs[bi] = dp_sum_q_front_buf[bi];
-                    threshold_ptrs[bi] = threshold_buf[bi];
-                    partial_dot_ptrs[bi] = partial_dot[bi];
-                    survivor_ptrs[bi] = local_survivors[bi];
-                }
+                    // ── Fused loop: for each centroid, checkpoint1 → checkpoint2 → phase3 ──
+                    for (size_t j = 0; j < n_y; ++j) {
+                        const uint16_t* partial_dot_qo =
+                            all_partial_dots.get() + (bi * n_y + j) * kBS;
 
-                // Fast path: all blocks full and we have the full super-block
-                const bool use_fused =
-                    (n_blks == kSuperBlock) &&
-                    (blk_counts[0] == kBS) && (blk_counts[1] == kBS) &&
-                    (blk_counts[2] == kBS) && (blk_counts[3] == kBS);
-
-                // ── Centroid loop: fused ScanBlock + Correction + Compact per super-block ──
-                for (size_t j = 0; j < n_y; ++j) {
-                    const uint8_t* lut_j = all_luts.data() + j * lut_stride;
-                    const float neg2_c2j = -2.0f * c2[j];
-
-                    if (use_fused) {
-                        SKM_PROFILE_SCOPE("RQ::FindNearestNeighborWithPruning/fastscan");
-                        FastScanComputer::ScanBlockMultiAndCorrectAndCompact<4>(
-                            packed_ptrs, lut_j, front_bytes,
-                            c1[j], c34_front[j], qr_to_c_l2sqr_front[j], neg2_c2j,
-                            or_c_l2sqr_ptrs, neg2_dp_ptrs, dp_sum_q_ptrs, threshold_ptrs,
-                            partial_dot_ptrs, survivor_ptrs, n_survivors
+                        // Checkpoint 1: fused front correction + survivor compaction
+                        size_t n_survivors = 0;
+                        FastScanComputer::RabitQCorrectionAndCompact(
+                            partial_dot_qo,
+                            c1[j], c34_front[j], qr_to_c_l2sqr_front[j],
+                            -2.0f * c2[j],
+                            or_c_l2sqr_front + blk_start,
+                            neg2_dp_buf,
+                            dp_sum_q_front_buf,
+                            threshold_buf,
+                            local_survivors,
+                            n_survivors,
+                            blk_count
                         );
-                    } else {
-                        SKM_PROFILE_SCOPE("RQ::FindNearestNeighborWithPruning/fastscan");
-                        for (size_t bi = 0; bi < n_blks; ++bi) {
-                            FastScanComputer::ScanBlock(
-                                packed_ptrs[bi], lut_j, front_bytes,
-                                partial_dot[bi], blk_counts[bi]);
-                            size_t n_surv = 0;
-                            FastScanComputer::RabitQCorrectionAndCompact(
-                                partial_dot[bi],
-                                c1[j], c34_front[j], qr_to_c_l2sqr_front[j], neg2_c2j,
-                                or_c_l2sqr_front + blk_starts[bi],
-                                neg2_dp_buf[bi], dp_sum_q_front_buf[bi], threshold_buf[bi],
-                                local_survivors[bi], n_surv, blk_counts[bi]);
-                            n_survivors[bi] = n_surv;
-                        }
-                    }
 
-                    // Per-block post-processing: phase 2 → phase 3 → best update
-                    for (size_t bi = 0; bi < n_blks; ++bi) {
-                        const size_t n_surv = n_survivors[bi];
-                        if (n_surv == 0) continue;
-                        const size_t blk_start = blk_starts[bi];
+                        if (n_survivors == 0) continue;
 
-                        for (size_t si = 0; si < n_surv; ++si) {
-                            out_not_pruned_counts[blk_start + local_survivors[bi][si]]++;
+                        for (size_t si = 0; si < n_survivors; ++si) {
+                            out_not_pruned_counts[blk_start + local_survivors[si]]++;
                         }
 
-                        for (size_t si = 0; si < n_surv; ++si) {
-                            const uint32_t k = local_survivors[bi][si];
-                            accumulated_dots[bi][k] = static_cast<uint32_t>(partial_dot[bi][k]);
+                        // Initialize accumulated dots only for survivors
+                        for (size_t si = 0; si < n_survivors; ++si) {
+                            const uint32_t k = local_survivors[si];
+                            accumulated_dots[k] = static_cast<uint32_t>(partial_dot_qo[k]);
                         }
 
-                        size_t n_phase3 = n_surv;
+                        size_t n_phase3 = n_survivors;
 
                         // Checkpoint 2: extend to mid_d dims (sparse)
                         if (use_mid_checkpoint) {
-                            for (size_t si = 0; si < n_surv; ++si) {
-                                const size_t k = local_survivors[bi][si];
+                            for (size_t si = 0; si < n_survivors; ++si) {
+                                const size_t k = local_survivors[si];
                                 const size_t i = blk_start + k;
-                                accumulated_dots[bi][k] += b8_computer::HorizontalMultiPlane(
+                                accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
                                     x_codes + i * code_size_ + front_bytes,
                                     centroid_planes.data() + j * centroid_stride,
                                     gap_bytes, qb_
                                 );
                             }
 
+                            // Fused mid correction + filter (scalar, ~1 survivor)
                             size_t write = 0;
-                            for (size_t si = 0; si < n_surv; ++si) {
-                                const uint32_t k = local_survivors[bi][si];
-                                const float dot_f = static_cast<float>(accumulated_dots[bi][k]);
+                            for (size_t si = 0; si < n_survivors; ++si) {
+                                const uint32_t k = local_survivors[si];
+                                const float dot_f = static_cast<float>(accumulated_dots[k]);
                                 const float fdt = c1[j] * dot_f
-                                    + c2[j] * sum_q_mid_f32[bi][k] - c34_mid[j];
+                                    + c2[j] * sum_q_mid_f32[k] - c34_mid[j];
                                 const float dist = or_c_l2sqr_mid[blk_start + k]
                                     + qr_to_c_l2sqr_mid[j]
                                     - 2.0f * dp_mult[blk_start + k] * fdt;
-                                if (dist <= best_dist[bi][k] * adsampling_ratio_mid) {
-                                    local_survivors[bi][write++] = k;
+                                if (dist <= best_dist[k] * adsampling_ratio_mid) {
+                                    local_survivors[write++] = k;
                                 }
                             }
                             n_phase3 = write;
@@ -571,9 +564,9 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
                         // Phase 3: remaining popcount for survivors
                         for (size_t si = 0; si < n_phase3; ++si) {
-                            const size_t k = local_survivors[bi][si];
+                            const size_t k = local_survivors[si];
                             const size_t i = blk_start + k;
-                            accumulated_dots[bi][k] += b8_computer::HorizontalMultiPlane(
+                            accumulated_dots[k] += b8_computer::HorizontalMultiPlane(
                                 x_codes + i * code_size_ + phase3_start,
                                 centroid_planes.data() + j * centroid_stride
                                     + gap_chunks * qb_ * 16,
@@ -581,32 +574,28 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                             );
                         }
 
-                        // Final correction + best update
+                        // Fused final correction + best update (scalar, ~1 survivor)
                         for (size_t si = 0; si < n_phase3; ++si) {
-                            const uint32_t k = local_survivors[bi][si];
-                            const float dot_f = static_cast<float>(accumulated_dots[bi][k]);
+                            const uint32_t k = local_survivors[si];
+                            const float dot_f = static_cast<float>(accumulated_dots[k]);
                             const float fdt = c1[j] * dot_f
-                                + c2[j] * sum_q_f32[bi][k] - c34[j];
+                                + c2[j] * sum_q_f32[k] - c34[j];
                             const float dist = or_c_l2sqr[blk_start + k]
                                 + qr_to_c_l2sqr[j]
                                 - 2.0f * dp_mult[blk_start + k] * fdt;
-                            if (dist < best_dist[bi][k]) {
-                                best_dist[bi][k] = dist;
-                                best_idx[bi][k] = static_cast<uint32_t>(j);
-                                threshold_buf[bi][k] = best_dist[bi][k] * adsampling_ratio_front;
+                            if (dist < best_dist[k]) {
+                                best_dist[k] = dist;
+                                best_idx[k] = static_cast<uint32_t>(j);
+                                threshold_buf[k] = best_dist[k] * adsampling_ratio_front;
                             }
                         }
-                    } // per-block post-processing
-                } // centroid loop
+                    } // centroid loop
 
-                // Write outputs
-                for (size_t bi = 0; bi < n_blks; ++bi) {
-                    const size_t blk_start = blk_starts[bi];
-                    for (size_t k = 0; k < blk_counts[bi]; ++k) {
-                        out_distances[blk_start + k] = best_dist[bi][k];
-                        out_knn[blk_start + k] = best_idx[bi][k];
+                    for (size_t k = 0; k < blk_count; ++k) {
+                        out_distances[blk_start + k] = best_dist[k];
+                        out_knn[blk_start + k] = best_idx[k];
                     }
-                }
+                } // per-block loop
             } // group loop
         }
     }

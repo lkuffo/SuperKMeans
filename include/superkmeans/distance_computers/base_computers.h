@@ -114,27 +114,6 @@ class FastScanComputer {
     ) {
         computer::template ScanBlockMulti<NBlocks>(packed, lut, binary_bytes, out_dot);
     }
-
-    template<int NBlocks>
-    static void ScanBlockMultiAndCorrectAndCompact(
-        const uint8_t* const* packed,
-        const uint8_t* lut,
-        size_t binary_bytes,
-        float c1j, float c34j, float qr_j, float neg2_c2j,
-        const float* const* or_c_l2sqr,
-        const float* const* neg2_dp,
-        const float* const* dp_sum_q,
-        const float* const* threshold,
-        uint16_t* const* partial_dot_out,
-        uint32_t* const* survivor_positions,
-        size_t* n_survivors_out
-    ) {
-        computer::template ScanBlockMultiAndCorrectAndCompact<NBlocks>(
-            packed, lut, binary_bytes,
-            c1j, c34j, qr_j, neg2_c2j,
-            or_c_l2sqr, neg2_dp, dp_sum_q, threshold,
-            partial_dot_out, survivor_positions, n_survivors_out);
-    }
 };
 
 class RaBitQCodec {
