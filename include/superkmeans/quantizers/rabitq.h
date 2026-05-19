@@ -248,7 +248,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     /// d > 768: 12.5% front, gap checkpoint between front and mid_d is active.
     uint32_t InitialPartialD(uint32_t vertical_d) const override {
         if (vertical_d <= 768) {
-            return (vertical_d / 4 + 7) & ~7u;
+            return (vertical_d / 3 + 7) & ~7u;
         }
         return (vertical_d / 8 + 7) & ~7u;
     }
