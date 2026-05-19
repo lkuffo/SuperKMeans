@@ -941,7 +941,7 @@ class SIMDFastScanComputer {
         size_t binary_bytes,
         uint16_t* const* out_dot
     ) {
-        static_assert(NBlocks >= 1 && NBlocks <= 4);
+        static_assert(NBlocks >= 1 && NBlocks <= 8);
         const __m512i lo_mask = _mm512_set1_epi8(0x0F);
 
         // 4 accumulators per block (interleaved trick)
