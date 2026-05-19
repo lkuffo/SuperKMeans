@@ -642,6 +642,32 @@ class SIMDFastScanComputer {
         }
     }
 
+    /// NEON fallback for fused ScanBlock + Correction + Compact:
+    /// just chains the existing primitives.
+    template<int NBlocks>
+    static void ScanBlockMultiAndCorrectAndCompact(
+        const uint8_t* const* packed,
+        const uint8_t* lut,
+        size_t binary_bytes,
+        float c1j, float c34j, float qr_j, float neg2_c2j,
+        const float* const* or_c_l2sqr,
+        const float* const* neg2_dp,
+        const float* const* dp_sum_q,
+        const float* const* threshold,
+        uint16_t* const* partial_dot_out,
+        uint32_t* const* survivor_positions,
+        size_t* n_survivors_out
+    ) {
+        ScanBlockMulti<NBlocks>(packed, lut, binary_bytes, partial_dot_out);
+        for (int b = 0; b < NBlocks; ++b) {
+            RabitQCorrectionAndCompact<false>(
+                partial_dot_out[b],
+                c1j, c34j, qr_j, neg2_c2j,
+                or_c_l2sqr[b], neg2_dp[b], dp_sum_q[b], threshold[b],
+                survivor_positions[b], n_survivors_out[b], kBlockSize);
+        }
+    }
+
   private:
     /**
      * @brief NEON FastScan for nibble-split kPerm0-packed data.
