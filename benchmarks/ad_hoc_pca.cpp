@@ -15,16 +15,16 @@
 #include <faiss/VectorTransform.h>
 
 // ── PCA configuration ──
-// Target reduced dimensionality
-constexpr size_t TARGET_D = 128;
 // true  = reverse_transform centroids back to full-d (approximate reconstruction)
 // false = recompute centroids as mean of original full-d vectors per cluster (exact)
 constexpr bool UNPROJECT_CENTROIDS = false;
 
 int main(int argc, char* argv[]) {
     const std::string algorithm = "superkmeans_pca";
+    // Usage: <dataset> <target_d> [pruning]
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
-    bool blas_only = !(argc > 2 && std::string(argv[2]) == "pruning");
+    size_t target_d = (argc > 2) ? std::stoull(argv[2]) : 128;
+    bool blas_only = !(argc > 3 && std::string(argv[3]) == "pruning");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -34,7 +34,6 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t target_d = TARGET_D;
     const size_t n_clusters = bench_utils::get_default_n_clusters(n);
     int n_iters = 10;
     float sampling_fraction = 1.0f;
@@ -43,7 +42,7 @@ int main(int argc, char* argv[]) {
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
-    if (target_d >= d) {
+    if (target_d > d) {
         std::cerr << "TARGET_D (" << target_d << ") must be < d (" << d << ")\n";
         return 1;
     }
@@ -86,6 +85,34 @@ int main(int argc, char* argv[]) {
     pca.train(n, data.data());
     pca_train_timer.Toc();
     std::cout << "PCA training completed in " << pca_train_timer.GetMilliseconds() << " ms\n";
+
+    // ── Explained variance ratio every 16 dims; also write CSV ──
+    // eigenvalues are sorted descending and have size d (the input dim).
+    double total_var = 0.0;
+    for (float ev : pca.eigenvalues) total_var += ev;
+
+    const std::string csv_path = "./benchmarks/pca_variance_" + dataset + ".csv";
+    std::ofstream csv(csv_path);
+    csv << "dim,cumulative_variance\n";
+
+    std::cout << "\n--- Explained variance ratio (d=" << d << ", step=16) ---\n";
+    double captured = 0.0;
+    for (size_t i = 0; i < pca.eigenvalues.size(); ++i) {
+        captured += pca.eigenvalues[i];
+        const size_t dim = i + 1;
+        if (dim % 16 == 0 || dim == pca.eigenvalues.size()) {
+            const double ratio = captured / total_var;
+            std::cout << "  dim=" << dim << " -> " << ratio << "\n";
+            csv << dim << "," << ratio << "\n";
+        }
+    }
+    csv.close();
+    std::cout << "Wrote " << csv_path << "\n";
+
+    double captured_sel = 0.0;
+    for (size_t i = 0; i < target_d; ++i) captured_sel += pca.eigenvalues[i];
+    std::cout << "Selected target_d=" << target_d
+              << " explained variance ratio: " << (captured_sel / total_var) << "\n";
 
     // ── Project data: (n × d) → (n × target_d) ──
     std::cout << "Projecting data..." << std::endl;
