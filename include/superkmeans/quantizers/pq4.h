@@ -423,7 +423,7 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
         // byte mb of voted_centroids_ across all clusters (low nibble = even
         // subspace 2*mb, high nibble = odd subspace 2*mb+1), runs both
         // sgemms for that byte's subspace pair, and packs the nibble pair
-        // directly. No packing race, no fill_n of voted_centroids_ needed.
+        // directly. 
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)
         {
             std::vector<float> votes_even(n_clusters * Ks);

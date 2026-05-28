@@ -204,64 +204,82 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
             cluster_sizes[assignments[i]]++;
         }
 
-        // Frequency matrix: freq[cluster × Ks] per subspace
-        // We process one subspace at a time to keep memory bounded
-        std::vector<float> freq(n_clusters * Ks);
-        std::vector<float> votes(n_clusters * Ks);
+        // Phase 1: build all M frequency histograms in one parallel pass.
+        // Each thread owns a disjoint cluster range [c0, c1), scans
+        // assignments once, and for each owned vector processes all M
+        // subspaces back-to-back. The loop inversion amortizes the
+        // encoded_data cache miss across M histogram increments.
+        freq_all_.resize(M_ * n_clusters * Ks);
 
-        for (size_t m = 0; m < M_; ++m) {
-            // Build frequency histograms for subspace m
-            std::fill(freq.begin(), freq.end(), 0.0f);
-            for (size_t i = 0; i < n; ++i) {
-                uint32_t cluster = assignments[i];
-                uint8_t code = encoded_data[i * M_ + m];
-                freq[cluster * Ks + code] += 1.0f;
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+        {
+            uint32_t nt = n_threads;
+            uint32_t rank = static_cast<uint32_t>(omp_get_thread_num());
+            size_t c0 = (n_clusters * rank) / nt;
+            size_t c1 = (n_clusters * (rank + 1)) / nt;
+
+            for (size_t m = 0; m < M_; ++m) {
+                std::fill_n(
+                    freq_all_.data() + m * n_clusters * Ks + c0 * Ks,
+                    (c1 - c0) * Ks, 0.0f
+                );
             }
 
-            // BLAS sgemm: votes = freq × SDC_m
-            // freq:  [n_clusters × Ks]  (row-major)
-            // SDC_m: [Ks × Ks]          (row-major)
-            // votes: [n_clusters × Ks]  (row-major)
-            //
-            // Fortran column-major: C = alpha * A * B + beta * C
-            // With row-major matrices: C^T = alpha * B^T * A^T + beta * C^T
-            // So we pass: transa='N', transb='N', m=Ks, n=n_clusters, k=Ks
-            int blas_m = static_cast<int>(Ks);
-            int blas_n = static_cast<int>(n_clusters);
-            int blas_k = static_cast<int>(Ks);
-            float alpha = 1.0f;
-            float beta = 0.0f;
-            int lda = static_cast<int>(Ks);
-            int ldb = static_cast<int>(Ks);
-            int ldc = static_cast<int>(Ks);
-
-            sgemm_(
-                "N", "N",
-                &blas_m, &blas_n, &blas_k,
-                &alpha,
-                sdc_table_.data() + m * Ks * Ks, &lda,
-                freq.data(), &ldb,
-                &beta,
-                votes.data(), &ldc
-            );
-
-            // Pick argmin per cluster
-#pragma omp parallel for num_threads(n_threads)
-            for (size_t c = 0; c < n_clusters; ++c) {
-                if (cluster_sizes[c] == 0) {
-                    voted_centroids_[c * M_ + m] = 0;
-                    continue;
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t c = assignments[i];
+                if (c < c0 || c >= c1) continue;
+                const quantized_t* xi = encoded_data + i * M_;
+                for (size_t m = 0; m < M_; ++m) {
+                    uint8_t code = xi[m];
+                    freq_all_[m * n_clusters * Ks + c * Ks + code] += 1.0f;
                 }
-                const float* row = votes.data() + c * Ks;
-                size_t best_k = 0;
-                float best_vote = row[0];
-                for (size_t k = 1; k < Ks; ++k) {
-                    if (row[k] < best_vote) {
-                        best_vote = row[k];
-                        best_k = k;
+            }
+        }
+
+        // Phase 2: parallel over subspace m. Each thread fully owns one m
+        // (one byte of voted_centroids_ per cluster), runs sgemm, finds
+        // argmin per cluster, writes directly. No nibble packing needed
+        // since PQ8 uses one byte per subspace.
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+        {
+            std::vector<float> votes(n_clusters * Ks);
+
+#pragma omp for schedule(dynamic)
+            for (size_t m = 0; m < M_; ++m) {
+                int blas_m = static_cast<int>(Ks);
+                int blas_n = static_cast<int>(n_clusters);
+                int blas_k = static_cast<int>(Ks);
+                float alpha = 1.0f;
+                float beta = 0.0f;
+                int lda = static_cast<int>(Ks);
+                int ldb = static_cast<int>(Ks);
+                int ldc = static_cast<int>(Ks);
+                sgemm_(
+                    "N", "N",
+                    &blas_m, &blas_n, &blas_k,
+                    &alpha,
+                    sdc_table_.data() + m * Ks * Ks, &lda,
+                    freq_all_.data() + m * n_clusters * Ks, &ldb,
+                    &beta,
+                    votes.data(), &ldc
+                );
+
+                for (size_t c = 0; c < n_clusters; ++c) {
+                    if (cluster_sizes[c] == 0) {
+                        voted_centroids_[c * M_ + m] = 0;
+                        continue;
                     }
+                    const float* row = votes.data() + c * Ks;
+                    size_t best_k = 0;
+                    float best_vote = row[0];
+                    for (size_t k = 1; k < Ks; ++k) {
+                        if (row[k] < best_vote) {
+                            best_vote = row[k];
+                            best_k = k;
+                        }
+                    }
+                    voted_centroids_[c * M_ + m] = static_cast<uint8_t>(best_k);
                 }
-                voted_centroids_[c * M_ + m] = static_cast<uint8_t>(best_k);
             }
         }
 
@@ -288,6 +306,7 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
     std::unique_ptr<faiss::ProductQuantizer> faiss_pq_;
     std::vector<float> sdc_table_; // [M_ × Ks × Ks]
     mutable std::vector<quantized_t> voted_centroids_; // [n_clusters × M_]
+    mutable std::vector<float> freq_all_;              // [M_ × n_clusters × Ks]
 };
 
 } // namespace skmeans
