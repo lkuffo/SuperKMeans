@@ -389,11 +389,20 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
 
         for (size_t m = 0; m < M_; ++m) {
             // Build frequency histograms for subspace m
-            std::fill(freq.begin(), freq.end(), 0.0f);
-            for (size_t i = 0; i < n; ++i) {
-                uint32_t cluster = assignments[i];
-                uint8_t code = GetCode(encoded_data + i * code_size_, m);
-                freq[cluster * Ks + code] += 1.0f;
+            // Each thread owns a disjoint range [c0, c1) of clusters
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+            {
+                uint32_t nt = n_threads;
+                uint32_t rank = static_cast<uint32_t>(omp_get_thread_num());
+                size_t c0 = (n_clusters * rank) / nt;
+                size_t c1 = (n_clusters * (rank + 1)) / nt;
+                std::fill_n(freq.data() + c0 * Ks, (c1 - c0) * Ks, 0.0f);
+                for (size_t i = 0; i < n; ++i) {
+                    uint32_t c = assignments[i];
+                    if (c < c0 || c >= c1) continue;
+                    uint8_t code = GetCode(encoded_data + i * code_size_, m);
+                    freq[c * Ks + code] += 1.0f;
+                }
             }
 
             // BLAS sgemm: votes = freq × SDC_m
