@@ -124,7 +124,8 @@ const int SCIKIT_EARLY_TERM_MAX_ITERS = 300;
 const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
 // PQ subspace counts to sweep over
-const std::vector<uint32_t> PQ_M_VALUES = {32, 64, 96, 128};
+const std::vector<uint32_t> PQ8_M_VALUES = {32, 64};
+const std::vector<uint32_t> PQ4_M_VALUES = {32, 64, 96, 128};
 
 // Target dimensionalities for PCA/JLT preprocessing (multiples of 64 up to 2048)
 const std::vector<size_t> TARGET_D_VALUES = {
@@ -650,6 +651,7 @@ inline void write_results_to_csv_v2(
     const recall_results_t& quantized_assign_results_knn_10 = {},
     const recall_results_t& quantized_assign_results_knn_100 = {},
     const std::string& balance_stats_json = "",
+    const std::string& quantized_balance_stats_json = "",
     const std::string& iteration_stats_json = "",
     const std::string& run_label = ""
 ) {
@@ -668,8 +670,8 @@ inline void write_results_to_csv_v2(
     if (!file_exists) {
         csv_file << "timestamp,algorithm,dataset,n_iters,actual_iterations,dimensionality,"
                     "data_size,n_clusters,construction_time_ms,threads,final_objective,"
-                    "clustering_quality_stats,balance_stats,iteration_stats,config,"
-                    "run_label\n";
+                    "clustering_quality_stats,balance_stats,quantized_balance_stats,"
+                    "iteration_stats,config,run_label\n";
     }
 
     // Timestamp
@@ -725,6 +727,12 @@ inline void write_results_to_csv_v2(
     } else {
         csv_file << ",";
     }
+
+    // quantized_balance_stats (always write a valid JSON literal so
+    // pandas' json.loads() doesn't choke on NaN/empty cells).
+    csv_file << "," << escape_csv_json(
+        quantized_balance_stats_json.empty() ? "{}" : quantized_balance_stats_json
+    );
 
     // iteration_stats
     if (!iteration_stats_json.empty()) {

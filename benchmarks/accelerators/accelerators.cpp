@@ -222,7 +222,10 @@ void RunPipeline(
         const std::vector<uint32_t>& q_assignments,
         const float* full_d_centroids,
         const std::string& unproject_str,
-        const skmeans::SuperKMeansConfig& cfg
+        const skmeans::SuperKMeansConfig& cfg,
+        const std::string& profiler_train_json,
+        const std::string& profiler_assign_json,
+        const std::string& profiler_q_assign_json
     ) {
         // Compute WCSS in full-d space
         double wcss_assign = SKM_f32::ComputeWCSS(
@@ -245,6 +248,16 @@ void RunPipeline(
             assignments.data(), n, n_clusters
         );
         balance_stats.print();
+
+        // Balance stats (from QuantizedAssign), if available
+        std::string q_balance_stats_json;
+        if (!q_assignments.empty()) {
+            auto q_balance_stats = SKM_f32::GetClustersBalanceStats(
+                q_assignments.data(), n, n_clusters
+            );
+            q_balance_stats.print();
+            q_balance_stats_json = q_balance_stats.to_json();
+        }
 
         // Iteration stats JSON
         std::string iter_stats_json =
@@ -294,7 +307,11 @@ void RunPipeline(
         if (wcss_q_assign >= 0.0) {
             config_dict["wcss_quantized_assign"] = std::to_string(wcss_q_assign);
         }
-        config_dict["profiler"] = skmeans::Profiler::Get().ToJson();
+        config_dict["profiler"] = profiler_train_json;
+        config_dict["profiler_assign"] = profiler_assign_json;
+        if (!profiler_q_assign_json.empty()) {
+            config_dict["profiler_quantized_assign"] = profiler_q_assign_json;
+        }
 
         // Build human-readable run label (matches accelerators.sh echo strings)
         std::string dim_label = is_raw ? "raw" : dim_reduction;
@@ -325,6 +342,7 @@ void RunPipeline(
             assign_r10, assign_r100,
             q_assign_r10, q_assign_r100,
             balance_stats.to_json(),
+            q_balance_stats_json,
             iter_stats_json,
             run_label
         );
@@ -436,6 +454,11 @@ void RunPipeline(
         std::cout << "Training completed in " << construction_time_ms << " ms" << std::endl;
         std::cout << "Actual iterations: " << actual_iterations << std::endl;
 
+        // Capture Train()'s profiler bucket and reset so subsequent
+        // Assign()/QuantizedAssign() timings don't spill into it.
+        std::string profiler_train_json = skmeans::Profiler::Get().ToJson();
+        skmeans::Profiler::Get().Reset();
+
         // ── Phase 3 & 4: Final Assignments + CSV Output ──
 
         // Full-d assign helper (reused across rows)
@@ -450,19 +473,25 @@ void RunPipeline(
             auto assignments = kmeans.Assign(
                 data.data(), working_centroids.data(), n, n_clusters
             );
+            std::string profiler_assign_json = skmeans::Profiler::Get().ToJson();
+            skmeans::Profiler::Get().Reset();
 
             std::vector<uint32_t> q_assignments;
+            std::string profiler_q_assign_json;
             if (has_quantizer) {
                 q_assignments = kmeans.QuantizedAssign(
                     data.data(), working_centroids.data(), n, n_clusters
                 );
+                profiler_q_assign_json = skmeans::Profiler::Get().ToJson();
+                skmeans::Profiler::Get().Reset();
             }
 
             write_row(
                 target_d, construction_time_ms, 0.0, actual_iterations,
                 kmeans.iteration_stats,
                 assignments, q_assignments,
-                working_centroids.data(), "none", config
+                working_centroids.data(), "none", config,
+                profiler_train_json, profiler_assign_json, profiler_q_assign_json
             );
 
         } else {
@@ -488,10 +517,13 @@ void RunPipeline(
                 auto assignments_unproj = kmeans_fulld.Assign(
                     data.data(), full_d_centroids.data(), n, n_clusters
                 );
+                std::string profiler_assign_json_u = skmeans::Profiler::Get().ToJson();
+                skmeans::Profiler::Get().Reset();
 
                 // Requantize in full-d: fit quantizer on full-d data (1 cheap iter),
                 // then QuantizedAssign with unprojected centroids
                 std::vector<uint32_t> q_assignments_unproj;
+                std::string profiler_q_assign_json_u;
                 if (has_quantizer) {
                     skmeans::SuperKMeansConfig refit_cfg;
                     refit_cfg.iters = 1;
@@ -508,6 +540,8 @@ void RunPipeline(
                     q_assignments_unproj = kmeans_refit.QuantizedAssign(
                         data.data(), full_d_centroids.data(), n, n_clusters
                     );
+                    profiler_q_assign_json_u = skmeans::Profiler::Get().ToJson();
+                    skmeans::Profiler::Get().Reset();
                 }
 
                 write_row(
@@ -515,7 +549,8 @@ void RunPipeline(
                     actual_iterations,
                     kmeans.iteration_stats,
                     assignments_unproj, q_assignments_unproj,
-                    full_d_centroids.data(), "true", config
+                    full_d_centroids.data(), "true", config,
+                    profiler_train_json, profiler_assign_json_u, profiler_q_assign_json_u
                 );
             }
 
@@ -543,14 +578,19 @@ void RunPipeline(
             auto assignments_nounproj = kmeans_fulld.Assign(
                 data.data(), recomputed_centroids.data(), n, n_clusters
             );
+            std::string profiler_assign_json_n = skmeans::Profiler::Get().ToJson();
+            skmeans::Profiler::Get().Reset();
 
             // QuantizedAssign in projected space (if quantizer available)
             // The quantizedAssign never looks at the full-d data
             std::vector<uint32_t> q_assignments;
+            std::string profiler_q_assign_json_n;
             if (has_quantizer) {
                 q_assignments = kmeans.QuantizedAssign(
                     projected_data.data(), working_centroids.data(), n, n_clusters
                 );
+                profiler_q_assign_json_n = skmeans::Profiler::Get().ToJson();
+                skmeans::Profiler::Get().Reset();
             }
 
             write_row(
@@ -558,7 +598,8 @@ void RunPipeline(
                 actual_iterations,
                 kmeans.iteration_stats,
                 assignments_nounproj, q_assignments,
-                recomputed_centroids.data(), "false", config
+                recomputed_centroids.data(), "false", config,
+                profiler_train_json, profiler_assign_json_n, profiler_q_assign_json_n
             );
         }
     }
@@ -615,10 +656,25 @@ int main(int argc, char* argv[]) {
             dataset, dim_reduction, quantizer,
             quantized_centroid_update, full_precision_final_centroids, use_blas_only
         );
-    } else if (quantizer == "pq8" || quantizer == "pq4") {
+    } else if (quantizer == "pq8") {
         auto dit = bench_utils::DATASET_PARAMS.find(dataset);
         size_t d = (dit != bench_utils::DATASET_PARAMS.end()) ? dit->second.second : 0;
-        for (uint32_t m : bench_utils::PQ_M_VALUES) {
+        for (uint32_t m : bench_utils::PQ8_M_VALUES) {
+            if (d % m != 0) {
+                std::cout << "Skipping M=" << m << " (d=" << d
+                          << " not divisible by M)" << std::endl;
+                continue;
+            }
+            RunPipeline<skmeans::Quantization::u8>(
+                dataset, dim_reduction, quantizer,
+                quantized_centroid_update, full_precision_final_centroids, use_blas_only,
+                m
+            );
+        }
+    } else if (quantizer == "pq4") {
+        auto dit = bench_utils::DATASET_PARAMS.find(dataset);
+        size_t d = (dit != bench_utils::DATASET_PARAMS.end()) ? dit->second.second : 0;
+        for (uint32_t m : bench_utils::PQ4_M_VALUES) {
             if (d % m != 0) {
                 std::cout << "Skipping M=" << m << " (d=" << d
                           << " not divisible by M)" << std::endl;

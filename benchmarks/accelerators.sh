@@ -142,18 +142,18 @@ for DATASET in "${DATASETS[@]}"; do
     # ── pca + sq4 ──
     # run "pca / sq4 / no-quant-update / pruning"                     "$DATASET" pca sq4 false false false
     run "pca / sq4 / quant-update / pruning"                        "$DATASET" pca sq4 true false false
-    run "pca / sq4 / quant-update + full-prec-final / pruning"      "$DATASET" pca sq4 true true false
+    # run "pca / sq4 / quant-update + full-prec-final / pruning"      "$DATASET" pca sq4 true true false
     # run "pca / sq4 / no-quant-update / blas-only"                   "$DATASET" pca sq4 false false true
     run "pca / sq4 / quant-update / blas-only"                      "$DATASET" pca sq4 true false true
-    run "pca / sq4 / quant-update + full-prec-final / blas-only"    "$DATASET" pca sq4 true true true
+    # run "pca / sq4 / quant-update + full-prec-final / blas-only"    "$DATASET" pca sq4 true true true
 
     # ── pca + lvq4 ──
     # run "pca / lvq4 / no-quant-update / pruning"                     "$DATASET" pca lvq4 false false false
     run "pca / lvq4 / quant-update / pruning"                        "$DATASET" pca lvq4 true false false
-    run "pca / lvq4 / quant-update + full-prec-final / pruning"      "$DATASET" pca lvq4 true true false
+    # run "pca / lvq4 / quant-update + full-prec-final / pruning"      "$DATASET" pca lvq4 true true false
     # run "pca / lvq4 / no-quant-update / blas-only"                   "$DATASET" pca lvq4 false false true
     run "pca / lvq4 / quant-update / blas-only"                      "$DATASET" pca lvq4 true false true
-    run "pca / lvq4 / quant-update + full-prec-final / blas-only"    "$DATASET" pca lvq4 true true true
+    # run "pca / lvq4 / quant-update + full-prec-final / blas-only"    "$DATASET" pca lvq4 true true true
 
     # ── pca + rabitq ──
     run "pca / rabitq / quant-update / pruning"                   "$DATASET" pca rabitq true false false
@@ -216,7 +216,7 @@ for DATASET in "${DATASETS[@]}"; do
 
     # ── raw + pq8 (8-bit PQ, Ks=256, scalar SDC) ──
     run "raw / pq8 / sparse-voting / blas-only / M sweep"                        "$DATASET" raw pq8 true false true
-    run "raw / pq8 / sparse-voting + full-prec-final / blas-only / M sweep"      "$DATASET" raw pq8 true true true
+    # run "raw / pq8 / sparse-voting + full-prec-final / blas-only / M sweep"      "$DATASET" raw pq8 true true true
 
     # ── raw + pq4 (4-bit PQ, Ks=16, FastScan SIMD) ──
     run "raw / pq4 / sparse-voting / blas-only / M sweep"                        "$DATASET" raw pq4 true false true
