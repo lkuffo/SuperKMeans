@@ -47,7 +47,7 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
         dsub_ = d / M_;
 
         faiss_pq_ = std::make_unique<faiss::ProductQuantizer>(d, M_, 8);
-        faiss_pq_->verbose = true;
+        faiss_pq_->verbose = false;
         faiss_pq_->train(n, data);
         faiss_pq_->compute_sdc_table();
 
@@ -114,7 +114,7 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
             // Per-thread contiguous LUT: M × 256 floats (fits in L1 for typical M)
             std::vector<float> flat_lut(M_ * Ks);
 
-#pragma omp for schedule(dynamic, 256)
+#pragma omp for schedule(static)
             for (size_t i = 0; i < n_x; ++i) {
                 const quantized_t* xi = x + i * M_;
 
@@ -244,7 +244,7 @@ class PQ8Quantizer : public IQuantizer<Quantization::u8> {
         {
             std::vector<float> votes(n_clusters * Ks);
 
-#pragma omp for schedule(dynamic)
+#pragma omp for schedule(static)
             for (size_t m = 0; m < M_; ++m) {
                 int blas_m = static_cast<int>(Ks);
                 int blas_n = static_cast<int>(n_clusters);
