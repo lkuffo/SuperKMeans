@@ -375,7 +375,6 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
         assert(fitted);
 
         voted_centroids_.resize(n_clusters * code_size_);
-        std::fill_n(voted_centroids_.data(), n_clusters * code_size_, quantized_t{0});
 
         // Count cluster sizes
         std::fill_n(cluster_sizes, n_clusters, 0u);
@@ -383,66 +382,94 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
             cluster_sizes[assignments[i]]++;
         }
 
-        // Frequency matrix and votes per subspace
-        std::vector<float> freq(n_clusters * Ks);
-        std::vector<float> votes(n_clusters * Ks);
+        // Phase 1: build all M frequency histograms in one parallel pass.
+        // Each thread owns a disjoint cluster range [c0, c1), scans
+        // assignments once, and for each owned vector processes all M
+        // subspaces back-to-back. The loop inversion amortizes the
+        // encoded_data cache miss across M histogram increments, restoring
+        // the work/miss ratio that makes the cluster-partition pattern
+        // viable for tiny per-i work.
+        freq_all_.resize(M_ * n_clusters * Ks);
 
-        for (size_t m = 0; m < M_; ++m) {
-            // Build frequency histograms for subspace m
-            // Each thread owns a disjoint range [c0, c1) of clusters
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)
-            {
-                uint32_t nt = n_threads;
-                uint32_t rank = static_cast<uint32_t>(omp_get_thread_num());
-                size_t c0 = (n_clusters * rank) / nt;
-                size_t c1 = (n_clusters * (rank + 1)) / nt;
-                std::fill_n(freq.data() + c0 * Ks, (c1 - c0) * Ks, 0.0f);
-                for (size_t i = 0; i < n; ++i) {
-                    uint32_t c = assignments[i];
-                    if (c < c0 || c >= c1) continue;
-                    uint8_t code = GetCode(encoded_data + i * code_size_, m);
-                    freq[c * Ks + code] += 1.0f;
-                }
+        {
+            uint32_t nt = n_threads;
+            uint32_t rank = static_cast<uint32_t>(omp_get_thread_num());
+            size_t c0 = (n_clusters * rank) / nt;
+            size_t c1 = (n_clusters * (rank + 1)) / nt;
+
+            for (size_t m = 0; m < M_; ++m) {
+                std::fill_n(
+                    freq_all_.data() + m * n_clusters * Ks + c0 * Ks,
+                    (c1 - c0) * Ks, 0.0f
+                );
             }
 
-            // BLAS sgemm: votes = freq × SDC_m
-            // Row-major → Fortran column-major convention
-            int blas_m = static_cast<int>(Ks);
-            int blas_n = static_cast<int>(n_clusters);
-            int blas_k = static_cast<int>(Ks);
-            float alpha_val = 1.0f;
-            float beta_val = 0.0f;
-            int lda = static_cast<int>(Ks);
-            int ldb = static_cast<int>(Ks);
-            int ldc = static_cast<int>(Ks);
-
-            sgemm_(
-                "N", "N",
-                &blas_m, &blas_n, &blas_k,
-                &alpha_val,
-                sdc_table_.data() + m * Ks * Ks, &lda,
-                freq.data(), &ldb,
-                &beta_val,
-                votes.data(), &ldc
-            );
-
-            // Pick argmin per cluster and pack into nibbles
-#pragma omp parallel for num_threads(n_threads)
-            for (size_t c = 0; c < n_clusters; ++c) {
-                if (cluster_sizes[c] == 0) {
-                    SetCode(voted_centroids_.data() + c * code_size_, m, 0);
-                    continue;
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t c = assignments[i];
+                if (c < c0 || c >= c1) continue;
+                const quantized_t* xi = encoded_data + i * code_size_;
+                for (size_t mb = 0; mb < code_size_; ++mb) {
+                    uint8_t b = xi[mb];
+                    const size_t m0 = 2 * mb;
+                    const size_t m1 = m0 + 1;
+                    freq_all_[m0 * n_clusters * Ks + c * Ks + (b & 0xF)] += 1.0f;
+                    freq_all_[m1 * n_clusters * Ks + c * Ks + (b >> 4)] += 1.0f;
                 }
-                const float* row = votes.data() + c * Ks;
-                size_t best_k = 0;
-                float best_vote = row[0];
-                for (size_t k = 1; k < Ks; ++k) {
-                    if (row[k] < best_vote) {
-                        best_vote = row[k];
-                        best_k = k;
+            }
+        }
+
+        // Phase 2: parallel over byte position mb. Each thread fully owns
+        // byte mb of voted_centroids_ across all clusters (low nibble = even
+        // subspace 2*mb, high nibble = odd subspace 2*mb+1), runs both
+        // sgemms for that byte's subspace pair, and packs the nibble pair
+        // directly. No packing race, no fill_n of voted_centroids_ needed.
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+        {
+            std::vector<float> votes_even(n_clusters * Ks);
+            std::vector<float> votes_odd(n_clusters * Ks);
+
+#pragma omp for schedule(dynamic)
+            for (size_t mb = 0; mb < code_size_; ++mb) {
+                float* votes_targets[2] = {votes_even.data(), votes_odd.data()};
+                for (int parity = 0; parity < 2; ++parity) {
+                    const size_t m = 2 * mb + parity;
+                    int blas_m = static_cast<int>(Ks);
+                    int blas_n = static_cast<int>(n_clusters);
+                    int blas_k = static_cast<int>(Ks);
+                    float alpha_val = 1.0f;
+                    float beta_val = 0.0f;
+                    int lda = static_cast<int>(Ks);
+                    int ldb = static_cast<int>(Ks);
+                    int ldc = static_cast<int>(Ks);
+                    sgemm_(
+                        "N", "N",
+                        &blas_m, &blas_n, &blas_k,
+                        &alpha_val,
+                        sdc_table_.data() + m * Ks * Ks, &lda,
+                        freq_all_.data() + m * n_clusters * Ks, &ldb,
+                        &beta_val,
+                        votes_targets[parity], &ldc
+                    );
+                }
+
+                for (size_t c = 0; c < n_clusters; ++c) {
+                    uint8_t lo = 0, hi = 0;
+                    if (cluster_sizes[c] != 0) {
+                        const float* row_lo = votes_even.data() + c * Ks;
+                        const float* row_hi = votes_odd.data() + c * Ks;
+                        size_t best_lo = 0, best_hi = 0;
+                        float v_lo = row_lo[0], v_hi = row_hi[0];
+                        for (size_t k = 1; k < Ks; ++k) {
+                            if (row_lo[k] < v_lo) { v_lo = row_lo[k]; best_lo = k; }
+                            if (row_hi[k] < v_hi) { v_hi = row_hi[k]; best_hi = k; }
+                        }
+                        lo = static_cast<uint8_t>(best_lo);
+                        hi = static_cast<uint8_t>(best_hi);
                     }
+                    voted_centroids_[c * code_size_ + mb] =
+                        static_cast<uint8_t>((hi << 4) | (lo & 0x0F));
                 }
-                SetCode(voted_centroids_.data() + c * code_size_, m, static_cast<uint8_t>(best_k));
             }
         }
 
@@ -648,6 +675,7 @@ class PQ4Quantizer : public IQuantizer<Quantization::u8> {
     std::vector<float> sdc_table_; // [M_ × Ks × Ks]
     std::vector<float> progressive_ratios_; // precomputed ADSampling ratios per chunk
     mutable std::vector<quantized_t> voted_centroids_; // [n_clusters × code_size_]
+    mutable std::vector<float> freq_all_;              // [M_ × n_clusters × Ks]
 
     // LUT cache: quantized LUTs + normalization factors per data point
     mutable const quantized_t* cached_x_ptr_ = nullptr;
