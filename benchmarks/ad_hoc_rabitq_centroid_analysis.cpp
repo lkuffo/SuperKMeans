@@ -369,6 +369,86 @@ int main(int argc, char* argv[]) {
     stratify(norm_fp, sizes_fp, "FP=true ");
 
     // ════════════════════════════════════════════════════════════════════════
+    // Direct test of the sign-alignment mechanism.
+    // For each cluster k (using FP=true assignments → "true" membership):
+    //   sign_alignment_k = ||avg sign(x_i - m)||_2 / sqrt(d)   ∈ [0, 1]
+    // 1.0 ⇒ all sign vectors in the cluster are identical (perfect lock).
+    // 0.0 ⇒ sign vectors are random → averaging cancels them out.
+    // If the mechanism is correct, this should correlate strongly with both
+    // (a) ||c - m||  (outer clusters → more locked)
+    // (b) per-cluster observed inflation (more locked → more residual inflation)
+    // ════════════════════════════════════════════════════════════════════════
+    std::cout << "════════════════════════════════════════════════════════════════\n"
+              << "Sign-alignment mechanism — direct test\n"
+              << "════════════════════════════════════════════════════════════════\n";
+    {
+        std::vector<double> sign_sum(static_cast<size_t>(n_clusters) * d, 0.0);
+        std::vector<size_t> ck_count(n_clusters, 0);
+        for (size_t i = 0; i < n; ++i) {
+            const uint32_t k = run_fp.q_assignments[i];
+            if (k >= n_clusters) continue;
+            ++ck_count[k];
+            double* row = sign_sum.data() + static_cast<size_t>(k) * d;
+            for (size_t j = 0; j < d; ++j) {
+                const float diff = data[i * d + j] - global_mean[j];
+                row[j] += (diff > 0.0f) ? 1.0 : -1.0;
+            }
+        }
+        std::vector<double> sign_alignment(n_clusters, 0.0);
+        for (size_t k = 0; k < n_clusters; ++k) {
+            if (ck_count[k] == 0) continue;
+            const double inv = 1.0 / static_cast<double>(ck_count[k]);
+            double l2sq = 0.0;
+            const double* row = sign_sum.data() + static_cast<size_t>(k) * d;
+            for (size_t j = 0; j < d; ++j) {
+                const double v = row[j] * inv;
+                l2sq += v * v;
+            }
+            sign_alignment[k] = std::sqrt(l2sq / static_cast<double>(d));
+        }
+        PrintDistribution("sign_alignment_k (in [0,1])    ", sign_alignment);
+        std::cout << "  Spearman(||c_fp-m||,  alignment)  = "
+                  << std::fixed << std::setprecision(4)
+                  << Spearman(norm_fp, sign_alignment) << "\n"
+                  << "  Pearson (||c_fp-m||,  alignment)  = "
+                  << Pearson(norm_fp, sign_alignment) << "\n"
+                  << "  Spearman(alignment, obs_inflation) = "
+                  << Spearman(sign_alignment, ratio) << "\n"
+                  << "  Pearson (alignment, obs_inflation) = "
+                  << Pearson(sign_alignment, ratio) << "\n";
+
+        // Quintile view by alignment.
+        std::vector<size_t> idx(n_clusters);
+        std::iota(idx.begin(), idx.end(), 0u);
+        std::sort(idx.begin(), idx.end(),
+                  [&](size_t a, size_t b) { return sign_alignment[a] < sign_alignment[b]; });
+        constexpr size_t BINS = 5;
+        const size_t per_bin = (n_clusters + BINS - 1) / BINS;
+        std::cout << "  centroids sorted by alignment, " << BINS << " quintiles:\n"
+                  << "     bin |  alignment range     |  mean ||c-m||  |  mean inflation\n";
+        for (size_t b = 0; b < BINS; ++b) {
+            const size_t lo = b * per_bin;
+            const size_t hi = std::min(static_cast<size_t>(n_clusters), lo + per_bin);
+            if (lo >= hi) break;
+            double a_lo = sign_alignment[idx[lo]], a_hi = sign_alignment[idx[hi - 1]];
+            double sum_norm = 0.0, sum_infl = 0.0;
+            for (size_t i = lo; i < hi; ++i) {
+                sum_norm += norm_fp[idx[i]];
+                sum_infl += ratio[idx[i]];
+            }
+            const size_t n_bin = hi - lo;
+            std::cout << "     Q" << (b + 1) << "  | "
+                      << std::setw(8) << std::fixed << std::setprecision(4) << a_lo
+                      << " - " << std::setw(8) << a_hi
+                      << "  | " << std::setw(10) << std::setprecision(3)
+                      << sum_norm / static_cast<double>(n_bin)
+                      << "  | " << std::setw(10) << std::setprecision(4)
+                      << sum_infl / static_cast<double>(n_bin) << "\n";
+        }
+    }
+    std::cout << "\n";
+
+    // ════════════════════════════════════════════════════════════════════════
     // Proof: analytical prediction of the FP=false centroid from RabitQ
     // encode + decode + average. If the prediction matches the observed
     // FP=false centroid, the mechanism is fully characterized.
