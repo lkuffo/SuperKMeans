@@ -125,8 +125,7 @@ const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
 // PQ subspace counts to sweep over
 const std::vector<uint32_t> PQ8_M_VALUES = {32, 64};
-// const std::vector<uint32_t> PQ4_M_VALUES = {32, 64, 96, 128};
-const std::vector<uint32_t> PQ4_M_VALUES = {256};
+const std::vector<uint32_t> PQ4_M_VALUES = {32, 64, 96, 128, 256};
 
 // HNSW efSearch values to sweep over (with fixed M and efConstruction below)
 const std::vector<int> HNSW_EF_SEARCH_VALUES = {4, 8, 16, 32};
