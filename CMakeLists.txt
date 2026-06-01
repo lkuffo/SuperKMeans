@@ -19,6 +19,7 @@ set(SKMEANS_COMPILE_TESTS OFF CACHE BOOL "Whether to compile tests")
 set(SKMEANS_COMPILE_BENCHMARKS OFF CACHE BOOL "Whether to compile benchmarks")
 set(SKMEANS_COMPILE_EXAMPLES ${PROJECT_IS_TOP_LEVEL} CACHE BOOL "Whether to compile examples")
 set(SKMEANS_ENABLE_RABITQ OFF CACHE BOOL "Enable RaBitQ (1-bit) quantizer (requires FAISS)")
+set(SKMEANS_ENABLE_USEARCH OFF CACHE BOOL "Enable USearch-backed HNSW quantizer")
 
 # ── Compiler flags (top-level only) ──
 if(PROJECT_IS_TOP_LEVEL)
@@ -138,6 +139,22 @@ if(SKMEANS_ENABLE_RABITQ)
     list(APPEND _SKMEANS_LINK_LIBS faiss)
     list(APPEND _SKMEANS_COMPILE_DEFS HAS_FAISS)
     message(STATUS "RaBitQ enabled (FAISS)")
+endif()
+
+# ── USearch (optional, header-only HNSW with native SQ8 support) ──
+if(SKMEANS_ENABLE_USEARCH)
+    FetchContent_Declare(usearch
+        GIT_REPOSITORY https://github.com/unum-cloud/usearch.git
+        GIT_TAG v2.25.3
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_GetProperties(usearch)
+    if(NOT usearch_POPULATED)
+        FetchContent_Populate(usearch)
+    endif()
+    list(APPEND _SKMEANS_INCLUDE_DIRS ${usearch_SOURCE_DIR}/include)
+    list(APPEND _SKMEANS_COMPILE_DEFS HAS_USEARCH)
+    message(STATUS "USearch enabled (header-only)")
 endif()
 
 # ── NumKong (header-only SIMD kernels for quantized GEMM) ──

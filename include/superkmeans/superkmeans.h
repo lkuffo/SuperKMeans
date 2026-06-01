@@ -25,6 +25,8 @@
 #include "superkmeans/quantizers/pq8.h"
 #include "superkmeans/quantizers/pq4.h"
 #include "superkmeans/quantizers/hnsw.h"
+#endif
+#ifdef HAS_USEARCH
 #include "superkmeans/quantizers/hnsw_sq8.h"
 #endif
 
@@ -378,11 +380,6 @@ class SuperKMeans {
                     config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search,
                     config.hnsw_use_warm_start
                 );
-            } else if (config.quantizer_type == QuantizerType::hnsw_sq8) {
-                quantizer = std::make_unique<HNSWSQ8Quantizer>(
-                    config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search,
-                    config.hnsw_use_warm_start
-                );
             } else
 #endif
             {
@@ -393,6 +390,12 @@ class SuperKMeans {
         } else {
             if (config.quantizer_type == QuantizerType::sq8) {
                 quantizer = std::make_unique<SQ8Quantizer>();
+#ifdef HAS_USEARCH
+            } else if (config.quantizer_type == QuantizerType::hnsw_sq8) {
+                quantizer = std::make_unique<HNSWSQ8Quantizer>(
+                    config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search
+                );
+#endif
             } else if (config.quantizer_type == QuantizerType::lvq4) {
                 quantizer = std::make_unique<LVQ4Quantizer>();
             } else if (config.quantizer_type == QuantizerType::rabitq) {
