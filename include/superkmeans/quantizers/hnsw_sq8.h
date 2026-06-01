@@ -168,14 +168,12 @@ class HNSWSQ8Quantizer : public IQuantizer<Quantization::u8> {
 
         {
             SKM_PROFILE_SCOPE("HNSW_SQ8::FindNearestNeighbor/construction");
-            // Sequential add: parallel add to USearch produces unreachable nodes
-            // (~2% of n_y end up disconnected from the entry point's graph),
-            // which causes many empty clusters and runaway split counts in k-means.
+#pragma omp parallel for if (g_n_threads > 1) num_threads(g_n_threads)
             for (size_t i = 0; i < n_y; ++i) {
                 index.add(
                     static_cast<unum::usearch::default_key_t>(i),
                     y + i * d,
-                    0
+                    static_cast<size_t>(omp_get_thread_num())
                 );
             }
         }
