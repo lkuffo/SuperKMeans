@@ -125,7 +125,8 @@ const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
 // PQ subspace counts to sweep over
 const std::vector<uint32_t> PQ8_M_VALUES = {32, 64};
-const std::vector<uint32_t> PQ4_M_VALUES = {32, 64, 96, 128};
+// const std::vector<uint32_t> PQ4_M_VALUES = {32, 64, 96, 128};
+const std::vector<uint32_t> PQ4_M_VALUES = {256};
 
 // Target dimensionalities for PCA/JLT preprocessing (multiples of 64 up to 2048)
 const std::vector<size_t> TARGET_D_VALUES = {

@@ -225,11 +225,14 @@ void RunPipeline(
         const skmeans::SuperKMeansConfig& cfg,
         const std::string& profiler_train_json,
         const std::string& profiler_assign_json,
-        const std::string& profiler_q_assign_json
+        const std::string& profiler_q_assign_json,
+        const float* eval_data,
+        const float* eval_queries,
+        size_t eval_d
     ) {
-        // Compute WCSS in full-d space
+        // Compute WCSS in the eval space (full-d for rows 1/2, projected-d for row 3)
         double wcss_assign = SKM_f32::ComputeWCSS(
-            data.data(), full_d_centroids, assignments.data(), n, d
+            eval_data, full_d_centroids, assignments.data(), n, eval_d
         );
         std::cout << "WCSS (Assign): " << std::fixed << std::setprecision(2)
                   << wcss_assign << std::endl;
@@ -237,7 +240,7 @@ void RunPipeline(
         double wcss_q_assign = -1.0;
         if (!q_assignments.empty()) {
             wcss_q_assign = SKM_f32::ComputeWCSS(
-                data.data(), full_d_centroids, q_assignments.data(), n, d
+                eval_data, full_d_centroids, q_assignments.data(), n, eval_d
             );
             std::cout << "WCSS (QuantizedAssign): " << std::fixed << std::setprecision(2)
                       << wcss_q_assign << std::endl;
@@ -269,12 +272,12 @@ void RunPipeline(
 
         if (has_gt) {
             assign_r10 = bench_utils::compute_recall(
-                gt_map, assignments, queries.data(), full_d_centroids,
-                n_queries, n_clusters, d, 10
+                gt_map, assignments, eval_queries, full_d_centroids,
+                n_queries, n_clusters, eval_d, 10
             );
             assign_r100 = bench_utils::compute_recall(
-                gt_map, assignments, queries.data(), full_d_centroids,
-                n_queries, n_clusters, d, 100
+                gt_map, assignments, eval_queries, full_d_centroids,
+                n_queries, n_clusters, eval_d, 100
             );
             std::cout << "  [Assign()]" << std::endl;
             bench_utils::print_recall_results(assign_r10, 10);
@@ -282,12 +285,12 @@ void RunPipeline(
 
             if (!q_assignments.empty()) {
                 q_assign_r10 = bench_utils::compute_recall(
-                    gt_map, q_assignments, queries.data(), full_d_centroids,
-                    n_queries, n_clusters, d, 10
+                    gt_map, q_assignments, eval_queries, full_d_centroids,
+                    n_queries, n_clusters, eval_d, 10
                 );
                 q_assign_r100 = bench_utils::compute_recall(
-                    gt_map, q_assignments, queries.data(), full_d_centroids,
-                    n_queries, n_clusters, d, 100
+                    gt_map, q_assignments, eval_queries, full_d_centroids,
+                    n_queries, n_clusters, eval_d, 100
                 );
                 std::cout << "  [QuantizedAssign()]" << std::endl;
                 bench_utils::print_recall_results(q_assign_r10, 10);
@@ -491,10 +494,12 @@ void RunPipeline(
                 kmeans.iteration_stats,
                 assignments, q_assignments,
                 working_centroids.data(), "none", config,
-                profiler_train_json, profiler_assign_json, profiler_q_assign_json
+                profiler_train_json, profiler_assign_json, profiler_q_assign_json,
+                data.data(), queries.data(), d
             );
 
         } else {
+#if 0
             // ── PREPROCESSING: two rows per target_d (except matryoshka: only recompute) ──
 
             // --- Row 1: UNPROJECT=true (PCA/JLT only — matryoshka has no inverse) ---
@@ -550,7 +555,8 @@ void RunPipeline(
                     kmeans.iteration_stats,
                     assignments_unproj, q_assignments_unproj,
                     full_d_centroids.data(), "true", config,
-                    profiler_train_json, profiler_assign_json_u, profiler_q_assign_json_u
+                    profiler_train_json, profiler_assign_json_u, profiler_q_assign_json_u,
+                    data.data(), queries.data(), d
                 );
             }
 
@@ -599,7 +605,58 @@ void RunPipeline(
                 kmeans.iteration_stats,
                 assignments_nounproj, q_assignments,
                 recomputed_centroids.data(), "false", config,
-                profiler_train_json, profiler_assign_json_n, profiler_q_assign_json_n
+                profiler_train_json, profiler_assign_json_n, profiler_q_assign_json_n,
+                data.data(), queries.data(), d
+            );
+#endif
+
+            // --- Row 3: UNPROJECT=projected (keep centroids in reduced-d space) ---
+            std::cout << "\n--- UNPROJECT=projected ---" << std::endl;
+
+            // Project queries into the target_d space (same transform as data).
+            std::vector<float> projected_queries(n_queries * target_d);
+            if (dim_reduction == "pca") {
+                pca_holder->apply_noalloc(
+                    n_queries, queries.data(), projected_queries.data()
+                );
+            } else if (dim_reduction == "jlt") {
+                Eigen::Map<const MatrixR> qm(queries.data(), n_queries, d);
+                Eigen::Map<MatrixR> pqm(projected_queries.data(), n_queries, target_d);
+                pqm.noalias() = qm * jl_matrix.transpose();
+            } else { // mat
+                for (size_t i = 0; i < n_queries; ++i) {
+                    std::copy_n(queries.data() + i * d, target_d,
+                                projected_queries.data() + i * target_d);
+                }
+            }
+
+            // Re-run Assign in projected space for a clean profiler bucket
+            // (the projected_assignments from UNPROJECT=false shared its profile
+            // with the subsequent full-d Assign).
+            auto assignments_proj = kmeans.Assign(
+                projected_data.data(), working_centroids.data(), n, n_clusters
+            );
+            std::string profiler_assign_json_p = skmeans::Profiler::Get().ToJson();
+            skmeans::Profiler::Get().Reset();
+
+            std::vector<uint32_t> q_assignments_proj;
+            std::string profiler_q_assign_json_p;
+            if (has_quantizer) {
+                q_assignments_proj = kmeans.QuantizedAssign(
+                    projected_data.data(), working_centroids.data(), n, n_clusters
+                );
+                profiler_q_assign_json_p = skmeans::Profiler::Get().ToJson();
+                skmeans::Profiler::Get().Reset();
+            }
+
+            write_row(
+                target_d, construction_time_ms, preprocess_timer.GetMilliseconds(),
+                actual_iterations,
+                kmeans.iteration_stats,
+                assignments_proj, q_assignments_proj,
+                working_centroids.data(), "projected", config,
+                profiler_train_json, profiler_assign_json_p, profiler_q_assign_json_p,
+                projected_data.data(), projected_queries.data(), target_d
             );
         }
     }
