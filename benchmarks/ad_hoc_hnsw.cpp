@@ -37,12 +37,15 @@ int main(int argc, char* argv[]) {
     int hnsw_ef_construction = (argc > 3) ? std::stoi(argv[3]) : 40;
     int hnsw_ef_search = (argc > 4) ? std::stoi(argv[4]) : 16;
     bool hnsw_use_warm_start = (argc > 5) && std::string(argv[5]) == "true";
+    // Backend selector: "f32" (default) or "sq8"
+    std::string hnsw_backend = (argc > 6) ? std::string(argv[6]) : std::string("f32");
 
     std::cout << "=== Running algorithm: " << algorithm << " ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters
               << " sampling_fraction=" << sampling_fraction << "\n";
-    std::cout << "HNSW: M=" << hnsw_M
+    std::cout << "HNSW: backend=" << hnsw_backend
+              << " M=" << hnsw_M
               << " efConstruction=" << hnsw_ef_construction
               << " efSearch=" << hnsw_ef_search
               << " warm_start=" << (hnsw_use_warm_start ? "true" : "false") << "\n";
@@ -84,7 +87,11 @@ int main(int argc, char* argv[]) {
     config.sampling_fraction = sampling_fraction;
     config.tol = 1e-3f;
     // HNSW path is wired through the f32 quantization domain
-    config.quantizer_type = skmeans::QuantizerType::hnsw;
+    if (hnsw_backend == "sq8") {
+        config.quantizer_type = skmeans::QuantizerType::hnsw_sq8;
+    } else {
+        config.quantizer_type = skmeans::QuantizerType::hnsw;
+    }
     config.hnsw_M = hnsw_M;
     config.hnsw_ef_construction = hnsw_ef_construction;
     config.hnsw_ef_search = hnsw_ef_search;

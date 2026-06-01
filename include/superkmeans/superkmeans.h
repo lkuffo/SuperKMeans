@@ -25,6 +25,7 @@
 #include "superkmeans/quantizers/pq8.h"
 #include "superkmeans/quantizers/pq4.h"
 #include "superkmeans/quantizers/hnsw.h"
+#include "superkmeans/quantizers/hnsw_sq8.h"
 #endif
 
 namespace skmeans {
@@ -374,6 +375,11 @@ class SuperKMeans {
 #ifdef HAS_FAISS
             if (config.quantizer_type == QuantizerType::hnsw) {
                 quantizer = std::make_unique<HNSWQuantizer>(
+                    config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search,
+                    config.hnsw_use_warm_start
+                );
+            } else if (config.quantizer_type == QuantizerType::hnsw_sq8) {
+                quantizer = std::make_unique<HNSWSQ8Quantizer>(
                     config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search,
                     config.hnsw_use_warm_start
                 );
