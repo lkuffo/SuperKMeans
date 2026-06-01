@@ -166,6 +166,10 @@ int main(int argc, char* argv[]) {
     config.tol = 1e-3f;
     if (hnsw_backend == "sq8") {
         config.quantizer_type = skmeans::QuantizerType::hnsw_sq8;
+        // Route centroid updates through the u8 accumulator in HNSWSQ8Quantizer,
+        // matching the sq8 vanilla path. Without this the framework falls back
+        // to F32Quantizer::UpdateCentroids on the raw float data.
+        config.quantized_centroid_update = true;
     } else {
         config.quantizer_type = skmeans::QuantizerType::hnsw;
     }
