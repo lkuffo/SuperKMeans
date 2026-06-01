@@ -45,8 +45,10 @@ class HNSWFaissSQ8Quantizer : public IQuantizer<Quantization::u8> {
 
     static constexpr uint8_t MAX_VALUE = 255;
 
-    HNSWFaissSQ8Quantizer(int hnsw_M = 32, int ef_construction = 40, int ef_search = 16)
-        : hnsw_M(hnsw_M), ef_construction(ef_construction), ef_search(ef_search) {}
+    HNSWFaissSQ8Quantizer(int hnsw_M = 32, int ef_construction = 40, int ef_search = 16,
+                          bool use_warm_start = false)
+        : hnsw_M(hnsw_M), ef_construction(ef_construction), ef_search(ef_search),
+          use_warm_start(use_warm_start) {}
 
     void Fit(const float* embeddings, size_t n, size_t d) override {
         SKM_PROFILE_SCOPE("HNSW_FAISS_SQ8::Fit");
@@ -57,6 +59,7 @@ class HNSWFaissSQ8Quantizer : public IQuantizer<Quantization::u8> {
         fitted = true;
         cached_data_ptr = nullptr;
         decoded_data.clear();
+        first_call_done = false;
     }
 
     void Encode(
@@ -175,7 +178,44 @@ class HNSWFaissSQ8Quantizer : public IQuantizer<Quantization::u8> {
         }
 
         std::unique_ptr<faiss::idx_t[]> labels(new faiss::idx_t[n_x]);
-        {
+        if (use_warm_start && first_call_done) {
+            // Warm-start path: out_knn carries the previous iteration's assignments.
+            // Use them as per-query level-0 entry points; distances to entries are
+            // computed on the decoded floats (same domain FAISS searches in).
+            std::vector<faiss::HNSW::storage_idx_t> entry_points(n_x);
+            std::vector<float> entry_dists(n_x);
+            {
+                SKM_PROFILE_SCOPE("HNSW_FAISS_SQ8::FindNearestNeighbor/entry_points");
+#pragma omp parallel for if (g_n_threads > 1) num_threads(g_n_threads)
+                for (size_t i = 0; i < n_x; ++i) {
+                    uint32_t c = out_knn[i];
+                    if (c >= n_y) c = 0;
+                    entry_points[i] = static_cast<faiss::HNSW::storage_idx_t>(c);
+                    const float* xi = decoded_data.data() + i * d;
+                    const float* yc = y_decoded.data() + c * d;
+                    float dist = 0.0f;
+                    for (size_t j = 0; j < d; ++j) {
+                        float diff = xi[j] - yc[j];
+                        dist += diff * diff;
+                    }
+                    entry_dists[i] = dist;
+                }
+            }
+            {
+                SKM_PROFILE_SCOPE("HNSW_FAISS_SQ8::FindNearestNeighbor/search_level_0");
+                index.search_level_0(
+                    static_cast<faiss::idx_t>(n_x),
+                    decoded_data.data(),
+                    1,
+                    entry_points.data(),
+                    entry_dists.data(),
+                    out_distances,
+                    labels.get(),
+                    /*nprobe=*/1,
+                    /*search_type=*/1
+                );
+            }
+        } else {
             SKM_PROFILE_SCOPE("HNSW_FAISS_SQ8::FindNearestNeighbor/search");
             index.search(
                 static_cast<faiss::idx_t>(n_x),
@@ -188,6 +228,7 @@ class HNSWFaissSQ8Quantizer : public IQuantizer<Quantization::u8> {
         for (size_t i = 0; i < n_x; ++i) {
             out_knn[i] = static_cast<uint32_t>(labels[i]);
         }
+        first_call_done = true;
     }
 
     void ResetCentroidAccumulators(size_t n_clusters, size_t d) override {
@@ -267,6 +308,8 @@ class HNSWFaissSQ8Quantizer : public IQuantizer<Quantization::u8> {
     int hnsw_M;
     int ef_construction;
     int ef_search;
+    bool use_warm_start;
+    mutable bool first_call_done = false;
     mutable std::vector<uint32_t> centroid_accumulators;
     // Pointer-keyed cache for the decoded-float data (built once per Train).
     mutable const quantized_t* cached_data_ptr = nullptr;

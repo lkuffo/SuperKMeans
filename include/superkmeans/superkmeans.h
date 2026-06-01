@@ -400,7 +400,8 @@ class SuperKMeans {
 #ifdef HAS_FAISS
             } else if (config.quantizer_type == QuantizerType::hnsw_faiss_sq8) {
                 quantizer = std::make_unique<HNSWFaissSQ8Quantizer>(
-                    config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search
+                    config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search,
+                    config.hnsw_use_warm_start
                 );
 #endif
             } else if (config.quantizer_type == QuantizerType::lvq4) {

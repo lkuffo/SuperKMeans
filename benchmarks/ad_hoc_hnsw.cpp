@@ -193,7 +193,7 @@ int main(int argc, char* argv[]) {
     }
 
     const float* q_ptr = have_queries ? queries.data() : nullptr;
-    if (hnsw_backend == "sq8") {
+    if (hnsw_backend == "sq8" || hnsw_backend == "faiss_sq8") {
         RunHNSW<skmeans::Quantization::u8>(
             dataset, data.data(), n, d, q_ptr, n_queries, n_clusters, config
         );
