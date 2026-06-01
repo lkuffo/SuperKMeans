@@ -170,6 +170,9 @@ int main(int argc, char* argv[]) {
         // matching the sq8 vanilla path. Without this the framework falls back
         // to F32Quantizer::UpdateCentroids on the raw float data.
         config.quantized_centroid_update = true;
+    } else if (hnsw_backend == "faiss_sq8") {
+        config.quantizer_type = skmeans::QuantizerType::hnsw_faiss_sq8;
+        config.quantized_centroid_update = true;
     } else {
         config.quantizer_type = skmeans::QuantizerType::hnsw;
     }
