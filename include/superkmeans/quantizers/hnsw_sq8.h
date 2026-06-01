@@ -168,12 +168,14 @@ class HNSWSQ8Quantizer : public IQuantizer<Quantization::u8> {
 
         {
             SKM_PROFILE_SCOPE("HNSW_SQ8::FindNearestNeighbor/construction");
-#pragma omp parallel for if (g_n_threads > 1) num_threads(g_n_threads)
+            // Sequential add: parallel add to USearch produces unreachable nodes
+            // (~2% of n_y end up disconnected from the entry point's graph),
+            // which causes many empty clusters and runaway split counts in k-means.
             for (size_t i = 0; i < n_y; ++i) {
                 index.add(
                     static_cast<unum::usearch::default_key_t>(i),
                     y + i * d,
-                    static_cast<size_t>(omp_get_thread_num())
+                    0
                 );
             }
         }
@@ -188,14 +190,9 @@ class HNSWSQ8Quantizer : public IQuantizer<Quantization::u8> {
                     x + i * d, 1,
                     static_cast<size_t>(omp_get_thread_num())
                 );
-                if (SKM_LIKELY(result.size() > 0)) {
-                    out_knn[i] = static_cast<uint32_t>(result[0].member.key);
-                    // USearch returns L2² in u8 space; convert back to float space.
-                    out_distances[i] = inv_scale_sq * static_cast<float>(result[0].distance);
-                } else {
-                    out_knn[i] = 0;
-                    out_distances[i] = std::numeric_limits<float>::max();
-                }
+                out_knn[i] = static_cast<uint32_t>(result[0].member.key);
+                // USearch returns L2² in u8 space; convert back to float space.
+                out_distances[i] = inv_scale_sq * static_cast<float>(result[0].distance);
             }
         }
     }
