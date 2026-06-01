@@ -127,7 +127,11 @@ void RunPipeline(
     bool quantized_centroid_update,
     bool full_precision_final_centroids,
     bool use_blas_only,
-    uint32_t pq_m = 16
+    uint32_t pq_m = 16,
+    int hnsw_M = 32,
+    int hnsw_ef_construction = 40,
+    int hnsw_ef_search = 16,
+    bool hnsw_use_warm_start = false
 ) {
     using SKM = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>;
 
@@ -147,7 +151,8 @@ void RunPipeline(
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
-    const bool has_quantizer = (quantizer_name != "f32");
+    const bool is_hnsw = (quantizer_name == "hnsw");
+    const bool has_quantizer = (quantizer_name != "f32" && !is_hnsw);
     const bool is_raw = (dim_reduction == "raw");
     const bool is_pq = (quantizer_name == "pq8" || quantizer_name == "pq4");
     const std::string experiment_name =
@@ -318,20 +323,27 @@ void RunPipeline(
 
         // Build human-readable run label (matches accelerators.sh echo strings)
         std::string dim_label = is_raw ? "raw" : dim_reduction;
-        std::string quant_label = quantizer_name;
-        std::string update_label;
-        if (quantizer_name == "f32") {
-            update_label = "";
-        } else if (cfg.quantized_centroid_update && cfg.full_precision_final_centroids) {
-            update_label = " / quant-update + full-prec-final";
-        } else if (cfg.quantized_centroid_update) {
-            update_label = " / quant-update";
+        std::string run_label;
+        if (is_hnsw) {
+            run_label = dim_label + " / f32 / hnsw"
+                        + " / efs=" + std::to_string(hnsw_ef_search)
+                        + " / ws=" + (hnsw_use_warm_start ? "true" : "false");
         } else {
-            update_label = " / no-quant-update";
+            std::string quant_label = quantizer_name;
+            std::string update_label;
+            if (quantizer_name == "f32") {
+                update_label = "";
+            } else if (cfg.quantized_centroid_update && cfg.full_precision_final_centroids) {
+                update_label = " / quant-update + full-prec-final";
+            } else if (cfg.quantized_centroid_update) {
+                update_label = " / quant-update";
+            } else {
+                update_label = " / no-quant-update";
+            }
+            std::string path_label = cfg.use_blas_only ? " / blas-only" : " / pruning";
+            run_label = dim_label + " / " + quant_label
+                       + update_label + path_label;
         }
-        std::string path_label = cfg.use_blas_only ? " / blas-only" : " / pruning";
-        std::string run_label = dim_label + " / " + quant_label
-                               + update_label + path_label;
 
         bench_utils::write_results_to_csv_v2(
             experiment_name, algorithm, dataset,
@@ -433,6 +445,13 @@ void RunPipeline(
             config.quantizer_type = skmeans::QuantizerType::pq8;
         else if (quantizer_name == "pq4")
             config.quantizer_type = skmeans::QuantizerType::pq4;
+        else if (quantizer_name == "hnsw") {
+            config.quantizer_type = skmeans::QuantizerType::hnsw;
+            config.hnsw_M = hnsw_M;
+            config.hnsw_ef_construction = hnsw_ef_construction;
+            config.hnsw_ef_search = hnsw_ef_search;
+            config.hnsw_use_warm_start = hnsw_use_warm_start;
+        }
 
         // PQ relies on subspace dimension structure — skip DCT rotation
         if (is_pq) {
@@ -499,7 +518,6 @@ void RunPipeline(
             );
 
         } else {
-#if 0
             // ── PREPROCESSING: two rows per target_d (except matryoshka: only recompute) ──
 
             // --- Row 1: UNPROJECT=true (PCA/JLT only — matryoshka has no inverse) ---
@@ -608,7 +626,6 @@ void RunPipeline(
                 profiler_train_json, profiler_assign_json_n, profiler_q_assign_json_n,
                 data.data(), queries.data(), d
             );
-#endif
 
             // --- Row 3: UNPROJECT=projected (keep centroids in reduced-d space) ---
             std::cout << "\n--- UNPROJECT=projected ---" << std::endl;
@@ -669,7 +686,7 @@ void RunPipeline(
 int main(int argc, char* argv[]) {
     if (argc < 7) {
         std::cerr << "Usage: " << argv[0]
-                  << " <dataset> <pca|jlt|mat|raw> <f32|sq8|sq4|rabitq|lvq4|pq8|pq4>"
+                  << " <dataset> <pca|jlt|mat|raw> <f32|sq8|sq4|rabitq|lvq4|pq8|pq4|hnsw>"
                   << " <quantized_centroid_update=true|false>"
                   << " <full_precision_final_centroids=true|false>"
                   << " <use_blas_only=true|false>"
@@ -698,6 +715,20 @@ int main(int argc, char* argv[]) {
             dataset, dim_reduction, quantizer,
             quantized_centroid_update, full_precision_final_centroids, use_blas_only
         );
+    } else if (quantizer == "hnsw") {
+        for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
+            for (bool ws : {false, true}) {
+                RunPipeline<skmeans::Quantization::f32>(
+                    dataset, dim_reduction, quantizer,
+                    quantized_centroid_update, full_precision_final_centroids, use_blas_only,
+                    /*pq_m=*/16,
+                    bench_utils::HNSW_M,
+                    bench_utils::HNSW_EF_CONSTRUCTION,
+                    efs,
+                    ws
+                );
+            }
+        }
     } else if (quantizer == "sq8") {
         RunPipeline<skmeans::Quantization::u8>(
             dataset, dim_reduction, quantizer,
@@ -745,7 +776,7 @@ int main(int argc, char* argv[]) {
         }
     } else {
         std::cerr << "Invalid quantizer: " << quantizer
-                  << " (expected: f32, sq8, sq4, rabitq, lvq4, pq8, pq4)\n";
+                  << " (expected: f32, sq8, sq4, rabitq, lvq4, pq8, pq4, hnsw)\n";
         return 1;
     }
 

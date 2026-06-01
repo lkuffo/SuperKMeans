@@ -128,6 +128,11 @@ const std::vector<uint32_t> PQ8_M_VALUES = {32, 64};
 // const std::vector<uint32_t> PQ4_M_VALUES = {32, 64, 96, 128};
 const std::vector<uint32_t> PQ4_M_VALUES = {256};
 
+// HNSW efSearch values to sweep over (with fixed M and efConstruction below)
+const std::vector<int> HNSW_EF_SEARCH_VALUES = {4, 8, 16, 32};
+const int HNSW_M = 16;
+const int HNSW_EF_CONSTRUCTION = 128;
+
 // Target dimensionalities for PCA/JLT preprocessing (multiples of 64 up to 2048)
 const std::vector<size_t> TARGET_D_VALUES = {
     32, 64, 96, 128, 192, 256, 320, 384, 512, 768, 1024

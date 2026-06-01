@@ -84,11 +84,6 @@ for DATASET in "${DATASETS[@]}"; do
     echo "# DATASET: $DATASET"
     echo "######################################################################"
 
-    run "pca / f32 / pruning"                                                    "$DATASET" pca f32 false false false
-    run "raw / pq4 / sparse-voting / blas-only / M sweep"                        "$DATASET" raw pq4 true false true
-    run "raw / pq4 / sparse-voting + full-prec-final / blas-only / M sweep"      "$DATASET" raw pq4 true true true
-    continue
-
     # ==================================================================
     #  RAW (no dimensionality reduction)
     # ==================================================================
@@ -96,6 +91,9 @@ for DATASET in "${DATASETS[@]}"; do
     # ── raw + f32 ──
     run "raw / f32 / pruning"                                       "$DATASET" raw f32 false false false
     run "raw / f32 / blas-only"                                     "$DATASET" raw f32 false false true
+
+    # ── raw + hnsw (no pruning support — blas-only path) ──
+    run "raw / f32 / hnsw"                                          "$DATASET" raw hnsw false false true
 
     # ── raw + sq8 ──
     # run "raw / sq8 / no-quant-update / pruning"                     "$DATASET" raw sq8 false false false

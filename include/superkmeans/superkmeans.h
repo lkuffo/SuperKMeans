@@ -24,6 +24,7 @@
 #ifdef HAS_FAISS
 #include "superkmeans/quantizers/pq8.h"
 #include "superkmeans/quantizers/pq4.h"
+#include "superkmeans/quantizers/hnsw.h"
 #endif
 
 namespace skmeans {
@@ -45,6 +46,14 @@ struct SuperKMeansConfig {
     bool use_blas_only = false; // Use BLAS-only computation for all iterations
     QuantizerType quantizer_type = QuantizerType::none; // Quantization method
     uint32_t pq_m = 16; // Number of PQ subspaces (d must be divisible by pq_m). Ignored if not PQ.
+    // HNSW "quantizer" parameters (only used when quantizer_type == hnsw)
+    int hnsw_M = 32;
+    int hnsw_ef_construction = 40;
+    int hnsw_ef_search = 16;
+    // Warm-start: after the first iteration, use the previous assignment
+    // (which arrives in out_knn) as the per-query entry point via
+    // IndexHNSW::search_level_0 instead of the regular hierarchical search.
+    bool hnsw_use_warm_start = false;
 
     // Convergence parameters
     float tol = 1e-4f;                  // Tolerance for shift-based early termination
@@ -362,7 +371,17 @@ class SuperKMeans {
 
         // Create quantizer for all q types
         if constexpr (q == Quantization::f32) {
-            quantizer = std::make_unique<F32Quantizer>();
+#ifdef HAS_FAISS
+            if (config.quantizer_type == QuantizerType::hnsw) {
+                quantizer = std::make_unique<HNSWQuantizer>(
+                    config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search,
+                    config.hnsw_use_warm_start
+                );
+            } else
+#endif
+            {
+                quantizer = std::make_unique<F32Quantizer>();
+            }
         } else if constexpr (q == Quantization::u4) {
             quantizer = std::make_unique<SQ4Quantizer>();
         } else {
