@@ -15,6 +15,7 @@
 #include "bench_utils.h"
 #include "superkmeans/common.h"
 #include "superkmeans/superkmeans.h"
+#include "superkmeans/hierarchical_superkmeans.h"
 
 #include <Eigen/Dense>
 #include <faiss/VectorTransform.h>
@@ -151,8 +152,15 @@ void RunPipeline(
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
-    const bool is_hnsw = (quantizer_name == "hnsw");
-    const bool has_quantizer = (quantizer_name != "f32" && !is_hnsw);
+    const bool is_hnsw = (quantizer_name == "hnsw"
+                         || quantizer_name == "hnsw_sq8"
+                         || quantizer_name == "hnsw_faiss_sq8");
+    const bool is_hnsw_sq8 = (quantizer_name == "hnsw_sq8"
+                              || quantizer_name == "hnsw_faiss_sq8");
+    // For HNSW variants, QuantizedAssign re-invokes the quantizer's
+    // FindNearestNeighbor — i.e. the HNSW search path — which is the metric
+    // we actually want to measure. Enable it for all HNSW variants.
+    const bool has_quantizer = (quantizer_name != "f32");
     const bool is_raw = (dim_reduction == "raw");
     const bool is_pq = (quantizer_name == "pq8" || quantizer_name == "pq4");
     const std::string experiment_name =
@@ -325,7 +333,20 @@ void RunPipeline(
         std::string dim_label = is_raw ? "raw" : dim_reduction;
         std::string run_label;
         if (is_hnsw) {
-            run_label = dim_label + " / f32 / hnsw"
+            std::string algo_label;
+            std::string quant_layer;
+            if (quantizer_name == "hnsw") {
+                algo_label = "hnsw";
+                quant_layer = "f32";
+            } else if (quantizer_name == "hnsw_sq8") {
+                algo_label = "hnsw_usearch";
+                quant_layer = "sq8";
+            } else { // hnsw_faiss_sq8
+                algo_label = "hnsw_faiss";
+                quant_layer = "sq8";
+            }
+            run_label = dim_label + " / " + quant_layer + " / " + algo_label
+                        + " / efc=" + std::to_string(hnsw_ef_construction)
                         + " / efs=" + std::to_string(hnsw_ef_search)
                         + " / ws=" + (hnsw_use_warm_start ? "true" : "false");
         } else {
@@ -451,6 +472,22 @@ void RunPipeline(
             config.hnsw_ef_construction = hnsw_ef_construction;
             config.hnsw_ef_search = hnsw_ef_search;
             config.hnsw_use_warm_start = hnsw_use_warm_start;
+        }
+        else if (quantizer_name == "hnsw_sq8") {
+            config.quantizer_type = skmeans::QuantizerType::hnsw_sq8;
+            config.hnsw_M = hnsw_M;
+            config.hnsw_ef_construction = hnsw_ef_construction;
+            config.hnsw_ef_search = hnsw_ef_search;
+            // USearch does not support per-query entry points; warm-start ignored.
+            config.quantized_centroid_update = true;
+        }
+        else if (quantizer_name == "hnsw_faiss_sq8") {
+            config.quantizer_type = skmeans::QuantizerType::hnsw_faiss_sq8;
+            config.hnsw_M = hnsw_M;
+            config.hnsw_ef_construction = hnsw_ef_construction;
+            config.hnsw_ef_search = hnsw_ef_search;
+            config.hnsw_use_warm_start = hnsw_use_warm_start;
+            config.quantized_centroid_update = true;
         }
 
         // PQ relies on subspace dimension structure — skip DCT rotation
@@ -680,13 +717,224 @@ void RunPipeline(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Hierarchical pipeline (raw only, f32 or sq8 only)
+//
+// Kept separate from RunPipeline because:
+//   - No dimensionality reduction is exercised (raw input).
+//   - Only f32 and sq8 quantizers are supported.
+//   - Uses HierarchicalSuperKMeans (meso + fine + refine) rather than the
+//     flat SuperKMeans, so the config type differs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+template <skmeans::Quantization Q>
+void RunHierarchicalPipeline(
+    const std::string& dataset,
+    const std::string& quantizer_name,
+    bool use_blas_only
+) {
+    using HSKM = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>;
+
+    skmeans::Profiler::Get().Reset();
+
+    auto it = bench_utils::DATASET_PARAMS.find(dataset);
+    if (it == bench_utils::DATASET_PARAMS.end()) {
+        std::cerr << "Unknown dataset '" << dataset << "'\n";
+        return;
+    }
+    const size_t n = it->second.first;
+    const size_t d = it->second.second;
+    const size_t n_queries = bench_utils::N_QUERIES;
+    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
+    const int n_iters = bench_utils::MAX_ITERS; // base SKM iters (per refinement pass)
+    const size_t THREADS = omp_get_max_threads();
+    omp_set_num_threads(THREADS);
+
+    const bool has_quantizer = (quantizer_name != "f32");
+    const std::string experiment_name = "accelerators_raw_" + quantizer_name + "_hsk";
+    const std::string algorithm = "hierarchical_superkmeans";
+
+    std::cout << "=== Hierarchical Accelerators Benchmark ===" << std::endl;
+    std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")" << std::endl;
+    std::cout << "Quantizer: " << quantizer_name
+              << " use_blas_only=" << use_blas_only << std::endl;
+    std::cout << "n_clusters=" << n_clusters << " threads=" << THREADS << std::endl;
+
+    std::vector<float> data(n * d);
+    std::vector<float> queries(n_queries * d);
+    {
+        std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
+        if (!f) { std::cerr << "Failed to open data file\n"; return; }
+        f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
+    }
+    {
+        std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
+        if (!f) { std::cerr << "Failed to open query file\n"; return; }
+        f.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
+    }
+
+    bool is_angular = std::find(
+        bench_utils::ANGULAR_DATASETS.begin(),
+        bench_utils::ANGULAR_DATASETS.end(), dataset
+    ) != bench_utils::ANGULAR_DATASETS.end();
+
+    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    bool has_gt = std::ifstream(gt_filename).good();
+    std::unordered_map<int, std::vector<int>> gt_map;
+    if (has_gt) gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+
+    skmeans::HierarchicalSuperKMeansConfig config;
+    config.iters = n_iters;
+    config.verbose = true;
+    config.verbose_detail = true;
+    config.n_threads = THREADS;
+    config.unrotate_centroids = true;
+    config.early_termination = false;
+    config.sampling_fraction = 1.0f;
+    config.tol = 1e-3f;
+    config.use_blas_only = use_blas_only;
+    if (quantizer_name == "sq8") {
+        config.quantizer_type = skmeans::QuantizerType::sq8;
+        config.quantized_centroid_update = true;
+    }
+    config.angular = is_angular;
+    if (is_angular) std::cout << "Using spherical k-means" << std::endl;
+    // Hierarchical-specific (defaults taken from ad_hoc_hierarchical_superkmeans*.cpp)
+    config.iters_mesoclustering = 3;
+    config.iters_fineclustering = 5;
+    config.iters_refinement = 0;
+
+    auto kmeans = HSKM(n_clusters, d, config);
+    bench_utils::TicToc train_timer;
+    train_timer.Tic();
+    std::vector<float> centroids = kmeans.Train(data.data(), n);
+    train_timer.Toc();
+    double construction_time_ms = train_timer.GetMilliseconds();
+    std::string profiler_train_json = skmeans::Profiler::Get().ToJson();
+    skmeans::Profiler::Get().Reset();
+
+    std::cout << "Training completed in " << construction_time_ms << " ms" << std::endl;
+    std::cout << "Iteration config: meso=" << config.iters_mesoclustering
+              << ", fine=" << config.iters_fineclustering
+              << ", refine=" << config.iters_refinement << "\n";
+
+    // ── Final assignments ──
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    std::string profiler_assign_json = skmeans::Profiler::Get().ToJson();
+    skmeans::Profiler::Get().Reset();
+
+    std::vector<uint32_t> q_assignments;
+    std::string profiler_q_assign_json;
+    if (has_quantizer) {
+        q_assignments = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
+        profiler_q_assign_json = skmeans::Profiler::Get().ToJson();
+        skmeans::Profiler::Get().Reset();
+    }
+
+    double wcss_assign = SKM_f32::ComputeWCSS(
+        data.data(), centroids.data(), assignments.data(), n, d
+    );
+    std::cout << "WCSS (Assign): " << std::fixed << std::setprecision(2)
+              << wcss_assign << std::endl;
+    double wcss_q_assign = -1.0;
+    if (!q_assignments.empty()) {
+        wcss_q_assign = SKM_f32::ComputeWCSS(
+            data.data(), centroids.data(), q_assignments.data(), n, d
+        );
+        std::cout << "WCSS (QuantizedAssign): " << std::fixed << std::setprecision(2)
+                  << wcss_q_assign << std::endl;
+    }
+
+    auto balance_stats = SKM_f32::GetClustersBalanceStats(
+        assignments.data(), n, n_clusters
+    );
+    balance_stats.print();
+    std::string q_balance_stats_json;
+    if (!q_assignments.empty()) {
+        auto q_balance_stats = SKM_f32::GetClustersBalanceStats(
+            q_assignments.data(), n, n_clusters
+        );
+        q_balance_stats.print();
+        q_balance_stats_json = q_balance_stats.to_json();
+    }
+
+    bench_utils::recall_results_t assign_r10, assign_r100, q_assign_r10, q_assign_r100;
+    if (has_gt) {
+        assign_r10 = bench_utils::compute_recall(
+            gt_map, assignments, queries.data(), centroids.data(),
+            n_queries, n_clusters, d, 10
+        );
+        assign_r100 = bench_utils::compute_recall(
+            gt_map, assignments, queries.data(), centroids.data(),
+            n_queries, n_clusters, d, 100
+        );
+        std::cout << "  [Assign()]" << std::endl;
+        bench_utils::print_recall_results(assign_r10, 10);
+        bench_utils::print_recall_results(assign_r100, 100);
+        if (!q_assignments.empty()) {
+            q_assign_r10 = bench_utils::compute_recall(
+                gt_map, q_assignments, queries.data(), centroids.data(),
+                n_queries, n_clusters, d, 10
+            );
+            q_assign_r100 = bench_utils::compute_recall(
+                gt_map, q_assignments, queries.data(), centroids.data(),
+                n_queries, n_clusters, d, 100
+            );
+            std::cout << "  [QuantizedAssign()]" << std::endl;
+            bench_utils::print_recall_results(q_assign_r10, 10);
+            bench_utils::print_recall_results(q_assign_r100, 100);
+        }
+    }
+
+    auto config_dict = BuildConfigDict(
+        /*dim_reduction=*/"none",
+        quantizer_name,
+        /*unproject_centroids=*/"none",
+        /*target_d=*/d,
+        config,
+        /*preprocessing_time_ms=*/0.0
+    );
+    config_dict["wcss_assign"] = std::to_string(wcss_assign);
+    if (wcss_q_assign >= 0.0) {
+        config_dict["wcss_quantized_assign"] = std::to_string(wcss_q_assign);
+    }
+    config_dict["iters_mesoclustering"] = std::to_string(config.iters_mesoclustering);
+    config_dict["iters_fineclustering"] = std::to_string(config.iters_fineclustering);
+    config_dict["iters_refinement"] = std::to_string(config.iters_refinement);
+    config_dict["profiler"] = profiler_train_json;
+    config_dict["profiler_assign"] = profiler_assign_json;
+    if (!profiler_q_assign_json.empty()) {
+        config_dict["profiler_quantized_assign"] = profiler_q_assign_json;
+    }
+
+    std::string run_label = "raw / " + quantizer_name + " / hsk"
+                            + (use_blas_only ? " / blas-only" : " / pruning");
+
+    bench_utils::write_results_to_csv_v2(
+        experiment_name, algorithm, dataset,
+        n_iters, /*actual_iterations=*/0,
+        static_cast<int>(d),
+        n, static_cast<int>(n_clusters),
+        construction_time_ms,
+        static_cast<int>(THREADS),
+        wcss_assign,
+        config_dict,
+        assign_r10, assign_r100,
+        q_assign_r10, q_assign_r100,
+        balance_stats.to_json(),
+        q_balance_stats_json,
+        /*iteration_stats_json=*/"",
+        run_label
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main: parse CLI args and dispatch to templated pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
     if (argc < 7) {
         std::cerr << "Usage: " << argv[0]
-                  << " <dataset> <pca|jlt|mat|raw> <f32|sq8|sq4|rabitq|lvq4|pq8|pq4|hnsw>"
+                  << " <dataset> <pca|jlt|mat|raw|hsk> <f32|sq8|sq4|rabitq|lvq4|pq8|pq4|hnsw|hnsw_sq8|hnsw_faiss_sq8>"
                   << " <quantized_centroid_update=true|false>"
                   << " <full_precision_final_centroids=true|false>"
                   << " <use_blas_only=true|false>"
@@ -701,12 +949,30 @@ int main(int argc, char* argv[]) {
     const bool full_precision_final_centroids = ParseBool(argv[5]);
     const bool use_blas_only = ParseBool(argv[6]);
 
-    // Validate dim_reduction
+    // Validate dim_reduction (also accept "hsk" as a sentinel for the
+    // hierarchical pipeline — raw input, no projection).
     if (dim_reduction != "raw" && dim_reduction != "pca" && dim_reduction != "jlt"
-        && dim_reduction != "mat") {
+        && dim_reduction != "mat" && dim_reduction != "hsk") {
         std::cerr << "Invalid dim_reduction: " << dim_reduction
-                  << " (expected: raw, pca, jlt, mat)\n";
+                  << " (expected: raw, pca, jlt, mat, hsk)\n";
         return 1;
+    }
+
+    if (dim_reduction == "hsk") {
+        if (quantizer == "f32") {
+            RunHierarchicalPipeline<skmeans::Quantization::f32>(
+                dataset, quantizer, use_blas_only
+            );
+        } else if (quantizer == "sq8") {
+            RunHierarchicalPipeline<skmeans::Quantization::u8>(
+                dataset, quantizer, use_blas_only
+            );
+        } else {
+            std::cerr << "Hierarchical pipeline only supports f32 and sq8 (got: "
+                      << quantizer << ")\n";
+            return 1;
+        }
+        return 0;
     }
 
     // Validate quantizer and dispatch to correct template instantiation
@@ -716,17 +982,51 @@ int main(int argc, char* argv[]) {
             quantized_centroid_update, full_precision_final_centroids, use_blas_only
         );
     } else if (quantizer == "hnsw") {
-        for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
-            for (bool ws : {false, true}) {
-                RunPipeline<skmeans::Quantization::f32>(
+        for (int efc : bench_utils::HNSW_EF_CONSTRUCTION_VALUES) {
+            for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
+                for (bool ws : {false, true}) {
+                    RunPipeline<skmeans::Quantization::f32>(
+                        dataset, dim_reduction, quantizer,
+                        quantized_centroid_update, full_precision_final_centroids, use_blas_only,
+                        /*pq_m=*/16,
+                        bench_utils::HNSW_M,
+                        efc,
+                        efs,
+                        ws
+                    );
+                }
+            }
+        }
+    } else if (quantizer == "hnsw_sq8") {
+        // USearch backend (symmetric u8). Warm-start unsupported → only ws=false.
+        for (int efc : bench_utils::HNSW_EF_CONSTRUCTION_VALUES) {
+            for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
+                RunPipeline<skmeans::Quantization::u8>(
                     dataset, dim_reduction, quantizer,
                     quantized_centroid_update, full_precision_final_centroids, use_blas_only,
                     /*pq_m=*/16,
                     bench_utils::HNSW_M,
-                    bench_utils::HNSW_EF_CONSTRUCTION,
+                    efc,
                     efs,
-                    ws
+                    /*hnsw_use_warm_start=*/false
                 );
+            }
+        }
+    } else if (quantizer == "hnsw_faiss_sq8") {
+        // FAISS asymmetric SQ8 with f32→sq8→f32 query round-trip.
+        for (int efc : bench_utils::HNSW_EF_CONSTRUCTION_VALUES) {
+            for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
+                for (bool ws : {false, true}) {
+                    RunPipeline<skmeans::Quantization::u8>(
+                        dataset, dim_reduction, quantizer,
+                        quantized_centroid_update, full_precision_final_centroids, use_blas_only,
+                        /*pq_m=*/16,
+                        bench_utils::HNSW_M,
+                        efc,
+                        efs,
+                        ws
+                    );
+                }
             }
         }
     } else if (quantizer == "sq8") {
@@ -776,7 +1076,7 @@ int main(int argc, char* argv[]) {
         }
     } else {
         std::cerr << "Invalid quantizer: " << quantizer
-                  << " (expected: f32, sq8, sq4, rabitq, lvq4, pq8, pq4, hnsw)\n";
+                  << " (expected: f32, sq8, sq4, rabitq, lvq4, pq8, pq4, hnsw, hnsw_sq8, hnsw_faiss_sq8)\n";
         return 1;
     }
 
