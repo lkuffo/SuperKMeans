@@ -15,12 +15,9 @@ template <skmeans::Quantization Q>
 void RunBenchmark(
     const std::string& dataset,
     const std::string& quantizer_name,
-    bool blas_only,
-    uint32_t pq_m
+    bool blas_only
 ) {
     using HSKM = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>;
-
-    const bool is_pq = (quantizer_name == "pq8" || quantizer_name == "pq4");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -31,11 +28,6 @@ void RunBenchmark(
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
 
-    if (is_pq && d % pq_m != 0) {
-        std::cerr << "d=" << d << " is not divisible by M=" << pq_m << "\n";
-        return;
-    }
-
     const size_t n_clusters = bench_utils::get_default_n_clusters(n);
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
@@ -43,9 +35,7 @@ void RunBenchmark(
     omp_set_num_threads(THREADS);
 
     const std::string algorithm = "hierarchical_superkmeans_" + quantizer_name;
-    std::cout << "=== Running algorithm: " << algorithm;
-    if (is_pq) std::cout << " (M=" << pq_m << ", dsub=" << d / pq_m << ")";
-    std::cout << " ===" << std::endl;
+    std::cout << "=== Running algorithm: " << algorithm << " ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "n_clusters=" << n_clusters << " blas_only=" << blas_only << "\n";
 
@@ -86,16 +76,6 @@ void RunBenchmark(
         config.quantizer_type = skmeans::QuantizerType::lvq4;
     else if (quantizer_name == "rabitq")
         config.quantizer_type = skmeans::QuantizerType::rabitq;
-    else if (quantizer_name == "pq8")
-        config.quantizer_type = skmeans::QuantizerType::pq8;
-    else if (quantizer_name == "pq4")
-        config.quantizer_type = skmeans::QuantizerType::pq4;
-    // sq4: inferred from Quantization::u4 template, no explicit quantizer_type needed
-
-    if (is_pq) {
-        config.data_already_rotated = true;
-        config.pq_m = pq_m;
-    }
 
     if (blas_only) {
         std::cout << "BLAS-only mode (no pruning)" << std::endl;
@@ -176,34 +156,21 @@ void RunBenchmark(
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: " << argv[0]
-                  << " <dataset> <sq8|sq4|lvq4|rabitq|pq8|pq4> [pq_m] [pruning]\n";
+                  << " <dataset> <sq8|lvq4|rabitq> [pruning]\n";
         return 1;
     }
 
     const std::string dataset = argv[1];
     const std::string quantizer = argv[2];
 
-    // For PQ: next arg is pq_m (numeric), then optional "pruning"
-    // For others: next arg is optional "pruning"
-    const bool is_pq = (quantizer == "pq8" || quantizer == "pq4");
-    uint32_t pq_m = 16;
     bool blas_only = true;
+    if (argc > 3) blas_only = std::string(argv[3]) != "pruning";
 
-    if (is_pq) {
-        if (argc > 3) pq_m = static_cast<uint32_t>(std::stoi(argv[3]));
-        if (argc > 4) blas_only = std::string(argv[4]) != "pruning";
-    } else {
-        if (argc > 3) blas_only = std::string(argv[3]) != "pruning";
-    }
-
-    if (quantizer == "sq4") {
-        RunBenchmark<skmeans::Quantization::u4>(dataset, quantizer, blas_only, pq_m);
-    } else if (quantizer == "sq8" || quantizer == "lvq4" || quantizer == "rabitq"
-               || quantizer == "pq8" || quantizer == "pq4") {
-        RunBenchmark<skmeans::Quantization::u8>(dataset, quantizer, blas_only, pq_m);
+    if (quantizer == "sq8" || quantizer == "lvq4" || quantizer == "rabitq") {
+        RunBenchmark<skmeans::Quantization::u8>(dataset, quantizer, blas_only);
     } else {
         std::cerr << "Invalid quantizer: " << quantizer
-                  << " (expected: sq8, sq4, lvq4, rabitq, pq8, pq4)\n";
+                  << " (expected: sq8, lvq4, rabitq)\n";
         return 1;
     }
 

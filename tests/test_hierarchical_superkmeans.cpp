@@ -1,3 +1,5 @@
+#undef HAS_FFTW
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -10,6 +12,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "recall_utils.h"
 #include "superkmeans/common.h"
 #include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/pdx/utils.h"
@@ -81,11 +84,12 @@ TEST_F(HierarchicalSuperKMeansTest, BasicTraining_SmallDataset) {
 }
 
 TEST_F(HierarchicalSuperKMeansTest, AllClustersUsed) {
-    const size_t n = 50000;
+    const size_t n = 10000;
     const size_t d = 128;
     const size_t n_clusters = 256;
 
-    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
+    std::vector<float> data =
+        skm_test::LoadTestDataSubdim(CMAKE_SOURCE_DIR "/tests/test_data.bin", n, 1024, d);
 
     skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = 10;
@@ -628,45 +632,46 @@ TEST_F(HierarchicalSuperKMeansTest, AngularMode_Normalizes) {
 namespace {
 
 // Regenerate with: ./generate_wcss_ground_truth_hierarchical.out
-// Generated with: N_SAMPLES=10000, MAX_D=768, N_TRUE_CENTERS=500,
-//   CLUSTER_STD=0.25, CENTER_SPREAD=5.0, SEED=42,
-//   ITERS_MESOCLUSTERING=5, ITERS_FINECLUSTERING=5, ITERS_REFINEMENT=2
+// Data: tests/test_data.bin; ITERS_MESOCLUSTERING=5, ITERS_FINECLUSTERING=5, ITERS_REFINEMENT=2
 
 // clang-format off
 const std::map<std::pair<size_t, size_t>, float> HIERARCHICAL_GROUND_TRUTH = {
     // k=10
-    {{10, 4}, 4.17200e+05f},
-    {{10, 16}, 3.09308e+06f},
-    {{10, 32}, 6.97917e+06f},
-    {{10, 64}, 1.48578e+07f},
-    {{10, 100}, 2.36946e+07f},
-    {{10, 128}, 3.05300e+07f},
-    {{10, 384}, 9.32609e+07f},
-    {{10, 512}, 1.24696e+08f},
-    {{10, 600}, 1.46182e+08f},
-    {{10, 768}, 1.87128e+08f},
+    {{10, 4}, 3.95821e+03f},
+    {{10, 16}, 2.80619e+04f},
+    {{10, 32}, 5.99182e+04f},
+    {{10, 64}, 1.23962e+05f},
+    {{10, 100}, 1.94923e+05f},
+    {{10, 128}, 2.52417e+05f},
+    {{10, 384}, 7.59521e+05f},
+    {{10, 512}, 1.01746e+06f},
+    {{10, 600}, 1.18858e+06f},
+    {{10, 768}, 1.51884e+06f},
+    {{10, 1024}, 2.02314e+06f},
     // k=100
-    {{100, 4}, 9.49318e+04f},
-    {{100, 16}, 1.75924e+06f},
-    {{100, 32}, 4.62554e+06f},
-    {{100, 64}, 1.08717e+07f},
-    {{100, 100}, 1.80489e+07f},
-    {{100, 128}, 2.34050e+07f},
-    {{100, 384}, 7.26805e+07f},
-    {{100, 512}, 9.81000e+07f},
-    {{100, 600}, 1.15641e+08f},
-    {{100, 768}, 1.48115e+08f},
+    {{100, 4}, 1.35213e+03f},
+    {{100, 16}, 2.07180e+04f},
+    {{100, 32}, 4.89141e+04f},
+    {{100, 64}, 1.04607e+05f},
+    {{100, 100}, 1.66228e+05f},
+    {{100, 128}, 2.16121e+05f},
+    {{100, 384}, 6.55114e+05f},
+    {{100, 512}, 8.75961e+05f},
+    {{100, 600}, 1.02503e+06f},
+    {{100, 768}, 1.31593e+06f},
+    {{100, 1024}, 1.74501e+06f},
     // k=250
-    {{250, 4}, 3.13024e+04f},
-    {{250, 16}, 9.07656e+05f},
-    {{250, 32}, 2.58572e+06f},
-    {{250, 64}, 6.24720e+06f},
-    {{250, 100}, 1.04951e+07f},
-    {{250, 128}, 1.37854e+07f},
-    {{250, 384}, 4.43316e+07f},
-    {{250, 512}, 6.14616e+07f},
-    {{250, 600}, 7.19386e+07f},
-    {{250, 768}, 9.33806e+07f},
+    {{250, 4}, 8.43353e+02f},
+    {{250, 16}, 1.78634e+04f},
+    {{250, 32}, 4.45185e+04f},
+    {{250, 64}, 9.64738e+04f},
+    {{250, 100}, 1.54322e+05f},
+    {{250, 128}, 2.00625e+05f},
+    {{250, 384}, 6.10249e+05f},
+    {{250, 512}, 8.14914e+05f},
+    {{250, 600}, 9.57009e+05f},
+    {{250, 768}, 1.22039e+06f},
+    {{250, 1024}, 1.62301e+06f},
 };
 // clang-format on
 
@@ -675,7 +680,7 @@ class HierarchicalWCSSTest : public ::testing::TestWithParam<std::tuple<size_t, 
     void SetUp() override { omp_set_num_threads(1); }
 
     static constexpr size_t N_SAMPLES = 10000;
-    static constexpr size_t MAX_D = 768;
+    static constexpr size_t MAX_D = 1024;
     static constexpr unsigned int SEED = 42;
     static constexpr int ITERS_MESOCLUSTERING = 5;
     static constexpr int ITERS_FINECLUSTERING = 5;
@@ -689,9 +694,7 @@ class HierarchicalWCSSTest : public ::testing::TestWithParam<std::tuple<size_t, 
         std::string data_file = CMAKE_SOURCE_DIR "/tests/test_data.bin";
         std::ifstream in(data_file, std::ios::binary);
         if (!in) {
-            throw std::runtime_error(
-                "Could not open test_data.bin. Run generate_wcss_ground_truth.out first."
-            );
+            throw std::runtime_error("Could not open test_data.bin.");
         }
         full_data_.resize(N_SAMPLES * MAX_D);
         in.read(reinterpret_cast<char*>(full_data_.data()), full_data_.size() * sizeof(float));
@@ -805,12 +808,20 @@ INSTANTIATE_TEST_SUITE_P(
     HierarchicalWCSSTest,
     ::testing::Combine(
         ::testing::Values(10, 100, 250),
-        ::testing::Values(4, 16, 32, 64, 100, 128, 384, 512, 600, 768)
+        ::testing::Values(4, 16, 32, 64, 100, 128, 384, 512, 600, 768, 1024)
     ),
     [](const ::testing::TestParamInfo<HierarchicalWCSSTest::ParamType>& info) {
         return "k" + std::to_string(std::get<0>(info.param)) + "_d" +
                std::to_string(std::get<1>(info.param));
     }
 );
+
+// ── IVF-recall ground truth (test_data.bin, mxbai 10k x 1024) ──
+
+TEST(HierarchicalRecallGroundTruthTest, F32_MatchesGroundTruth) {
+    omp_set_num_threads(1);
+    float recall = skm_test::HierarchicalClusteringRecall(CMAKE_SOURCE_DIR "/tests/test_data.bin");
+    EXPECT_NEAR(recall, skm_test::RECALL_GROUND_TRUTH.at("hierarchical_f32"), skm_test::RECALL_TOL);
+}
 
 } // anonymous namespace

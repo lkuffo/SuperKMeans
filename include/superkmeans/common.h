@@ -111,6 +111,10 @@ static inline constexpr size_t VECTOR_CHUNK_SIZE = Y_BATCH_SIZE;
 
 static inline constexpr size_t SKM_MAX_DIMS = 16384;
 
+// Why 4096? To avoid overflow in RabitQ
+// RaBitQ FastScan accumulates SQ dot products of nibbles into uint16 lanes
+static inline constexpr size_t RABITQ_MAX_DIMS = 4096;
+
 static inline constexpr size_t RECALL_CONVERGENCE_PATIENCE = 2;
 static inline constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 // Epsilon parameter of ADSampling (Reference: https://dl.acm.org/doi/abs/10.1145/3589282)
@@ -144,7 +148,7 @@ enum class DistanceFunction : uint8_t { l2, dp };
 
 enum class Quantization : uint8_t { f32, u8, u4, b8, f16, bf16 };
 
-enum class QuantizerType : uint8_t { none, sq8, sq4, rabitq, pq8, pq4, lvq4, hnsw, hnsw_sq8, hnsw_faiss_sq8 };
+enum class QuantizerType : uint8_t { none, sq8, rabitq, lvq4 };
 
 // Distance type: float for all quantization types.
 // Even u8 GEMM produces integer dot products, but we convert to float L2 distances

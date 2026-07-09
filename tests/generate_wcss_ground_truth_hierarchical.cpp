@@ -13,17 +13,14 @@
 
 int main() {
     constexpr size_t N_SAMPLES = 10000;
-    constexpr size_t MAX_D = 768;
-    constexpr size_t N_TRUE_CENTERS = 500;
-    constexpr float CLUSTER_STD = 0.25f;
-    constexpr float CENTER_SPREAD = 5.0f;
+    constexpr size_t MAX_D = 1024;
     constexpr unsigned int SEED = 42;
     constexpr int ITERS_MESOCLUSTERING = 5;
     constexpr int ITERS_FINECLUSTERING = 5;
     constexpr int ITERS_REFINEMENT = 2;
 
     std::vector<size_t> k_values = {10, 100, 250};
-    std::vector<size_t> d_values = {4, 16, 32, 64, 100, 128, 384, 512, 600, 768};
+    std::vector<size_t> d_values = {4, 16, 32, 64, 100, 128, 384, 512, 600, 768, 1024};
 
     omp_set_num_threads(1);
 
@@ -33,7 +30,6 @@ int main() {
     std::ifstream in(data_file, std::ios::binary);
     if (!in) {
         std::cerr << "Error: Could not open " << data_file << "\n";
-        std::cerr << "Run generate_wcss_ground_truth.out first to generate test_data.bin\n";
         return 1;
     }
     in.read(reinterpret_cast<char*>(full_data.data()), full_data.size() * sizeof(float));
@@ -51,8 +47,7 @@ int main() {
     std::cout << std::scientific << std::setprecision(5);
     std::cout << "// Ground truth WCSS values for test_hierarchical_superkmeans.cpp\n";
     std::cout << "// Generated with: N_SAMPLES=" << N_SAMPLES << ", MAX_D=" << MAX_D
-              << ", N_TRUE_CENTERS=" << N_TRUE_CENTERS << ", CLUSTER_STD=" << CLUSTER_STD
-              << ", CENTER_SPREAD=" << CENTER_SPREAD << ", SEED=" << SEED
+              << ", SEED=" << SEED
               << ", ITERS_MESOCLUSTERING=" << ITERS_MESOCLUSTERING
               << ", ITERS_FINECLUSTERING=" << ITERS_FINECLUSTERING
               << ", ITERS_REFINEMENT=" << ITERS_REFINEMENT << "\n";

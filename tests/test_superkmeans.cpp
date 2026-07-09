@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "recall_utils.h"
 #include "superkmeans/common.h"
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/superkmeans.h"
@@ -42,7 +43,8 @@ TEST_F(SuperKMeansTest, AllClustersUsed) {
     const size_t d = 128;
     const size_t n_clusters = 50;
 
-    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
+    std::vector<float> data =
+        skm_test::LoadTestDataSubdim(CMAKE_SOURCE_DIR "/tests/test_data.bin", n, 1024, d);
 
     skmeans::SuperKMeansConfig config;
     config.iters = 25;

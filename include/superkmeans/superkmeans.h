@@ -17,19 +17,9 @@
 #include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
 #include "superkmeans/quantizers/f32.h"
-#include "superkmeans/quantizers/sq4.h"
 #include "superkmeans/quantizers/sq8.h"
 #include "superkmeans/quantizers/lvq4.h"
 #include "superkmeans/quantizers/rabitq.h"
-#ifdef HAS_FAISS
-#include "superkmeans/quantizers/pq8.h"
-#include "superkmeans/quantizers/pq4.h"
-#include "superkmeans/quantizers/hnsw.h"
-#include "superkmeans/quantizers/hnsw_faiss_sq8.h"
-#endif
-#ifdef HAS_USEARCH
-#include "superkmeans/quantizers/hnsw_sq8.h"
-#endif
 
 namespace skmeans {
 
@@ -49,15 +39,6 @@ struct SuperKMeansConfig {
     uint32_t seed = 42;         // Random seed for reproducibility
     bool use_blas_only = false; // Use BLAS-only computation for all iterations
     QuantizerType quantizer_type = QuantizerType::none; // Quantization method
-    uint32_t pq_m = 16; // Number of PQ subspaces (d must be divisible by pq_m). Ignored if not PQ.
-    // HNSW "quantizer" parameters (only used when quantizer_type == hnsw)
-    int hnsw_M = 32;
-    int hnsw_ef_construction = 40;
-    int hnsw_ef_search = 16;
-    // Warm-start: after the first iteration, use the previous assignment
-    // (which arrives in out_knn) as the per-query entry point via
-    // IndexHNSW::search_level_0 instead of the regular hierarchical search.
-    bool hnsw_use_warm_start = false;
 
     // Convergence parameters
     float tol = 1e-4f;                  // Tolerance for shift-based early termination
@@ -80,7 +61,7 @@ struct SuperKMeansConfig {
     bool suppress_warnings = false; // Whether to suppress warnings
 
     bool data_already_rotated = false; // Whether input data is already rotated (skip rotation)
-    bool quantized_centroid_update = false; // Accumulate centroids in quantized domain (u8/u4 only)
+    bool quantized_centroid_update = false; // Accumulate centroids in quantized domain (u8 only)
     bool full_precision_final_centroids = false; // Recompute final centroids from raw float data
     bool verbose_detail = false; // Print per-cluster movement details each iteration
 };
@@ -226,16 +207,9 @@ class SuperKMeans {
 
     /**
      * @brief Converts a real dimension count to the packed dimension count used for PDX.
-     * For u4, two 4-bit values are packed per byte, so PDX operates on d/2 elements.
-     * For all other quantizations, dimensions map 1:1 to storage elements.
+     * Dimensions map 1:1 to storage elements.
      */
-    static constexpr size_t PDXDim(size_t dim) {
-        if constexpr (q == Quantization::u4) {
-            return dim / 2;
-        } else {
-            return dim;
-        }
-    }
+    static constexpr size_t PDXDim(size_t dim) { return dim; }
 
   public:
     /**
@@ -259,14 +233,6 @@ class SuperKMeans {
                 "dimensionality exceeds SKM_MAX_DIMS (" + std::to_string(SKM_MAX_DIMS) +
                 "), got " + std::to_string(dimensionality)
             );
-        }
-        if constexpr (q == Quantization::u4) {
-            if (dimensionality % 2 != 0) {
-                throw std::invalid_argument(
-                    "Quantization::u4 requires even dimensionality (got " +
-                    std::to_string(dimensionality) + ")"
-                );
-            }
         }
         n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
         g_n_threads = n_threads;
@@ -342,16 +308,10 @@ class SuperKMeans {
             }
         }
         // SQ quantizers manage their own uint32 accumulator buffers internally
-        std::vector<size_t> not_pruned_counts;
-        not_pruned_counts.reserve(n_samples);
-        std::vector<distance_t> tmp_distances_buf;
-        tmp_distances_buf.reserve(X_BATCH_SIZE * Y_BATCH_SIZE);
+        std::unique_ptr<size_t[]> not_pruned_counts(new size_t[n_samples]);
+        std::unique_ptr<distance_t[]> tmp_distances_buf(new distance_t[X_BATCH_SIZE * Y_BATCH_SIZE]);
         // PDX vertical_d setup (partial_d is set after quantizer is created)
         vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(PDXDim(d)).vertical_d;
-        if constexpr (q == Quantization::u4) {
-            vertical_d *= 2;
-            assert(vertical_d % 2 == 0 && "vertical_d must be even for u4");
-        }
         partial_horizontal_centroids.reset(new centroid_value_t[n_clusters * vertical_d]);
 
         auto centroids_pdx_wrapper =
@@ -360,10 +320,9 @@ class SuperKMeans {
             std::cout << "Sampling data..." << std::endl;
         }
 
-        std::vector<float> data_samples_buffer;
-        data_samples_buffer.reserve(n_samples * d);
+        std::unique_ptr<float[]> data_samples_buffer(new float[n_samples * d]);
         auto data_to_cluster = SampleAndRotateVectors(
-            data_p, data_samples_buffer.data(), n, n_samples, !config.data_already_rotated
+            data_p, data_samples_buffer.get(), n, n_samples, !config.data_already_rotated
         );
 
         RotateOrCopy(
@@ -375,45 +334,14 @@ class SuperKMeans {
 
         // Create quantizer for all q types
         if constexpr (q == Quantization::f32) {
-#ifdef HAS_FAISS
-            if (config.quantizer_type == QuantizerType::hnsw) {
-                quantizer = std::make_unique<HNSWQuantizer>(
-                    config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search,
-                    config.hnsw_use_warm_start
-                );
-            } else
-#endif
-            {
-                quantizer = std::make_unique<F32Quantizer>();
-            }
-        } else if constexpr (q == Quantization::u4) {
-            quantizer = std::make_unique<SQ4Quantizer>();
+            quantizer = std::make_unique<F32Quantizer>();
         } else {
             if (config.quantizer_type == QuantizerType::sq8) {
                 quantizer = std::make_unique<SQ8Quantizer>();
-#ifdef HAS_USEARCH
-            } else if (config.quantizer_type == QuantizerType::hnsw_sq8) {
-                quantizer = std::make_unique<HNSWSQ8Quantizer>(
-                    config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search
-                );
-#endif
-#ifdef HAS_FAISS
-            } else if (config.quantizer_type == QuantizerType::hnsw_faiss_sq8) {
-                quantizer = std::make_unique<HNSWFaissSQ8Quantizer>(
-                    config.hnsw_M, config.hnsw_ef_construction, config.hnsw_ef_search,
-                    config.hnsw_use_warm_start
-                );
-#endif
             } else if (config.quantizer_type == QuantizerType::lvq4) {
                 quantizer = std::make_unique<LVQ4Quantizer>();
             } else if (config.quantizer_type == QuantizerType::rabitq) {
                 quantizer = std::make_unique<RaBitQQuantizer>();
-#ifdef HAS_FAISS
-            } else if (config.quantizer_type == QuantizerType::pq8) {
-                quantizer = std::make_unique<PQ8Quantizer>(config.pq_m);
-            } else if (config.quantizer_type == QuantizerType::pq4) {
-                quantizer = std::make_unique<PQ4Quantizer>(config.pq_m);
-#endif
             } else {
                 throw std::invalid_argument("Unsupported quantizer type for non-f32 quantization");
             }
@@ -473,7 +401,7 @@ class SuperKMeans {
             }
         }
 
-        std::vector<float> rotated_queries;
+        std::unique_ptr<float[]> rotated_queries;
         // Recall tracking uses batch_computer which is only available for f32
         if constexpr (q == Quantization::f32) {
             if (n_queries) {
@@ -493,19 +421,19 @@ class SuperKMeans {
                     recall_distances.reset(new distance_t[n_queries * centroids_to_explore]);
                     query_norms.reset(new distance_t[n_queries]);
                 }
-                rotated_queries.reserve(n_queries * d);
+                rotated_queries.reset(new float[n_queries * d]);
                 if (config.sample_queries) {
                     std::cout << "Sampling queries from data..." << std::endl;
                     SampleAndRotateVectors(
-                        data_to_cluster, rotated_queries.data(), n_samples, n_queries, false
+                        data_to_cluster, rotated_queries.get(), n_samples, n_queries, false
                     );
                 } else {
                     RotateOrCopy(
-                        queries, rotated_queries.data(), n_queries, !config.data_already_rotated
+                        queries, rotated_queries.get(), n_queries, !config.data_already_rotated
                     );
                 }
-                GetL2NormsRowMajor(rotated_queries.data(), n_queries, query_norms.get());
-                GetGTAssignmentsAndDistances(data_to_cluster, rotated_queries.data(), n_queries);
+                GetL2NormsRowMajor(rotated_queries.get(), n_queries, query_norms.get());
+                GetGTAssignmentsAndDistances(data_to_cluster, rotated_queries.get(), n_queries);
             }
         }
 
@@ -526,10 +454,10 @@ class SuperKMeans {
                 RunIteration<true>(
                     data_to_cluster,
                     encoded_data_p,
-                    tmp_distances_buf.data(),
+                    tmp_distances_buf.get(),
                     centroids_pdx_wrapper,
-                    not_pruned_counts,
-                    rotated_queries.data(),
+                    not_pruned_counts.get(),
+                    rotated_queries.get(),
                     n_queries,
                     n_samples,
                     n_clusters,
@@ -541,10 +469,10 @@ class SuperKMeans {
                 RunIteration<false>(
                     data_to_cluster,
                     encoded_data_p,
-                    tmp_distances_buf.data(),
+                    tmp_distances_buf.get(),
                     centroids_pdx_wrapper,
-                    not_pruned_counts,
-                    rotated_queries.data(),
+                    not_pruned_counts.get(),
+                    rotated_queries.get(),
                     n_queries,
                     n_samples,
                     n_clusters,
@@ -744,6 +672,7 @@ class SuperKMeans {
         // worried about, but we could avoid the round trip in the future.
         quantizer->Encode(encode_vectors, q_vectors.data(), n_vectors, d);
         quantizer->Encode(encode_centroids, q_centroids.data(), n_centroids, d);
+        quantizer->InvalidateCaches();
 
         std::vector<float> v_norms(n_vectors);
         std::vector<float> c_norms(n_centroids);
@@ -811,18 +740,17 @@ class SuperKMeans {
 
         partial_d = quantizer->InitialPartialD(vertical_d);
 
-        std::vector<size_t> not_pruned_counts;
-        not_pruned_counts.reserve(n_vectors);
-        std::fill(not_pruned_counts.data(), not_pruned_counts.data() + n_vectors, 0);
-        std::vector<float> data_buffer;
+        std::unique_ptr<size_t[]> not_pruned_counts(new size_t[n_vectors]);
+        std::fill(not_pruned_counts.get(), not_pruned_counts.get() + n_vectors, 0);
+        std::unique_ptr<float[]> data_buffer;
         const float* data_p;
         if (config.data_already_rotated) {
             // Data is already rotated: use original pointer directly (avoid redundant memcpy)
             data_p = vectors;
         } else {
-            data_buffer.reserve(n_vectors * d);
-            RotateOrCopy(vectors, data_buffer.data(), n_vectors, true);
-            data_p = data_buffer.data();
+            data_buffer.reset(new float[n_vectors * d]);
+            RotateOrCopy(vectors, data_buffer.get(), n_vectors, true);
+            data_p = data_buffer.get();
         }
         GetPartialL2NormsRowMajor(
             horizontal_centroids.get(), n_centroids, centroid_norms.get(), partial_d
@@ -851,7 +779,7 @@ class SuperKMeans {
                 tmp_distances_buf.data(),
                 pdx_centroids,
                 partial_d,
-                not_pruned_counts.data()
+                not_pruned_counts.get()
             );
             memcpy(result_assignments.data(), assignments.get(), n_vectors * sizeof(uint32_t));
             return result_assignments;
@@ -886,7 +814,7 @@ class SuperKMeans {
                 tmp_distances_buf.data(),
                 pdx_centroids,
                 partial_d,
-                not_pruned_counts.data()
+                not_pruned_counts.get()
             );
             return result_assignments;
         } else {
@@ -944,7 +872,7 @@ class SuperKMeans {
                 tmp_distances_buf.data(),
                 pdx_centroids,
                 partial_d,
-                not_pruned_counts.data()
+                not_pruned_counts.get()
             );
             return result_assignments;
         }
@@ -1162,7 +1090,7 @@ class SuperKMeans {
         const vector_value_t* SKM_RESTRICT encoded_data_p,
         distance_t* SKM_RESTRICT tmp_distances_buf,
         layout_t& centroids_pdx_wrapper,
-        std::vector<size_t>& not_pruned_counts,
+        size_t* SKM_RESTRICT not_pruned_counts,
         const float* SKM_RESTRICT rotated_queries,
         const size_t n_queries,
         const size_t n_samples,
@@ -1198,7 +1126,7 @@ class SuperKMeans {
             ResetCentroids(n_clusters);
             quantizer->ResetCentroidAccumulators(n_clusters, d);
         } else {
-            std::fill(not_pruned_counts.data(), not_pruned_counts.data() + n_samples, 0);
+            std::fill(not_pruned_counts, not_pruned_counts + n_samples, 0);
             // Cache centroid partial norms and run pruned search
             quantizer->Encode(prev_centroids.get(), quantized_centroids.get(), n_clusters, d);
             quantizer->CacheCentroidPartialNorms(
@@ -1209,7 +1137,7 @@ class SuperKMeans {
                 data_to_cluster, prev_centroids.get(),
                 n_samples, n_clusters, d,
                 assignments.get(), distances.get(),
-                centroids_pdx_wrapper, partial_d, not_pruned_counts.data()
+                centroids_pdx_wrapper, partial_d, not_pruned_counts
             );
             ResetCentroids(n_clusters);
             quantizer->ResetCentroidAccumulators(n_clusters, d);
@@ -1243,7 +1171,7 @@ class SuperKMeans {
         if constexpr (!GEMM_ONLY) {
             bool partial_d_changed = false;
             avg_not_pruned_pct =
-                TunePartialD(not_pruned_counts.data(), n_samples, n_clusters, partial_d_changed);
+                TunePartialD(not_pruned_counts, n_samples, n_clusters, partial_d_changed);
             if (partial_d_changed) {
                 quantizer->CacheDataPartialNorms(encoded_data_p, n_samples, d, partial_d);
             }
@@ -1313,12 +1241,14 @@ class SuperKMeans {
         n_split = 0;
         std::mt19937 rng(config.seed);
         auto horizontal_centroids_p = horizontal_centroids.get();
+        const float split_denom =
+            static_cast<float>(std::max(size_t{1}, n_samples - n_clusters));
         for (size_t ci = 0; ci < n_clusters; ci++) {
             if (cluster_sizes[ci] == 0) {
                 size_t cj;
                 for (cj = 0; true; cj = (cj + 1) % n_clusters) {
                     // Probability to pick this cluster for split
-                    float p = (cluster_sizes[cj] - 1.0) / (float) (n_samples - n_clusters);
+                    float p = (cluster_sizes[cj] - 1.0) / split_denom;
                     float r = std::uniform_real_distribution<float>(0, 1)(rng);
                     if (r < p) {
                         break; // Found our cluster to be split
@@ -1404,6 +1334,7 @@ class SuperKMeans {
         SKM_PROFILE_SCOPE("compute_cost");
         prev_cost = cost;
         cost = 0.0f;
+        // TODO(@lkuffo, low): accumulate in double; float loses precision over many samples
         SKM_VECTORIZE_LOOP
         for (size_t i = 0; i < n_samples; ++i) {
             cost += distances[i];
@@ -1913,7 +1844,7 @@ class SuperKMeans {
     ) {
         // Intermediate buffer needed only when both sampling and rotating
         // (we have not yet implemented rotation in-place)
-        std::vector<float> samples_tmp;
+        std::unique_ptr<float[]> samples_tmp;
         const float* src_data = data;
 
         if (n_samples < n) {
@@ -1928,17 +1859,17 @@ class SuperKMeans {
             }
             std::shuffle(sampled_indices.get(), sampled_indices.get() + n, rng);
             if (rotate) {
-                samples_tmp.reserve(n_samples * d);
+                samples_tmp.reset(new float[n_samples * d]);
                 // Need intermediate buffer: sample first, then rotate
 #pragma omp parallel for if (n_threads > 1) num_threads(n_threads)
                 for (size_t i = 0; i < n_samples; ++i) {
                     memcpy(
-                        static_cast<void*>(samples_tmp.data() + i * d),
+                        static_cast<void*>(samples_tmp.get() + i * d),
                         static_cast<const void*>(data + sampled_indices[i] * d),
                         sizeof(float) * d
                     );
                 }
-                src_data = samples_tmp.data();
+                src_data = samples_tmp.get();
             } else {
                 // No rotation: copy directly into output buffer
 #pragma omp parallel for if (n_threads > 1) num_threads(n_threads)

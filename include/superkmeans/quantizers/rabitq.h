@@ -2,6 +2,7 @@
 
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
+#include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
 
 #include <algorithm>
@@ -11,6 +12,8 @@
 #include <limits>
 #include <memory>
 #include <omp.h>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace skmeans {
@@ -44,7 +47,17 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
     void Fit(const float* data, size_t n, size_t d) override {
         SKM_PROFILE_SCOPE("RQ::Fit");
-        assert(d % 8 == 0 && "RaBitQ-GEMM requires dimensionality divisible by 8");
+        if (d % 8 != 0) {
+            throw std::invalid_argument(
+                "RaBitQ requires dimensionality divisible by 8 (got " + std::to_string(d) + ")"
+            );
+        }
+        if (d > RABITQ_MAX_DIMS) {
+            throw std::invalid_argument(
+                "RaBitQ requires dimensionality <= " + std::to_string(RABITQ_MAX_DIMS) +
+                " (got " + std::to_string(d) + ")"
+            );
+        }
         d_ = d;
         binary_bytes_ = (d + 7) / 8;
         centroid_.resize(d, 0.0f);

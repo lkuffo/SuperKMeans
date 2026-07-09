@@ -133,9 +133,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         std::vector<distance_t> tmp_distances_buf;
         tmp_distances_buf.reserve(X_BATCH_SIZE * Y_BATCH_SIZE);
         this->vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->PDXDim(this->d)).vertical_d;
-        if constexpr (q == Quantization::u4) {
-            this->vertical_d *= 2;
-        }
         this->partial_horizontal_centroids.reset(
             new centroid_value_t[this->n_clusters * this->vertical_d]
         );
@@ -175,8 +172,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         // Create quantizer
         if constexpr (q == Quantization::f32) {
             this->quantizer = std::make_unique<F32Quantizer>();
-        } else if constexpr (q == Quantization::u4) {
-            this->quantizer = std::make_unique<SQ4Quantizer>();
         } else {
             if (this->hierarchical_config.quantizer_type == QuantizerType::sq8) {
                 this->quantizer = std::make_unique<SQ8Quantizer>();
@@ -184,12 +179,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 this->quantizer = std::make_unique<LVQ4Quantizer>();
             } else if (this->hierarchical_config.quantizer_type == QuantizerType::rabitq) {
                 this->quantizer = std::make_unique<RaBitQQuantizer>();
-#ifdef HAS_FAISS
-            } else if (this->hierarchical_config.quantizer_type == QuantizerType::pq8) {
-                this->quantizer = std::make_unique<PQ8Quantizer>(this->hierarchical_config.pq_m);
-            } else if (this->hierarchical_config.quantizer_type == QuantizerType::pq4) {
-                this->quantizer = std::make_unique<PQ4Quantizer>(this->hierarchical_config.pq_m);
-#endif
             } else {
                 throw std::invalid_argument("Unsupported quantizer type");
             }
@@ -265,8 +254,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             this->quantized_centroids.get(), n_mesoclusters, this->d, this->centroid_norms.get()
         );
 
-        std::vector<size_t> not_pruned_counts;
-        not_pruned_counts.reserve(this->n_samples);
+        std::unique_ptr<size_t[]> not_pruned_counts(new size_t[this->n_samples]);
 
         // Save full norms before the loop (independent of iteration work)
         {
@@ -302,7 +290,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     encoded_data_p,
                     tmp_distances_buf.data(),
                     centroids_pdx_wrapper,
-                    not_pruned_counts,
+                    not_pruned_counts.get(),
                     nullptr, // queries
                     0,       // n_queries
                     this->n_samples,
@@ -317,7 +305,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     encoded_data_p,
                     tmp_distances_buf.data(),
                     centroids_pdx_wrapper,
-                    not_pruned_counts,
+                    not_pruned_counts.get(),
                     nullptr, // queries
                     0,       // n_queries
                     this->n_samples,
@@ -490,7 +478,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                         mesocluster_encoded_data_p,
                         tmp_distances_buf.data(),
                         mesocluster_centroids_pdx_wrapper,
-                        not_pruned_counts,
+                        not_pruned_counts.get(),
                         nullptr, // queries
                         0,       // n_queries
                         this->n_samples,
@@ -505,7 +493,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                         mesocluster_encoded_data_p,
                         tmp_distances_buf.data(),
                         mesocluster_centroids_pdx_wrapper,
-                        not_pruned_counts,
+                        not_pruned_counts.get(),
                         nullptr, // queries
                         0,       // n_queries
                         this->n_samples,
@@ -616,7 +604,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     encoded_data_p,
                     tmp_distances_buf.data(),
                     final_refinement_pdx_wrapper,
-                    not_pruned_counts,
+                    not_pruned_counts.get(),
                     nullptr, // queries
                     0,       // n_queries
                     this->n_samples,
@@ -631,7 +619,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     encoded_data_p,
                     tmp_distances_buf.data(),
                     final_refinement_pdx_wrapper,
-                    not_pruned_counts,
+                    not_pruned_counts.get(),
                     nullptr, // queries
                     0,       // n_queries
                     this->n_samples,

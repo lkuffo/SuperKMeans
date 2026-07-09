@@ -6,6 +6,7 @@
 #include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
 #include "superkmeans/quantizers/sq_common.h"
+#include "superkmeans/quantizers/u8_gemm.h"
 
 #include <algorithm>
 #include <cassert>
@@ -17,8 +18,6 @@
 #include <vector>
 
 #include <Eigen/Dense>
-#include <numkong/numkong.h>
-#include "ruy/ruy.h"
 
 namespace skmeans {
 
@@ -57,69 +56,8 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         size_t a_stride,
         size_t b_stride
     ) const {
-        // NumKong u8 path: AMX or wide matrices on x86
-        if (!IS_ARM && (has_amx || k > THIN_MATRIX_THRESHOLD)) {
-            const size_t pack_size = nk_dots_packed_size_u8(n, k);
-            if (pack_size > centroids_nk_packed_buf.size()) centroids_nk_packed_buf.resize(pack_size);
-            nk_dots_pack_u8(b, n, k, b_stride, centroids_nk_packed_buf.data());
-
-            const size_t c_stride = n * sizeof(uint32_t);
-
-#pragma omp parallel num_threads(g_n_threads)
-            {
-                nk_configure_thread(nk_capabilities());
-                int tid = omp_get_thread_num();
-                int nt = omp_get_num_threads();
-                size_t rows_per_t = (m + nt - 1) / nt;
-                size_t start = tid * rows_per_t;
-                size_t count = std::min(rows_per_t, m - start);
-                if (start < m && count > 0) {
-                    nk_dots_packed_u8(
-                        a + start * a_stride,
-                        centroids_nk_packed_buf.data(),
-                        out + start * n,
-                        count, n, k,
-                        a_stride, c_stride
-                    );
-                }
-            }
-            return;
-        }
-        // Ruy path: ARM always, x86 for thin matrices
-#pragma omp parallel for num_threads(g_n_threads) schedule(static)
-        for (int t = 0; t < static_cast<int>(g_n_threads); ++t) {
-            const size_t row_start = t * m / g_n_threads;
-            const size_t row_end = (t + 1) * m / g_n_threads;
-            const size_t local_rows = row_end - row_start;
-            if (local_rows == 0) continue;
-
-            thread_local ruy::Context ctx;
-            ctx.set_max_num_threads(1);
-
-            ruy::Matrix<std::uint8_t> lhs;
-            lhs.mutable_layout()->set_rows(local_rows);
-            lhs.mutable_layout()->set_cols(k);
-            lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
-            lhs.mutable_layout()->set_stride(a_stride);
-            lhs.set_data(a + row_start * a_stride);
-
-            ruy::Matrix<std::uint8_t> rhs;
-            rhs.mutable_layout()->set_rows(k);
-            rhs.mutable_layout()->set_cols(n);
-            rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
-            rhs.mutable_layout()->set_stride(b_stride);
-            rhs.set_data(b);
-
-            ruy::Matrix<std::int32_t> dst;
-            dst.mutable_layout()->set_rows(local_rows);
-            dst.mutable_layout()->set_cols(n);
-            dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
-            dst.mutable_layout()->set_stride(n);
-            dst.set_data(reinterpret_cast<std::int32_t*>(out + row_start * n));
-
-            ruy::MulParams<std::int32_t, std::int32_t> mul_params;
-            ruy::Mul(lhs, rhs, mul_params, &ctx, &dst);
-        }
+        const bool use_numkong = !IS_ARM && (has_amx || k > THIN_MATRIX_THRESHOLD);
+        u8_gemm(a, b, out, m, n, k, a_stride, b_stride, use_numkong, centroids_nk_packed_buf, true);
     }
 
     void Fit(const float* embeddings, size_t n, size_t d) override {
@@ -446,6 +384,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         const float inv_quantization_scale = params.inv_quantization_scale;
 
 #pragma omp parallel for num_threads(g_n_threads)
+        // TODO(@lkuffo, low): large clusters overflow the uint32 accumulator and lose float precision here
         for (size_t i = 0; i < n_clusters; ++i) {
             if (cluster_sizes[i] == 0) continue;
             const uint32_t* acc = centroid_accumulators.data() + i * d;

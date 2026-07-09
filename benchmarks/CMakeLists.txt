@@ -77,14 +77,11 @@ skmeans_add_benchmark(ad_hoc_jlt.out ad_hoc_jlt.cpp)
 skmeans_add_benchmark(ad_hoc_mat.out ad_hoc_mat.cpp)
 skmeans_add_faiss_benchmark(ad_hoc_pca.out ad_hoc_pca.cpp)
 skmeans_add_benchmark(ad_hoc_superkmeans_sq8.out ad_hoc_superkmeans_sq8.cpp)
-skmeans_add_benchmark(ad_hoc_superkmeans_sq4.out ad_hoc_superkmeans_sq4.cpp)
 skmeans_add_benchmark(ad_hoc_id_estimator.out ad_hoc_id_estimator.cpp)
 skmeans_add_benchmark(ad_hoc_ivn.out ad_hoc_ivn.cpp)
 skmeans_add_faiss_benchmark(accelerators.out accelerators/accelerators.cpp)
 skmeans_add_faiss_benchmark(ad_hoc_superkmeans_rabitq.out ad_hoc_superkmeans_rabitq.cpp)
 skmeans_add_faiss_benchmark(ad_hoc_rabitq_centroid_analysis.out ad_hoc_rabitq_centroid_analysis.cpp)
-skmeans_add_faiss_benchmark(ad_hoc_pq.out ad_hoc_pq.cpp)
-skmeans_add_faiss_benchmark(ad_hoc_hnsw.out ad_hoc_hnsw.cpp)
 skmeans_add_benchmark(ad_hoc_lvq4.out ad_hoc_lvq4.cpp)
 skmeans_add_benchmark(ad_hoc_assign_quantized.out ad_hoc_assign_quantized.cpp)
 skmeans_add_benchmark(sweet_pruning_spot_superkmeans.out sweet_pruning_spot_superkmeans.cpp)
@@ -217,7 +214,6 @@ add_custom_target(benchmarks
         ad_hoc_mat.out
         ad_hoc_pca.out
         ad_hoc_superkmeans_sq8.out
-        ad_hoc_superkmeans_sq4.out
         ad_hoc_superkmeans_rabitq.out
         ad_hoc_lvq4.out
         ad_hoc_assign_quantized.out

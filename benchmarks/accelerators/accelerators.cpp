@@ -112,7 +112,6 @@ static std::unordered_map<std::string, std::string> BuildConfigDict(
     c["quantized_centroid_update"] = cfg.quantized_centroid_update ? "true" : "false";
     c["full_precision_final_centroids"] = cfg.full_precision_final_centroids ? "true" : "false";
     c["angular"] = cfg.angular ? "true" : "false";
-    c["pq_m"] = std::to_string(cfg.pq_m);
     return c;
 }
 
@@ -127,12 +126,7 @@ void RunPipeline(
     const std::string& quantizer_name,
     bool quantized_centroid_update,
     bool full_precision_final_centroids,
-    bool use_blas_only,
-    uint32_t pq_m = 16,
-    int hnsw_M = 32,
-    int hnsw_ef_construction = 40,
-    int hnsw_ef_search = 16,
-    bool hnsw_use_warm_start = false
+    bool use_blas_only
 ) {
     using SKM = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>;
 
@@ -152,28 +146,16 @@ void RunPipeline(
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
-    const bool is_hnsw = (quantizer_name == "hnsw"
-                         || quantizer_name == "hnsw_sq8"
-                         || quantizer_name == "hnsw_faiss_sq8");
-    const bool is_hnsw_sq8 = (quantizer_name == "hnsw_sq8"
-                              || quantizer_name == "hnsw_faiss_sq8");
-    // For HNSW variants, QuantizedAssign re-invokes the quantizer's
-    // FindNearestNeighbor — i.e. the HNSW search path — which is the metric
-    // we actually want to measure. Enable it for all HNSW variants.
     const bool has_quantizer = (quantizer_name != "f32");
     const bool is_raw = (dim_reduction == "raw");
-    const bool is_pq = (quantizer_name == "pq8" || quantizer_name == "pq4");
     const std::string experiment_name =
-        "accelerators_" + dim_reduction + "_" + quantizer_name
-        + (is_pq ? "_m" + std::to_string(pq_m) : "");
+        "accelerators_" + dim_reduction + "_" + quantizer_name;
     const std::string algorithm = "superkmeans";
 
     std::cout << "=== Accelerators Benchmark ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")" << std::endl;
     std::cout << "Dim reduction: " << dim_reduction
-              << ", Quantizer: " << quantizer_name;
-    if (is_pq) std::cout << " (M=" << pq_m << ")";
-    std::cout << std::endl;
+              << ", Quantizer: " << quantizer_name << std::endl;
     std::cout << "quantized_centroid_update=" << quantized_centroid_update
               << " full_precision_final_centroids=" << full_precision_final_centroids
               << " use_blas_only=" << use_blas_only << std::endl;
@@ -332,24 +314,7 @@ void RunPipeline(
         // Build human-readable run label (matches accelerators.sh echo strings)
         std::string dim_label = is_raw ? "raw" : dim_reduction;
         std::string run_label;
-        if (is_hnsw) {
-            std::string algo_label;
-            std::string quant_layer;
-            if (quantizer_name == "hnsw") {
-                algo_label = "hnsw";
-                quant_layer = "f32";
-            } else if (quantizer_name == "hnsw_sq8") {
-                algo_label = "hnsw_usearch";
-                quant_layer = "sq8";
-            } else { // hnsw_faiss_sq8
-                algo_label = "hnsw_faiss";
-                quant_layer = "sq8";
-            }
-            run_label = dim_label + " / " + quant_layer + " / " + algo_label
-                        + " / efc=" + std::to_string(hnsw_ef_construction)
-                        + " / efs=" + std::to_string(hnsw_ef_search)
-                        + " / ws=" + (hnsw_use_warm_start ? "true" : "false");
-        } else {
+        {
             std::string quant_label = quantizer_name;
             std::string update_label;
             if (quantizer_name == "f32") {
@@ -456,45 +421,10 @@ void RunPipeline(
 
         if (quantizer_name == "sq8")
             config.quantizer_type = skmeans::QuantizerType::sq8;
-        else if (quantizer_name == "sq4")
-            config.quantizer_type = skmeans::QuantizerType::sq4;
         else if (quantizer_name == "rabitq")
             config.quantizer_type = skmeans::QuantizerType::rabitq;
         else if (quantizer_name == "lvq4")
             config.quantizer_type = skmeans::QuantizerType::lvq4;
-        else if (quantizer_name == "pq8")
-            config.quantizer_type = skmeans::QuantizerType::pq8;
-        else if (quantizer_name == "pq4")
-            config.quantizer_type = skmeans::QuantizerType::pq4;
-        else if (quantizer_name == "hnsw") {
-            config.quantizer_type = skmeans::QuantizerType::hnsw;
-            config.hnsw_M = hnsw_M;
-            config.hnsw_ef_construction = hnsw_ef_construction;
-            config.hnsw_ef_search = hnsw_ef_search;
-            config.hnsw_use_warm_start = hnsw_use_warm_start;
-        }
-        else if (quantizer_name == "hnsw_sq8") {
-            config.quantizer_type = skmeans::QuantizerType::hnsw_sq8;
-            config.hnsw_M = hnsw_M;
-            config.hnsw_ef_construction = hnsw_ef_construction;
-            config.hnsw_ef_search = hnsw_ef_search;
-            // USearch does not support per-query entry points; warm-start ignored.
-            config.quantized_centroid_update = true;
-        }
-        else if (quantizer_name == "hnsw_faiss_sq8") {
-            config.quantizer_type = skmeans::QuantizerType::hnsw_faiss_sq8;
-            config.hnsw_M = hnsw_M;
-            config.hnsw_ef_construction = hnsw_ef_construction;
-            config.hnsw_ef_search = hnsw_ef_search;
-            config.hnsw_use_warm_start = hnsw_use_warm_start;
-            config.quantized_centroid_update = true;
-        }
-
-        // PQ relies on subspace dimension structure — skip DCT rotation
-        if (is_pq) {
-            config.data_already_rotated = true;
-            config.pq_m = pq_m;
-        }
 
         if (is_angular) {
             std::cout << "Using spherical k-means" << std::endl;
@@ -934,7 +864,7 @@ void RunHierarchicalPipeline(
 int main(int argc, char* argv[]) {
     if (argc < 7) {
         std::cerr << "Usage: " << argv[0]
-                  << " <dataset> <pca|jlt|mat|raw|hsk> <f32|sq8|sq4|rabitq|lvq4|pq8|pq4|hnsw|hnsw_sq8|hnsw_faiss_sq8>"
+                  << " <dataset> <pca|jlt|mat|raw|hsk> <f32|sq8|rabitq|lvq4>"
                   << " <quantized_centroid_update=true|false>"
                   << " <full_precision_final_centroids=true|false>"
                   << " <use_blas_only=true|false>"
@@ -981,102 +911,14 @@ int main(int argc, char* argv[]) {
             dataset, dim_reduction, quantizer,
             quantized_centroid_update, full_precision_final_centroids, use_blas_only
         );
-    } else if (quantizer == "hnsw") {
-        for (int efc : bench_utils::HNSW_EF_CONSTRUCTION_VALUES) {
-            for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
-                for (bool ws : {false, true}) {
-                    RunPipeline<skmeans::Quantization::f32>(
-                        dataset, dim_reduction, quantizer,
-                        quantized_centroid_update, full_precision_final_centroids, use_blas_only,
-                        /*pq_m=*/16,
-                        bench_utils::HNSW_M,
-                        efc,
-                        efs,
-                        ws
-                    );
-                }
-            }
-        }
-    } else if (quantizer == "hnsw_sq8") {
-        // USearch backend (symmetric u8). Warm-start unsupported → only ws=false.
-        for (int efc : bench_utils::HNSW_EF_CONSTRUCTION_VALUES) {
-            for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
-                RunPipeline<skmeans::Quantization::u8>(
-                    dataset, dim_reduction, quantizer,
-                    quantized_centroid_update, full_precision_final_centroids, use_blas_only,
-                    /*pq_m=*/16,
-                    bench_utils::HNSW_M,
-                    efc,
-                    efs,
-                    /*hnsw_use_warm_start=*/false
-                );
-            }
-        }
-    } else if (quantizer == "hnsw_faiss_sq8") {
-        // FAISS asymmetric SQ8 with f32→sq8→f32 query round-trip.
-        for (int efc : bench_utils::HNSW_EF_CONSTRUCTION_VALUES) {
-            for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
-                for (bool ws : {false, true}) {
-                    RunPipeline<skmeans::Quantization::u8>(
-                        dataset, dim_reduction, quantizer,
-                        quantized_centroid_update, full_precision_final_centroids, use_blas_only,
-                        /*pq_m=*/16,
-                        bench_utils::HNSW_M,
-                        efc,
-                        efs,
-                        ws
-                    );
-                }
-            }
-        }
-    } else if (quantizer == "sq8") {
+    } else if (quantizer == "sq8" || quantizer == "rabitq" || quantizer == "lvq4") {
         RunPipeline<skmeans::Quantization::u8>(
             dataset, dim_reduction, quantizer,
             quantized_centroid_update, full_precision_final_centroids, use_blas_only
         );
-    } else if (quantizer == "sq4") {
-        RunPipeline<skmeans::Quantization::u4>(
-            dataset, dim_reduction, quantizer,
-            quantized_centroid_update, full_precision_final_centroids, use_blas_only
-        );
-    } else if (quantizer == "rabitq" || quantizer == "lvq4") {
-        RunPipeline<skmeans::Quantization::u8>(
-            dataset, dim_reduction, quantizer,
-            quantized_centroid_update, full_precision_final_centroids, use_blas_only
-        );
-    } else if (quantizer == "pq8") {
-        auto dit = bench_utils::DATASET_PARAMS.find(dataset);
-        size_t d = (dit != bench_utils::DATASET_PARAMS.end()) ? dit->second.second : 0;
-        for (uint32_t m : bench_utils::PQ8_M_VALUES) {
-            if (d % m != 0) {
-                std::cout << "Skipping M=" << m << " (d=" << d
-                          << " not divisible by M)" << std::endl;
-                continue;
-            }
-            RunPipeline<skmeans::Quantization::u8>(
-                dataset, dim_reduction, quantizer,
-                quantized_centroid_update, full_precision_final_centroids, use_blas_only,
-                m
-            );
-        }
-    } else if (quantizer == "pq4") {
-        auto dit = bench_utils::DATASET_PARAMS.find(dataset);
-        size_t d = (dit != bench_utils::DATASET_PARAMS.end()) ? dit->second.second : 0;
-        for (uint32_t m : bench_utils::PQ4_M_VALUES) {
-            if (d % m != 0) {
-                std::cout << "Skipping M=" << m << " (d=" << d
-                          << " not divisible by M)" << std::endl;
-                continue;
-            }
-            RunPipeline<skmeans::Quantization::u8>(
-                dataset, dim_reduction, quantizer,
-                quantized_centroid_update, full_precision_final_centroids, use_blas_only,
-                m
-            );
-        }
     } else {
         std::cerr << "Invalid quantizer: " << quantizer
-                  << " (expected: f32, sq8, sq4, rabitq, lvq4, pq8, pq4, hnsw, hnsw_sq8, hnsw_faiss_sq8)\n";
+                  << " (expected: f32, sq8, rabitq, lvq4)\n";
         return 1;
     }
 

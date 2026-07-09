@@ -27,18 +27,27 @@ target_link_libraries(test_assign.out PRIVATE ${TEST_COMMON_LIBS})
 
 add_executable(test_superkmeans.out test_superkmeans.cpp)
 target_link_libraries(test_superkmeans.out PRIVATE ${TEST_COMMON_LIBS})
+target_include_directories(test_superkmeans.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
+target_compile_definitions(test_superkmeans.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 add_executable(test_wcss.out test_wcss.cpp)
 target_link_libraries(test_wcss.out PRIVATE ${TEST_COMMON_LIBS})
+target_include_directories(test_wcss.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
 target_compile_definitions(test_wcss.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 add_executable(generate_wcss_ground_truth.out generate_wcss_ground_truth.cpp)
 target_link_libraries(generate_wcss_ground_truth.out PRIVATE ${TEST_COMMON_LIBS})
+target_include_directories(generate_wcss_ground_truth.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
 target_compile_definitions(generate_wcss_ground_truth.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 add_executable(generate_wcss_ground_truth_hierarchical.out generate_wcss_ground_truth_hierarchical.cpp)
 target_link_libraries(generate_wcss_ground_truth_hierarchical.out PRIVATE ${TEST_COMMON_LIBS})
 target_compile_definitions(generate_wcss_ground_truth_hierarchical.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+add_executable(generate_recall_ground_truth.out generate_recall_ground_truth.cpp)
+target_link_libraries(generate_recall_ground_truth.out PRIVATE ${TEST_COMMON_LIBS})
+target_include_directories(generate_recall_ground_truth.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
+target_compile_definitions(generate_recall_ground_truth.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 add_executable(test_distance_computers.out test_distance_computers.cpp)
 target_link_libraries(test_distance_computers.out PRIVATE ${TEST_COMMON_LIBS})
@@ -48,10 +57,23 @@ target_link_libraries(test_pdx_layout.out PRIVATE ${TEST_COMMON_LIBS})
 
 add_executable(test_hierarchical_superkmeans.out test_hierarchical_superkmeans.cpp)
 target_link_libraries(test_hierarchical_superkmeans.out PRIVATE ${TEST_COMMON_LIBS})
+target_include_directories(test_hierarchical_superkmeans.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
 target_compile_definitions(test_hierarchical_superkmeans.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-add_executable(test_quantized.out test_quantized.cpp)
-target_link_libraries(test_quantized.out PRIVATE ${TEST_COMMON_LIBS})
+add_executable(test_quantized_sq8.out test_quantized_sq8.cpp)
+target_link_libraries(test_quantized_sq8.out PRIVATE ${TEST_COMMON_LIBS})
+target_include_directories(test_quantized_sq8.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
+target_compile_definitions(test_quantized_sq8.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+add_executable(test_quantized_lvq4.out test_quantized_lvq4.cpp)
+target_link_libraries(test_quantized_lvq4.out PRIVATE ${TEST_COMMON_LIBS})
+target_include_directories(test_quantized_lvq4.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
+target_compile_definitions(test_quantized_lvq4.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+add_executable(test_quantized_rabitq.out test_quantized_rabitq.cpp)
+target_link_libraries(test_quantized_rabitq.out PRIVATE ${TEST_COMMON_LIBS})
+target_include_directories(test_quantized_rabitq.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
+target_compile_definitions(test_quantized_rabitq.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 include(GoogleTest)
 gtest_discover_tests(test_rotation.out)
@@ -61,7 +83,9 @@ gtest_discover_tests(test_wcss.out)
 gtest_discover_tests(test_distance_computers.out)
 gtest_discover_tests(test_pdx_layout.out)
 gtest_discover_tests(test_hierarchical_superkmeans.out)
-gtest_discover_tests(test_quantized.out)
+gtest_discover_tests(test_quantized_sq8.out)
+gtest_discover_tests(test_quantized_lvq4.out)
+gtest_discover_tests(test_quantized_rabitq.out)
 
 add_custom_target(tests
     DEPENDS
@@ -72,5 +96,7 @@ add_custom_target(tests
         test_distance_computers.out
         test_pdx_layout.out
         test_hierarchical_superkmeans.out
-        test_quantized.out
+        test_quantized_sq8.out
+        test_quantized_lvq4.out
+        test_quantized_rabitq.out
 )
