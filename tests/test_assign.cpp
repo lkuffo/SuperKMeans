@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <omp.h>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "superkmeans/common.h"
@@ -13,6 +14,40 @@ class AssignTest : public ::testing::Test {
   protected:
     void SetUp() override { omp_set_num_threads(omp_get_max_threads()); }
 };
+
+namespace {
+using skm_u8 = skmeans::SuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>;
+
+const std::vector<std::pair<skmeans::QuantizerType, const char*>> kQuantizers = {
+    {skmeans::QuantizerType::sq8, "sq8"},
+    {skmeans::QuantizerType::lvq4, "lvq4"},
+    {skmeans::QuantizerType::rabitq, "rabitq"},
+};
+
+void ExpectAssignTrainingPointsFallsBackToQuantizedAssign(
+    skmeans::QuantizerType qt, size_t n, size_t d, size_t n_clusters, bool use_blas_only
+) {
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+    skmeans::SuperKMeansConfig config;
+    config.iters = 10;
+    config.sampling_fraction = 1.0f;
+    config.seed = 42;
+    config.quantizer_type = qt;
+    config.use_blas_only = use_blas_only;
+
+    auto kmeans = skm_u8(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), n);
+
+    auto fast = kmeans.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
+    auto quantized = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
+
+    ASSERT_EQ(fast.size(), n);
+    for (size_t i = 0; i < n; ++i) {
+        ASSERT_LT(fast[i], n_clusters);
+    }
+    ASSERT_EQ(fast, quantized);
+}
+}  // namespace
 
 /**
  * @brief Test that each point is assigned to its actual nearest centroid
@@ -287,4 +322,46 @@ TEST_F(AssignTest, AllClustersNonEmpty) {
     EXPECT_EQ(used_clusters.size(), n_clusters)
         << "Not all clusters were used. Expected " << n_clusters << " but only "
         << used_clusters.size() << " were assigned.";
+}
+
+TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallK_FallsBackToQuantizedAssign) {
+    for (const auto& [qt, name] : kQuantizers) {
+        SCOPED_TRACE(name);
+        ExpectAssignTrainingPointsFallsBackToQuantizedAssign(qt, 5000, 128, 50, false);
+    }
+}
+
+TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallDim_FallsBackToQuantizedAssign) {
+    for (const auto& [qt, name] : kQuantizers) {
+        SCOPED_TRACE(name);
+        ExpectAssignTrainingPointsFallsBackToQuantizedAssign(qt, 5000, 64, 300, false);
+    }
+}
+
+TEST_F(AssignTest, QuantizedAssignTrainingPoints_BlasOnly_FallsBackToQuantizedAssign) {
+    for (const auto& [qt, name] : kQuantizers) {
+        SCOPED_TRACE(name);
+        ExpectAssignTrainingPointsFallsBackToQuantizedAssign(qt, 5000, 128, 300, true);
+    }
+}
+
+TEST_F(AssignTest, AssignTrainingPoints_WrongVectorCount_Throws) {
+    const size_t n = 5000;
+    const size_t d = 128;
+    const size_t n_clusters = 300;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+    skmeans::SuperKMeansConfig config;
+    config.iters = 5;
+    config.sampling_fraction = 1.0f;
+    config.seed = 42;
+
+    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        n_clusters, d, config
+    );
+    auto centroids = kmeans.Train(data.data(), n);
+
+    EXPECT_THROW(
+        kmeans.AssignTrainingPoints(data.data(), centroids.data(), n - 1, n_clusters),
+        std::runtime_error
+    );
 }

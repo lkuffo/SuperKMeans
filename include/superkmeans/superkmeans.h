@@ -287,6 +287,7 @@ class SuperKMeans {
         }
         const float* SKM_RESTRICT data_p = data;
         n_samples = GetNVectorsToSample(n, n_clusters);
+        n_train = n;
         if (n_samples < n_clusters) {
             throw std::runtime_error(
                 "Not enough samples to train. Try increasing the sampling_fraction or "
@@ -309,7 +310,7 @@ class SuperKMeans {
         }
         // SQ quantizers manage their own uint32 accumulator buffers internally
         std::unique_ptr<size_t[]> not_pruned_counts(new size_t[n_samples]);
-        std::unique_ptr<distance_t[]> tmp_distances_buf(new distance_t[X_BATCH_SIZE * Y_BATCH_SIZE]);
+        EnsureTmpDistances();
         // PDX vertical_d setup (partial_d is set after quantizer is created)
         vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(PDXDim(d)).vertical_d;
         partial_horizontal_centroids.reset(new centroid_value_t[n_clusters * vertical_d]);
@@ -416,7 +417,6 @@ class SuperKMeans {
                     SKM_PROFILE_SCOPE("allocator");
                     gt_assignments.reset(new uint32_t[n_queries * config.objective_k]);
                     gt_distances.reset(new distance_t[n_queries * config.objective_k]);
-                    tmp_distances_buffer.reset(new distance_t[X_BATCH_SIZE * Y_BATCH_SIZE]);
                     promising_centroids.reset(new uint32_t[n_queries * centroids_to_explore]);
                     recall_distances.reset(new distance_t[n_queries * centroids_to_explore]);
                     query_norms.reset(new distance_t[n_queries]);
@@ -454,7 +454,6 @@ class SuperKMeans {
                 RunIteration<true>(
                     data_to_cluster,
                     encoded_data_p,
-                    tmp_distances_buf.get(),
                     centroids_pdx_wrapper,
                     not_pruned_counts.get(),
                     rotated_queries.get(),
@@ -469,7 +468,6 @@ class SuperKMeans {
                 RunIteration<false>(
                     data_to_cluster,
                     encoded_data_p,
-                    tmp_distances_buf.get(),
                     centroids_pdx_wrapper,
                     not_pruned_counts.get(),
                     rotated_queries.get(),
@@ -535,9 +533,9 @@ class SuperKMeans {
     ) {
         SKM_PROFILE_SCOPE("assign");
         using f32_batch_computer = BatchComputer<alpha, Quantization::f32>;
+        EnsureTmpDistances();
 
         std::vector<uint32_t> result_assignments(n_vectors);
-        std::unique_ptr<float[]> tmp_distances_buf(new float[X_BATCH_SIZE * Y_BATCH_SIZE]);
         std::vector<float> result_distances(n_vectors);
 
         std::vector<float> vector_norms(n_vectors);
@@ -561,7 +559,7 @@ class SuperKMeans {
             centroid_norms_local.data(),
             result_assignments.data(),
             result_distances.data(),
-            tmp_distances_buf.get()
+            tmp_distances_buffer.get()
         );
 
         return result_assignments;
@@ -594,58 +592,10 @@ class SuperKMeans {
                 "QuantizedAssign requires a fitted quantizer (call Train() first)"
             );
         }
+        EnsureTmpDistances();
 
-        // Pruning path: reuse trained encoded data when all data was used for training.
-        // quantized_data and quantized_centroids (+ PDXified buffers) are all in the
-        // rotated domain from Train/ConsolidateCentroids — we reuse them directly
-        // rather than re-encoding from the caller's (potentially unrotated) arguments.
-        // Skip when use_blas_only: the caller may pass different centroids than training.
-        // Skip for non-PDX quantizers (e.g. RaBitQ): their pruning needs rotated float
-        // data for partial norms, but QuantizedAssign receives unrotated caller data.
-        if constexpr (q != Quantization::f32) {
-            if (config.sampling_fraction >= 1.0f && quantizer->SupportsPruning()
-                && quantizer->NeedsPDXLayout() && !config.use_blas_only) {
-                std::vector<uint32_t> result_assignments(
-                    assignments.get(), assignments.get() + n_vectors);
-                std::vector<distance_t> result_distances(n_vectors,
-                    std::numeric_limits<distance_t>::max());
-                std::vector<size_t> not_pruned_counts(n_vectors, 0);
-
-                // Reuse stored quantized_centroids (rotated domain, from ConsolidateCentroids).
-                // Only refresh partial norms (may be stale after ConsolidateCentroids re-encoded).
-                quantizer->CacheCentroidPartialNorms(
-                    quantized_centroids.get(), n_centroids, d, partial_d
-                );
-                quantizer->CacheDataPartialNorms(quantized_data.get(), n_vectors, d, partial_d);
-
-                // Reuse stored PDXified buffers (already up-to-date from ConsolidateCentroids)
-                layout_t pdx_wrapper;
-                if (quantizer->NeedsPDXLayout()) {
-                    pdx_wrapper = layout_t(
-                        pdxified_quantized_centroids.get(),
-                        *pruner,
-                        n_centroids,
-                        PDXDim(d),
-                        partial_hor_quantized_centroids.get()
-                    );
-                }
-
-                quantizer->FindNearestNeighborWithPruning(
-                    quantized_data.get(), quantized_centroids.get(),
-                    vectors, centroids,
-                    n_vectors, n_centroids, d,
-                    result_assignments.data(), result_distances.data(),
-                    pdx_wrapper, partial_d, not_pruned_counts.data()
-                );
-
-                return result_assignments;
-            }
-        }
-
-        // BLAS-only fallback
         std::vector<uint32_t> result_assignments(n_vectors);
         std::vector<distance_t> result_distances(n_vectors);
-        std::unique_ptr<distance_t[]> tmp_distances_buf(new distance_t[X_BATCH_SIZE * Y_BATCH_SIZE]);
 
         // Rotate input data to match the domain the quantizer was fitted on 
         // We cannot just simply retrain the quantizer on the new data because
@@ -654,6 +604,8 @@ class SuperKMeans {
         const float* encode_centroids = centroids;
         std::unique_ptr<float[]> rotated_vectors_buf;
         std::unique_ptr<float[]> rotated_centroids_buf;
+        // TODO(@lkuffo, high): Only really needed for RabitQ
+        // The rest of quantizers don't need rotation
         if (!config.data_already_rotated) {
             rotated_vectors_buf.reset(new float[n_vectors * d]);
             rotated_centroids_buf.reset(new float[n_centroids * d]);
@@ -666,10 +618,6 @@ class SuperKMeans {
         const size_t cs = quantizer->CodeSize(d);
         std::vector<vector_value_t> q_vectors(n_vectors * cs);
         std::vector<vector_value_t> q_centroids(n_centroids * cs);
-        // TODO(@lkuffo, high): As the code is now, there is a round-trip of 
-        // encode()->decode()->encode() when pruning is not used. 
-        // This only leads to small floating-point rounding errors. Nothing to be 
-        // worried about, but we could avoid the round trip in the future.
         quantizer->Encode(encode_vectors, q_vectors.data(), n_vectors, d);
         quantizer->Encode(encode_centroids, q_centroids.data(), n_centroids, d);
         quantizer->InvalidateCaches();
@@ -690,7 +638,7 @@ class SuperKMeans {
             c_norms.data(),
             result_assignments.data(),
             result_distances.data(),
-            tmp_distances_buf.get()
+            tmp_distances_buffer.get()
         );
 
         return result_assignments;
@@ -702,6 +650,8 @@ class SuperKMeans {
      * Requires that the vectors passed here are the same as those used in .Train().
      * Leverages the assignments from training for a faster
      * assignment than brute force Assign().
+     *
+     * TODO(@lkuffo, high): Signature is misleading, as vectors are centroids incoming in params are not used
      *
      * @param vectors The training data matrix (row-major, n_vectors x d)
      * @param centroids The centroids matrix (row-major, n_centroids x d)
@@ -720,161 +670,176 @@ class SuperKMeans {
             throw std::runtime_error("AssignTrainingPoints requires SuperKMeans to be trained first"
             );
         }
+        if (n_vectors != n_train) {
+            throw std::runtime_error(
+                "AssignTrainingPoints requires the same vectors used in Train() "
+                "(n_vectors must equal the training set size)"
+            );
+        }
 
-        if (q != Quantization::f32 || config.use_blas_only ||
-            d < DIMENSION_THRESHOLD_FOR_PRUNING ||
-            n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+        if constexpr (q != Quantization::f32) {
+            if (config.sampling_fraction == 1.0f && quantizer->SupportsPruning()
+                && !config.use_blas_only
+                && d >= DIMENSION_THRESHOLD_FOR_PRUNING
+                && n_clusters > N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                std::vector<uint32_t> result_assignments(
+                    assignments.get(), assignments.get() + n_vectors);
+                std::vector<distance_t> result_distances(n_vectors,
+                    std::numeric_limits<distance_t>::max());
+                std::vector<size_t> not_pruned_counts(n_vectors, 0);
+
+                quantizer->CacheCentroidPartialNorms(
+                    quantized_centroids.get(), n_centroids, d, partial_d
+                );
+
+                layout_t pdx_wrapper;
+                if (quantizer->NeedsPDXLayout()) {
+                    pdx_wrapper = layout_t(
+                        pdxified_quantized_centroids.get(),
+                        *pruner,
+                        n_centroids,
+                        PDXDim(d),
+                        partial_hor_quantized_centroids.get()
+                    );
+                }
+
+                quantizer->FindNearestNeighborWithPruning(
+                    quantized_data.get(), quantized_centroids.get(),
+                    vectors, horizontal_centroids.get(),
+                    n_vectors, n_centroids, d,
+                    result_assignments.data(), result_distances.data(),
+                    pdx_wrapper, partial_d, not_pruned_counts.data()
+                );
+
+                return result_assignments;
+            }
             if (!config.suppress_warnings) {
-                std::cout << "WARNING: AssignTrainingPoints cannot use pruning, falling back to "
-                             "brute force Assign"
+                std::cout << "WARNING: AssignTrainingPoints cannot reuse trained state, falling "
+                             "back to QuantizedAssign"
                           << std::endl;
             }
-            return Assign(vectors, centroids, n_vectors, n_centroids);
-        }
-        if (config.verbose) {
-            Profiler::Get().Reset();
+            return QuantizedAssign(vectors, centroids, n_vectors, n_centroids);
         }
 
-        std::vector<uint32_t> result_assignments(n_vectors);
-        std::vector<distance_t> tmp_distances_buf(X_BATCH_SIZE * Y_BATCH_SIZE);
+        if constexpr (q == Quantization::f32) {
+            if (config.use_blas_only ||
+                d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+                n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                if (!config.suppress_warnings) {
+                    std::cout << "WARNING: AssignTrainingPoints cannot use pruning, falling back to "
+                                 "brute force Assign"
+                              << std::endl;
+                }
+                return Assign(vectors, centroids, n_vectors, n_centroids);
+            }
+            if (config.verbose) {
+                Profiler::Get().Reset();
+            }
 
-        partial_d = quantizer->InitialPartialD(vertical_d);
+            std::vector<uint32_t> result_assignments(n_vectors);
 
-        std::unique_ptr<size_t[]> not_pruned_counts(new size_t[n_vectors]);
-        std::fill(not_pruned_counts.get(), not_pruned_counts.get() + n_vectors, 0);
-        std::unique_ptr<float[]> data_buffer;
-        const float* data_p;
-        if (config.data_already_rotated) {
-            // Data is already rotated: use original pointer directly (avoid redundant memcpy)
-            data_p = vectors;
-        } else {
-            data_buffer.reset(new float[n_vectors * d]);
-            RotateOrCopy(vectors, data_buffer.get(), n_vectors, true);
-            data_p = data_buffer.get();
-        }
-        GetPartialL2NormsRowMajor(
-            horizontal_centroids.get(), n_centroids, centroid_norms.get(), partial_d
-        );
-
-        // Consolidate was called at the end of RunIteration<true>, so we don't need to call it here
-        // All the centroid-related pointers are updated with the final centroids
-        auto pdx_centroids = PDXLayout<q, alpha>(
-            this->centroids.get(), *pruner, n_clusters, d, partial_horizontal_centroids.get()
-        );
-
-        // If nothing was sampled, then we just go ahead with GEMM+PRUNING
-        if (config.sampling_fraction == 1.0f) {
-            // Recompute data norms defensively (data_p is independently rotated)
-            GetPartialL2NormsRowMajor(data_p, n_vectors, data_norms.get(), partial_d);
-            batch_computer::FindNearestNeighborWithPruning(
-                data_p,
-                horizontal_centroids.get(),
-                n_vectors,
-                n_clusters,
-                d,
-                data_norms.get(),
-                centroid_norms.get(),
-                assignments.get(),
-                distances.get(),
-                tmp_distances_buf.data(),
-                pdx_centroids,
-                partial_d,
-                not_pruned_counts.get()
+            std::unique_ptr<size_t[]> not_pruned_counts(new size_t[n_vectors]);
+            std::fill(not_pruned_counts.get(), not_pruned_counts.get() + n_vectors, 0);
+            std::unique_ptr<float[]> data_buffer;
+            const float* data_p;
+            if (config.data_already_rotated) {
+                data_p = vectors;
+            } else {
+                data_buffer.reset(new float[n_vectors * d]);
+                RotateOrCopy(vectors, data_buffer.get(), n_vectors, true);
+                data_p = data_buffer.get();
+            }
+            quantizer->CacheCentroidPartialNorms(
+                horizontal_centroids.get(), n_centroids, d, partial_d
             );
-            memcpy(result_assignments.data(), assignments.get(), n_vectors * sizeof(uint32_t));
-            return result_assignments;
-        } else if (config.sampling_fraction > 0.8f) {
-            // Dereference the current assignments from the sampled_indices
-            size_t cur_vector_idx = 0;
-            for (; cur_vector_idx < n_samples; ++cur_vector_idx) {
-                result_assignments[sampled_indices[cur_vector_idx]] = assignments[cur_vector_idx];
-            }
-            // Seed remaining vectors with a cluster drawn proportionally to cluster size
-            std::mt19937 rng(config.seed + 1);
-            std::discrete_distribution<uint32_t> cluster_dist(
-                cluster_sizes.get(), cluster_sizes.get() + n_clusters
+
+            // Consolidate ran at the end of the last RunIteration, so centroids are final.
+            auto pdx_centroids = PDXLayout<q, alpha>(
+                this->centroids.get(), *pruner, n_clusters, d, partial_horizontal_centroids.get()
             );
-            for (; cur_vector_idx < n_vectors; ++cur_vector_idx) {
-                result_assignments[sampled_indices[cur_vector_idx]] = cluster_dist(rng);
+
+            if (config.sampling_fraction == 1.0f) {
+                quantizer->CacheDataPartialNorms(data_p, n_vectors, d, partial_d);
+                quantizer->FindNearestNeighborWithPruning(
+                    data_p, horizontal_centroids.get(),
+                    data_p, horizontal_centroids.get(),
+                    n_vectors, n_clusters, d,
+                    assignments.get(), distances.get(),
+                    pdx_centroids, partial_d, not_pruned_counts.get()
+                );
+                memcpy(result_assignments.data(), assignments.get(), n_vectors * sizeof(uint32_t));
+                return result_assignments;
+            } else if (config.sampling_fraction > 0.8f) {
+                size_t cur_vector_idx = 0;
+                for (; cur_vector_idx < n_samples; ++cur_vector_idx) {
+                    result_assignments[sampled_indices[cur_vector_idx]] =
+                        assignments[cur_vector_idx];
+                }
+                std::mt19937 rng(config.seed + 1);
+                std::discrete_distribution<uint32_t> cluster_dist(
+                    cluster_sizes.get(), cluster_sizes.get() + n_clusters
+                );
+                for (; cur_vector_idx < n_vectors; ++cur_vector_idx) {
+                    result_assignments[sampled_indices[cur_vector_idx]] = cluster_dist(rng);
+                }
+
+                quantizer->CacheDataPartialNorms(data_p, n_vectors, d, partial_d);
+                quantizer->FindNearestNeighborWithPruning(
+                    data_p, horizontal_centroids.get(),
+                    data_p, horizontal_centroids.get(),
+                    n_vectors, n_clusters, d,
+                    result_assignments.data(), distances.get(),
+                    pdx_centroids, partial_d, not_pruned_counts.get()
+                );
+                return result_assignments;
+            } else {
+                // Try to approximate the assignment of each non-sampled vector
+                // by first clustering the centroids into a smaller number of "meso-centroids"
+                // then assigning each non-sampled vector to the nearest meso-centroid, and finally
+                // mapping that meso-centroid back to a original centroid.
+                SuperKMeansConfig tmp_config;
+                tmp_config.iters = 10;
+                tmp_config.sampling_fraction = 1.0f;
+                tmp_config.use_blas_only = false;
+                tmp_config.verbose = config.verbose;
+                tmp_config.suppress_warnings = config.suppress_warnings;
+                tmp_config.seed = config.seed;
+                tmp_config.angular = config.angular;
+                tmp_config.data_already_rotated = config.data_already_rotated;
+                auto new_n_centroids = static_cast<size_t>(std::sqrt(n_centroids));
+                SuperKMeans tmp_kmeans(new_n_centroids, d, tmp_config);
+                auto meso_centroids = tmp_kmeans.Train(centroids, n_centroids);
+                auto meso_assignments =
+                    tmp_kmeans.Assign(vectors, meso_centroids.data(), n_vectors, new_n_centroids);
+
+                auto centroids_to_meso = tmp_kmeans.Assign(
+                    centroids, meso_centroids.data(), n_centroids, new_n_centroids
+                );
+                std::vector<uint32_t> meso_to_original(new_n_centroids, 0);
+                for (size_t c = 0; c < n_centroids; ++c) {
+                    meso_to_original[centroids_to_meso[c]] = static_cast<uint32_t>(c);
+                }
+
+                size_t cur_vector_idx = 0;
+                for (; cur_vector_idx < n_samples; ++cur_vector_idx) {
+                    result_assignments[sampled_indices[cur_vector_idx]] =
+                        assignments[cur_vector_idx];
+                }
+                for (; cur_vector_idx < n_vectors; ++cur_vector_idx) {
+                    size_t orig_idx = sampled_indices[cur_vector_idx];
+                    result_assignments[orig_idx] = meso_to_original[meso_assignments[orig_idx]];
+                }
+
+                quantizer->CacheDataPartialNorms(data_p, n_vectors, d, partial_d);
+                quantizer->FindNearestNeighborWithPruning(
+                    data_p, horizontal_centroids.get(),
+                    data_p, horizontal_centroids.get(),
+                    n_vectors, n_clusters, d,
+                    result_assignments.data(), distances.get(),
+                    pdx_centroids, partial_d, not_pruned_counts.get()
+                );
+                return result_assignments;
             }
-
-            // data_norms was allocated for n_samples in Train(), reallocate for n_vectors
-            data_norms.reset(new float[n_vectors]);
-            GetPartialL2NormsRowMajor(data_p, n_vectors, data_norms.get(), partial_d);
-            batch_computer::FindNearestNeighborWithPruning(
-                data_p,
-                horizontal_centroids.get(),
-                n_vectors,
-                n_clusters,
-                d,
-                data_norms.get(),
-                centroid_norms.get(),
-                result_assignments.data(),
-                distances.get(),
-                tmp_distances_buf.data(),
-                pdx_centroids,
-                partial_d,
-                not_pruned_counts.get()
-            );
-            return result_assignments;
-        } else {
-            // When sampling_fraction is very low we don't have good initial assignments.
-            // We obtain a good initial assignment by clustering the given centroids into
-            // sqrt(n_centroids) meso-clusters, then map each vector's meso-assignment
-            // back to a representative original centroid for seeding.
-            SuperKMeansConfig tmp_config;
-            tmp_config.iters = 10;
-            tmp_config.sampling_fraction = 1.0f;
-            tmp_config.use_blas_only = false;
-            tmp_config.verbose = config.verbose;
-            tmp_config.suppress_warnings = config.suppress_warnings;
-            tmp_config.seed = config.seed;
-            tmp_config.angular = config.angular;
-            tmp_config.data_already_rotated = config.data_already_rotated;
-            auto new_n_centroids = static_cast<size_t>(std::sqrt(n_centroids));
-            SuperKMeans tmp_kmeans(new_n_centroids, d, tmp_config);
-            auto meso_centroids = tmp_kmeans.Train(centroids, n_centroids);
-            auto meso_assignments =
-                tmp_kmeans.Assign(vectors, meso_centroids.data(), n_vectors, new_n_centroids);
-
-            // Map each meso-centroid to a single representative original centroid
-            auto centroids_to_meso =
-                tmp_kmeans.Assign(centroids, meso_centroids.data(), n_centroids, new_n_centroids);
-            std::vector<uint32_t> meso_to_original(new_n_centroids, 0);
-            for (size_t c = 0; c < n_centroids; ++c) {
-                meso_to_original[centroids_to_meso[c]] = static_cast<uint32_t>(c);
-            }
-
-            // Seed sampled vectors from training assignments
-            size_t cur_vector_idx = 0;
-            for (; cur_vector_idx < n_samples; ++cur_vector_idx) {
-                result_assignments[sampled_indices[cur_vector_idx]] = assignments[cur_vector_idx];
-            }
-            // Seed non-sampled vectors: map their meso-assignment to an original centroid
-            for (; cur_vector_idx < n_vectors; ++cur_vector_idx) {
-                size_t orig_idx = sampled_indices[cur_vector_idx];
-                result_assignments[orig_idx] = meso_to_original[meso_assignments[orig_idx]];
-            }
-
-            data_norms.reset(new float[n_vectors]);
-            GetPartialL2NormsRowMajor(data_p, n_vectors, data_norms.get(), partial_d);
-
-            batch_computer::FindNearestNeighborWithPruning(
-                data_p,
-                horizontal_centroids.get(),
-                n_vectors,
-                n_clusters,
-                d,
-                data_norms.get(),
-                centroid_norms.get(),
-                result_assignments.data(),
-                distances.get(),
-                tmp_distances_buf.data(),
-                pdx_centroids,
-                partial_d,
-                not_pruned_counts.get()
-            );
-            return result_assignments;
         }
     }
 
@@ -1088,7 +1053,6 @@ class SuperKMeans {
     void RunIteration(
         const float* SKM_RESTRICT data_to_cluster,
         const vector_value_t* SKM_RESTRICT encoded_data_p,
-        distance_t* SKM_RESTRICT tmp_distances_buf,
         layout_t& centroids_pdx_wrapper,
         size_t* SKM_RESTRICT not_pruned_counts,
         const float* SKM_RESTRICT rotated_queries,
@@ -1121,7 +1085,7 @@ class SuperKMeans {
                 data_to_cluster, prev_centroids.get(),
                 n_samples, n_clusters, d,
                 data_norms.get(), centroid_norms.get(),
-                assignments.get(), distances.get(), tmp_distances_buf
+                assignments.get(), distances.get(), tmp_distances_buffer.get()
             );
             ResetCentroids(n_clusters);
             quantizer->ResetCentroidAccumulators(n_clusters, d);
@@ -1606,6 +1570,12 @@ class SuperKMeans {
         e_norms.noalias() = e_data.rowwise().squaredNorm();
     }
 
+    void EnsureTmpDistances() {
+        if (!tmp_distances_buffer) {
+            tmp_distances_buffer.reset(new distance_t[X_BATCH_SIZE * Y_BATCH_SIZE]);
+        }
+    }
+
     /**
      * @brief Rotates or copies vectors based on rotate parameter.
      *
@@ -1901,6 +1871,7 @@ class SuperKMeans {
 
     uint32_t n_threads;
     size_t n_samples = 0;
+    size_t n_train = 0;
     uint32_t partial_d = 0; // d'
 
     // Iteration state

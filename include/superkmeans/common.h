@@ -115,6 +115,10 @@ static inline constexpr size_t SKM_MAX_DIMS = 16384;
 // RaBitQ FastScan accumulates SQ dot products of nibbles into uint16 lanes
 static inline constexpr size_t RABITQ_MAX_DIMS = 4096;
 
+static inline constexpr uint32_t RABITQ_MIDDLE_CHECKPOINT_D_THRESHOLD = 768;
+
+static inline constexpr int RABITQ_SQ_BITS = 4;
+
 static inline constexpr size_t RECALL_CONVERGENCE_PATIENCE = 2;
 static inline constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 // Epsilon parameter of ADSampling (Reference: https://dl.acm.org/doi/abs/10.1145/3589282)

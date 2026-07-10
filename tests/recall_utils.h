@@ -29,6 +29,7 @@ inline constexpr size_t RECALL_N_QUERIES = 100;
 inline constexpr int RECALL_KNN = 10;
 inline constexpr float RECALL_FRAC = 0.01f;
 inline constexpr float RECALL_TOL = 0.01f;
+inline constexpr float RECALL_PRUNE_TOL = 0.02f;
 inline constexpr int RECALL_ITERS = 10;
 inline constexpr unsigned int RECALL_SEED = 42;
 
@@ -114,12 +115,15 @@ inline float RecallAtFraction(
     return -1.0f;
 }
 
-// Train RECALL_N_CLUSTERS centroids on the first RECALL_N rows of data_path with
-// the canonical config, then return average recall@RECALL_KNN at RECALL_FRAC.
+// Train n_clusters centroids on the first RECALL_N rows of data_path, then return
+// average recall@RECALL_KNN at RECALL_FRAC. Defaults reproduce the ground-truth config.
 template <skmeans::Quantization Q>
-inline float ClusteringRecall(skmeans::QuantizerType qt, const std::string& data_path) {
-    auto data = LoadTestDataSubdim(data_path, RECALL_N, RECALL_D, RECALL_D);
-    auto gt = BuildGroundTruthNN(data.data(), RECALL_N, RECALL_D, RECALL_N_QUERIES, RECALL_KNN);
+inline float ClusteringRecall(
+    skmeans::QuantizerType qt, const std::string& data_path,
+    size_t n_clusters = RECALL_N_CLUSTERS, size_t d = RECALL_D, bool pruning = false
+) {
+    auto data = LoadTestDataSubdim(data_path, RECALL_N, RECALL_D, d);
+    auto gt = BuildGroundTruthNN(data.data(), RECALL_N, d, RECALL_N_QUERIES, RECALL_KNN);
 
     skmeans::SuperKMeansConfig config;
     config.iters = RECALL_ITERS;
@@ -130,14 +134,13 @@ inline float ClusteringRecall(skmeans::QuantizerType qt, const std::string& data
     config.max_points_per_cluster = 99999;
     config.n_threads = 1;
     config.quantizer_type = qt;
+    config.use_blas_only = !pruning;
 
-    auto kmeans = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>(
-        RECALL_N_CLUSTERS, RECALL_D, config
-    );
+    auto kmeans = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), RECALL_N);
-    auto assign = kmeans.Assign(data.data(), centroids.data(), RECALL_N, RECALL_N_CLUSTERS);
+    auto assign = kmeans.Assign(data.data(), centroids.data(), RECALL_N, n_clusters);
     return RecallAtFraction(
-        gt, assign, data.data(), centroids.data(), RECALL_N_QUERIES, RECALL_N_CLUSTERS, RECALL_D,
+        gt, assign, data.data(), centroids.data(), RECALL_N_QUERIES, n_clusters, d,
         RECALL_KNN, RECALL_FRAC
     );
 }

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "superkmeans"
-version = "0.1.1"
+version = "0.2.0"
 description = "A Super fast K-Means library for High-Dimensional vectors on CPUs (x86, ARM) and GPUs"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -52,6 +52,7 @@ Repository = "https://github.com/cwida/superkmeans"
 cmake.source-dir = "."
 wheel.packages = ["python/superkmeans"]
 cmake.build-type = "Release"
+install.components = ["python"]
 
 cmake.args = [
     "-DSKMEANS_COMPILE_TESTS=OFF",

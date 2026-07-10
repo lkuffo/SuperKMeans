@@ -379,3 +379,39 @@ TEST_F(SuperKMeansLVQ4PruningTest, SLOW_PruningConverges) {
     EXPECT_FALSE(stats[1].is_gemm_only);
     EXPECT_LT(stats.back().objective, stats.front().objective);
 }
+
+TEST_F(SuperKMeansLVQ4PruningTest, SLOW_PruningRecallCloseToNoPruning) {
+    const std::string path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
+    float pruned = skm_test::ClusteringRecall<Quantization::u8>(QuantizerType::lvq4, path, 300, 1024, true);
+    float unpruned = skm_test::ClusteringRecall<Quantization::u8>(QuantizerType::lvq4, path, 300, 1024, false);
+    EXPECT_NEAR(pruned, unpruned, skm_test::RECALL_PRUNE_TOL)
+        << "pruned=" << pruned << " unpruned=" << unpruned;
+}
+
+TEST_F(SuperKMeansLVQ4PruningTest, SLOW_AssignTrainingPointsReuseMatchesQuantizedAssign) {
+    const size_t n = 5000, d = 128, n_clusters = 300;
+    auto data = skm_test::LoadTestDataSubdim(
+        CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d
+    );
+
+    SuperKMeansConfig config;
+    config.iters = 10;
+    config.quantizer_type = QuantizerType::lvq4;
+    config.sampling_fraction = 1.0f;
+    config.use_blas_only = false;
+
+    auto kmeans = skm_u8(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), n);
+
+    auto approximate_assignments = kmeans.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
+    auto brute_force_assignments = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
+
+    ASSERT_EQ(approximate_assignments.size(), n);
+    size_t agree = 0;
+    for (size_t i = 0; i < n; ++i) {
+        ASSERT_LT(approximate_assignments[i], n_clusters);
+        if (approximate_assignments[i] == brute_force_assignments[i]) agree++;
+    }
+    const double ratio = static_cast<double>(agree) / n;
+    EXPECT_GT(ratio, 0.98) << "agreement=" << ratio;
+}

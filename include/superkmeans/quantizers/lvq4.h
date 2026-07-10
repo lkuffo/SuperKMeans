@@ -2,9 +2,10 @@
 
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
+#include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
-#include "superkmeans/quantizers/u8_gemm.h"
+#include "superkmeans/distance_computers/gemms.h"
 
 #include <algorithm>
 #include <cassert>
@@ -19,6 +20,17 @@
 #include <Eigen/Dense>
 
 namespace skmeans {
+
+inline void AccumulateNibbles(
+    const uint8_t* code, size_t nbytes, uint32_t& sum, uint32_t& sum_sq
+) {
+    for (size_t b = 0; b < nbytes; ++b) {
+        uint8_t lo = code[b] & 0x0F;
+        uint8_t hi = code[b] >> 4;
+        sum += lo + hi;
+        sum_sq += static_cast<uint32_t>(lo) * lo + static_cast<uint32_t>(hi) * hi;
+    }
+}
 
 /**
  * @brief LVQ4 (Locally-adaptive Vector Quantization, 4-bit) quantizer.
@@ -110,7 +122,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
             }
 
             const bool use_numkong = !IS_ARM && (has_amx || k > THIN_MATRIX_THRESHOLD);
-            u8_gemm(
+            U8Gemm(
                 decoded_a_buf.data(), decoded_b_buf.data(), out,
                 m, n, k, k, k,
                 use_numkong, packed_buf_, b_changed
@@ -119,35 +131,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         }
 
         // Native u4 NumKong path: x86 without AMX, wide matrices
-        const auto* a_u4 = reinterpret_cast<const nk_u4x2_t*>(a);
-        const auto* b_u4 = reinterpret_cast<const nk_u4x2_t*>(b);
-
-        if (b_changed) {
-            const size_t pack_size = nk_dots_packed_size_u4(n, k);
-            if (pack_size > packed_buf_.size()) packed_buf_.resize(pack_size);
-            nk_dots_pack_u4(b_u4, n, k, b_stride, packed_buf_.data());
-        }
-
-        const size_t c_stride = n * sizeof(uint32_t);
-
-#pragma omp parallel num_threads(g_n_threads)
-        {
-            nk_configure_thread(nk_capabilities());
-            int tid = omp_get_thread_num();
-            int nt = omp_get_num_threads();
-            size_t rows_per_t = (m + nt - 1) / nt;
-            size_t start = tid * rows_per_t;
-            size_t count = std::min(rows_per_t, m - start);
-            if (start < m && count > 0) {
-                nk_dots_packed_u4(
-                    a_u4 + start * a_stride,
-                    packed_buf_.data(),
-                    out + start * n,
-                    count, n, k,
-                    a_stride, c_stride
-                );
-            }
-        }
+        U4Gemm(a, b, out, m, n, k, a_stride, b_stride, packed_buf_, b_changed);
     }
 
     void Encode(const float* in, quantized_t* out, size_t n, size_t d) const override {
@@ -184,12 +168,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
             float b = footer[1];
 
             uint32_t sum_c = 0, sum_c_sq = 0;
-            for (size_t byte = 0; byte < nibble_bytes_; ++byte) {
-                uint8_t lo = code[byte] & 0x0F;
-                uint8_t hi = code[byte] >> 4;
-                sum_c += lo + hi;
-                sum_c_sq += static_cast<uint32_t>(lo) * lo + static_cast<uint32_t>(hi) * hi;
-            }
+            AccumulateNibbles(code, nibble_bytes_, sum_c, sum_c_sq);
             out_norms[i] = s * s * static_cast<float>(sum_c_sq)
                          + 2.0f * s * b * static_cast<float>(sum_c)
                          + static_cast<float>(d) * b * b;
@@ -282,9 +261,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         const float front_d_f = static_cast<float>(front_bytes * 2);
         const float mid_d_f = static_cast<float>(mid_bytes * 2);
 
-        cached_sum_cx_front_.resize(n);
         cached_sum_cx_sq_front_.resize(n);
-        cached_sum_cx_mid_.resize(n);
         cached_sum_cx_sq_mid_.resize(n);
         cached_norm_x_front_.resize(n);
         cached_A_x_front_.resize(n);
@@ -300,47 +277,27 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
             const float bi = footer[1];
 
             uint32_t sum = 0, sum_sq = 0;
-            size_t b = 0;
             const size_t min_fb = std::min(front_bytes, mid_bytes);
             const size_t max_fb = std::max(front_bytes, mid_bytes);
 
-            for (; b < min_fb; ++b) {
-                uint8_t lo = code[b] & 0x0F;
-                uint8_t hi = code[b] >> 4;
-                sum += lo + hi;
-                sum_sq += static_cast<uint32_t>(lo) * lo + static_cast<uint32_t>(hi) * hi;
-            }
+            AccumulateNibbles(code, min_fb, sum, sum_sq);
 
             if (front_bytes <= mid_bytes) {
-                cached_sum_cx_front_[i] = sum;
                 cached_sum_cx_sq_front_[i] = sum_sq;
                 float sf = static_cast<float>(sum), sqf = static_cast<float>(sum_sq);
                 cached_norm_x_front_[i] = si * si * sqf + 2.0f * bi * si * sf + front_d_f * bi * bi;
                 cached_A_x_front_[i] = si * sf + front_d_f * bi;
-                for (; b < max_fb; ++b) {
-                    uint8_t lo = code[b] & 0x0F;
-                    uint8_t hi = code[b] >> 4;
-                    sum += lo + hi;
-                    sum_sq += static_cast<uint32_t>(lo) * lo + static_cast<uint32_t>(hi) * hi;
-                }
-                cached_sum_cx_mid_[i] = sum;
+                AccumulateNibbles(code + min_fb, max_fb - min_fb, sum, sum_sq);
                 cached_sum_cx_sq_mid_[i] = sum_sq;
                 sf = static_cast<float>(sum); sqf = static_cast<float>(sum_sq);
                 cached_norm_x_mid_[i] = si * si * sqf + 2.0f * bi * si * sf + mid_d_f * bi * bi;
                 cached_A_x_mid_[i] = si * sf + mid_d_f * bi;
             } else {
-                cached_sum_cx_mid_[i] = sum;
                 cached_sum_cx_sq_mid_[i] = sum_sq;
                 float sf = static_cast<float>(sum), sqf = static_cast<float>(sum_sq);
                 cached_norm_x_mid_[i] = si * si * sqf + 2.0f * bi * si * sf + mid_d_f * bi * bi;
                 cached_A_x_mid_[i] = si * sf + mid_d_f * bi;
-                for (; b < max_fb; ++b) {
-                    uint8_t lo = code[b] & 0x0F;
-                    uint8_t hi = code[b] >> 4;
-                    sum += lo + hi;
-                    sum_sq += static_cast<uint32_t>(lo) * lo + static_cast<uint32_t>(hi) * hi;
-                }
-                cached_sum_cx_front_[i] = sum;
+                AccumulateNibbles(code + min_fb, max_fb - min_fb, sum, sum_sq);
                 cached_sum_cx_sq_front_[i] = sum_sq;
                 sf = static_cast<float>(sum); sqf = static_cast<float>(sum_sq);
                 cached_norm_x_front_[i] = si * si * sqf + 2.0f * bi * si * sf + front_d_f * bi * bi;
@@ -385,8 +342,9 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         const bool use_mid = (front_bytes < mid_bytes) && (mid_bytes < nibble_bytes_);
 
         // ADSampling ratios
-        const float ad_ratio_front = ComputeADSamplingRatio(front_d, d);
-        const float ad_ratio_mid = use_mid ? ComputeADSamplingRatio(mid_d, d) : 1.0f;
+        const float ad_ratio_front = ComputeADSamplingRatio(front_d, d, PRUNER_INITIAL_THRESHOLD);
+        const float ad_ratio_mid =
+            use_mid ? ComputeADSamplingRatio(mid_d, d, PRUNER_INITIAL_THRESHOLD) : 1.0f;
 
         CentroidFactors cf;
         ExtractCentroidFactors(y_codes, n_y, front_d, mid_d, cf);
@@ -641,14 +599,11 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     bool fitted_ = false;
     bool has_amx = false;
 
-    // static constexpr size_t X_BATCH_SIZE = 65536;
-    // static constexpr size_t Y_BATCH_SIZE = 256;
-
     // Per-data caches (keyed by pointer + count for invalidation)
     mutable const uint8_t* cached_x_ptr_ = nullptr;
     mutable size_t cached_n_x_ = 0;
     mutable std::vector<float> cached_scales_, cached_biases_;
-    mutable std::vector<uint32_t> cached_sum_cx_, cached_sum_cx_sq_;
+    mutable std::vector<uint32_t> cached_sum_cx_sq_;
 
     // GEMM buffers
     mutable std::vector<uint32_t> dots_buf_;
@@ -657,8 +612,8 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     mutable std::vector<uint8_t> decoded_b_buf;
 
     // Pruning checkpoint caches
-    mutable std::vector<uint32_t> cached_sum_cx_front_, cached_sum_cx_sq_front_;
-    mutable std::vector<uint32_t> cached_sum_cx_mid_, cached_sum_cx_sq_mid_;
+    mutable std::vector<uint32_t> cached_sum_cx_sq_front_;
+    mutable std::vector<uint32_t> cached_sum_cx_sq_mid_;
     mutable uint32_t cached_partial_d_ = 0;
 
     // Precomputed float caches: norm_x = si²·Σcx² + 2·bi·si·Σcx + D·bi²
@@ -685,7 +640,6 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 
         cached_scales_.resize(n_x);
         cached_biases_.resize(n_x);
-        cached_sum_cx_.resize(n_x);
         cached_sum_cx_sq_.resize(n_x);
         cached_norm_x_full_.resize(n_x);
         cached_A_x_full_.resize(n_x);
@@ -702,13 +656,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
             cached_biases_[i] = bi;
 
             uint32_t sum = 0, sum_sq = 0;
-            for (size_t b = 0; b < nibble_bytes_; ++b) {
-                uint8_t lo = code[b] & 0x0F;
-                uint8_t hi = code[b] >> 4;
-                sum += lo + hi;
-                sum_sq += static_cast<uint32_t>(lo) * lo + static_cast<uint32_t>(hi) * hi;
-            }
-            cached_sum_cx_[i] = sum;
+            AccumulateNibbles(code, nibble_bytes_, sum, sum_sq);
             cached_sum_cx_sq_[i] = sum_sq;
 
             const float sum_f = static_cast<float>(sum);
@@ -756,52 +704,27 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
             cf.scales[j] = footer[0];
             cf.biases[j] = footer[1];
 
+            const size_t fb = std::min(front_bytes, nibble_bytes_);
+            const size_t mb = std::min(mid_bytes, nibble_bytes_);
+            const size_t min_fb = std::min(fb, mb);
+            const size_t max_fb = std::max(fb, mb);
+
             uint32_t sum = 0, sum_sq = 0;
-            bool saved_front = (front_bytes == 0);
-            bool saved_mid = (mid_bytes == 0);
-
-            for (size_t b = 0; b < nibble_bytes_; ++b) {
-                uint8_t lo = code_j[b] & 0x0F;
-                uint8_t hi = code_j[b] >> 4;
-                sum += lo + hi;
-                sum_sq += static_cast<uint32_t>(lo) * lo + static_cast<uint32_t>(hi) * hi;
-
-                if (!saved_front && b + 1 == front_bytes) {
-                    cf.sum_cy_front[j] = sum;
-                    cf.sum_cy_sq_front[j] = sum_sq;
-                    saved_front = true;
-                }
-                if (!saved_mid && b + 1 == mid_bytes) {
-                    cf.sum_cy_mid[j] = sum;
-                    cf.sum_cy_sq_mid[j] = sum_sq;
-                    saved_mid = true;
-                }
+            AccumulateNibbles(code_j, min_fb, sum, sum_sq);
+            if (fb <= mb) {
+                cf.sum_cy_front[j] = sum;
+                cf.sum_cy_sq_front[j] = sum_sq;
+                AccumulateNibbles(code_j + min_fb, max_fb - min_fb, sum, sum_sq);
+                cf.sum_cy_mid[j] = sum;
+                cf.sum_cy_sq_mid[j] = sum_sq;
+            } else {
+                cf.sum_cy_mid[j] = sum;
+                cf.sum_cy_sq_mid[j] = sum_sq;
+                AccumulateNibbles(code_j + min_fb, max_fb - min_fb, sum, sum_sq);
+                cf.sum_cy_front[j] = sum;
+                cf.sum_cy_sq_front[j] = sum_sq;
             }
-
-            // Fallback: if checkpoint boundary wasn't exactly hit, recompute
-            if (!saved_front) {
-                uint32_t s = 0, ssq = 0;
-                for (size_t b = 0; b < std::min(front_bytes, nibble_bytes_); ++b) {
-                    uint8_t lo = code_j[b] & 0x0F;
-                    uint8_t hi = code_j[b] >> 4;
-                    s += lo + hi;
-                    ssq += static_cast<uint32_t>(lo) * lo + static_cast<uint32_t>(hi) * hi;
-                }
-                cf.sum_cy_front[j] = s;
-                cf.sum_cy_sq_front[j] = ssq;
-            }
-            if (!saved_mid) {
-                uint32_t s = 0, ssq = 0;
-                for (size_t b = 0; b < std::min(mid_bytes, nibble_bytes_); ++b) {
-                    uint8_t lo = code_j[b] & 0x0F;
-                    uint8_t hi = code_j[b] >> 4;
-                    s += lo + hi;
-                    ssq += static_cast<uint32_t>(lo) * lo + static_cast<uint32_t>(hi) * hi;
-                }
-                cf.sum_cy_mid[j] = s;
-                cf.sum_cy_sq_mid[j] = ssq;
-            }
-
+            AccumulateNibbles(code_j + max_fb, nibble_bytes_ - max_fb, sum, sum_sq);
             cf.sum_cy[j] = sum;
             cf.sum_cy_sq[j] = sum_sq;
 
@@ -846,16 +769,6 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
              - 2.0f * si * sj * static_cast<float>(int_dot)
              - 2.0f * A_x_full * bj
              - 2.0f * bi * sj_sum_cy_full;
-    }
-
-    static float ComputeADSamplingRatio(size_t front_d, size_t d) {
-        if (front_d == 0 || front_d >= d) return 1.0f;
-        const double eps0 = static_cast<double>(PRUNER_INITIAL_THRESHOLD);
-        const double ratio =
-            static_cast<double>(front_d) / static_cast<double>(d) *
-            (1.0 + eps0 / std::sqrt(static_cast<double>(front_d))) *
-            (1.0 + eps0 / std::sqrt(static_cast<double>(front_d)));
-        return static_cast<float>(ratio);
     }
 
 };

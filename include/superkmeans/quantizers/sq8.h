@@ -6,7 +6,7 @@
 #include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
 #include "superkmeans/quantizers/sq_common.h"
-#include "superkmeans/quantizers/u8_gemm.h"
+#include "superkmeans/distance_computers/gemms.h"
 
 #include <algorithm>
 #include <cassert>
@@ -57,7 +57,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         size_t b_stride
     ) const {
         const bool use_numkong = !IS_ARM && (has_amx || k > THIN_MATRIX_THRESHOLD);
-        u8_gemm(a, b, out, m, n, k, a_stride, b_stride, use_numkong, centroids_nk_packed_buf, true);
+        U8Gemm(a, b, out, m, n, k, a_stride, b_stride, use_numkong, centroids_nk_packed_buf, true);
     }
 
     void Fit(const float* embeddings, size_t n, size_t d) override {

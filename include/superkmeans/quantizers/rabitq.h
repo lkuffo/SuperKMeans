@@ -2,6 +2,7 @@
 
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
+#include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
 
@@ -261,7 +262,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     ///          HorizontalMultiPlane would be ≤ 12 bytes — not worth the overhead.
     /// d > 768: 12.5% front, gap checkpoint between front and mid_d is active.
     uint32_t InitialPartialD(uint32_t vertical_d) const override {
-        if (vertical_d <= 768) {
+        if (vertical_d <= RABITQ_MIDDLE_CHECKPOINT_D_THRESHOLD) {
             return (vertical_d / 3 + 7) & ~7u;
         }
         return (vertical_d / 8 + 7) & ~7u;
@@ -414,9 +415,10 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         );
 
         // ADSampling ratios
-        const float adsampling_ratio_front = ComputeADSamplingRatio(front_d, d);
+        const float adsampling_ratio_front =
+            ComputeADSamplingRatio(front_d, d, PRUNER_INITIAL_THRESHOLD);
         const float adsampling_ratio_mid = use_mid_checkpoint
-            ? ComputeADSamplingRatio(mid_d, d) : 1.0f;
+            ? ComputeADSamplingRatio(mid_d, d, PRUNER_INITIAL_THRESHOLD) : 1.0f;
 
         const size_t lut_stride = n_sub * 16;
         const size_t block_bytes = FastScanComputer::kBlockSize * binary_bytes_;
@@ -659,78 +661,12 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         float* c1, float* c2, float* c34, float* qr_to_c_l2sqr
     ) const {
         SKM_PROFILE_SCOPE("RQ::QuantizeCentroidsAndBuildLUTs");
-        const float inv_sqrt_d = 1.0f / std::sqrt(static_cast<float>(d));
-        const float max_val = static_cast<float>((1 << qb_) - 1);
-        const size_t n_sub = 2 * binary_bytes_;
-
-#pragma omp parallel for num_threads(g_n_threads)
-        for (size_t j = 0; j < n_y; ++j) {
-            std::vector<float> rotated(d);
-            float v_min = std::numeric_limits<float>::max();
-            float v_max = std::numeric_limits<float>::lowest();
-            float norm_sq = 0;
-
-            for (size_t dim = 0; dim < d; ++dim) {
-                rotated[dim] = y_float[j * d + dim] - centroid_[dim];
-                v_min = std::min(v_min, rotated[dim]);
-                v_max = std::max(v_max, rotated[dim]);
-                norm_sq += rotated[dim] * rotated[dim];
-            }
-            qr_to_c_l2sqr[j] = norm_sq;
-
-            float delta = (v_max - v_min) / max_val;
-            if (delta < std::numeric_limits<float>::epsilon()) delta = 1.0f;
-            const float inv_delta = 1.0f / delta;
-            float sum_qq = 0;
-
-            std::vector<uint8_t> quantized(d);
-            for (size_t dim = 0; dim < d; ++dim) {
-                int v = static_cast<int>(std::lround((rotated[dim] - v_min) * inv_delta));
-                v = std::max(0, std::min(v, static_cast<int>(max_val)));
-                quantized[dim] = static_cast<uint8_t>(v);
-                sum_qq += static_cast<float>(v);
-            }
-
-            c1[j] = 2.0f * delta * inv_sqrt_d;
-            c2[j] = 2.0f * v_min * inv_sqrt_d;
-            c34[j] = inv_sqrt_d * (delta * sum_qq + static_cast<float>(d) * v_min);
-
-            // Build LUTs for this centroid
-            // Each byte of the binary code maps to 2 sub-quantizers (4 dims each).
-            // Sub-quantizer 2b handles dims 8b..8b+3 (low nibble of byte b)
-            // Sub-quantizer 2b+1 handles dims 8b+4..8b+7 (high nibble of byte b)
-            uint8_t* lut_j = all_luts + j * n_sub * 16;
-            for (size_t b = 0; b < binary_bytes_; ++b) {
-                uint8_t* lut_lo = lut_j + (2 * b) * 16;
-                uint8_t* lut_hi = lut_j + (2 * b + 1) * 16;
-
-                // Get the 8 SQ values for dimensions 8b..8b+7
-                uint8_t sq[8] = {0};
-                for (int k = 0; k < 8 && (8 * b + k) < d; ++k) {
-                    sq[k] = quantized[8 * b + k];
-                }
-
-                // Low nibble LUT: dims 8b..8b+3
-                for (int c = 0; c < 16; ++c) {
-                    uint8_t val = 0;
-                    if (c & 1) val += sq[0];
-                    if (c & 2) val += sq[1];
-                    if (c & 4) val += sq[2];
-                    if (c & 8) val += sq[3];
-                    lut_lo[c] = val;
-                }
-
-                // High nibble LUT: dims 8b+4..8b+7
-                for (int c = 0; c < 16; ++c) {
-                    uint8_t val = 0;
-                    if (c & 1) val += sq[4];
-                    if (c & 2) val += sq[5];
-                    if (c & 4) val += sq[6];
-                    if (c & 8) val += sq[7];
-                    lut_hi[c] = val;
-                }
-            }
-        }
+        QuantizeCentroidsAndBuildLUTsWithBounds(
+            y_float, n_y, d, d, d,
+            all_luts, c1, c2, c34, qr_to_c_l2sqr,
+            qr_to_c_l2sqr, c34, qr_to_c_l2sqr, c34,
+            nullptr
+        );
     }
 
     /// Nibble-split transpose with kPerm0 interleaving for fast SIMD scanning.
@@ -790,7 +726,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         cached_n_x_ = n_x;
     }
 
-    int qb_ = 4;
+    int qb_ = RABITQ_SQ_BITS;
     size_t d_ = 0;
     size_t binary_bytes_ = 0;
     size_t code_size_ = 0;
@@ -1035,17 +971,6 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
             data_code, lut_j, c1j, c2j, c34j, qr_j,
             sum_q_i, or_c_l2sqr_i, dp_mult_i, binary_bytes_
         );
-    }
-
-    /// Compute ADSampling ratio: (front_d/d) * (1 + eps0/sqrt(front_d))²
-    static float ComputeADSamplingRatio(size_t front_d, size_t d) {
-        if (front_d == 0 || front_d >= d) return 1.0f;
-        const double eps0 = static_cast<double>(PRUNER_INITIAL_THRESHOLD);
-        const double ratio =
-            static_cast<double>(front_d) / static_cast<double>(d) *
-            (1.0 + eps0 / std::sqrt(static_cast<double>(front_d))) *
-            (1.0 + eps0 / std::sqrt(static_cast<double>(front_d)));
-        return static_cast<float>(ratio);
     }
 
     // Pruning caches — checkpoint 1 (front, at partial_d)

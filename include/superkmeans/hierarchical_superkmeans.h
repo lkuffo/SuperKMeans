@@ -109,6 +109,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         }
         const float* SKM_RESTRICT data_p = data;
         this->n_samples = this->GetNVectorsToSample(n, this->n_clusters);
+        this->n_train = n;
         if (this->n_samples < this->n_clusters) {
             throw std::runtime_error(
                 "Not enough samples to train. Try increasing the sampling_fraction or "
@@ -130,8 +131,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             this->data_norms.reset(new float[this->n_samples]);
             this->centroid_norms.reset(new float[this->n_clusters]);
         }
-        std::vector<distance_t> tmp_distances_buf;
-        tmp_distances_buf.reserve(X_BATCH_SIZE * Y_BATCH_SIZE);
+        this->EnsureTmpDistances();
         this->vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->PDXDim(this->d)).vertical_d;
         this->partial_horizontal_centroids.reset(
             new centroid_value_t[this->n_clusters * this->vertical_d]
@@ -288,7 +288,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 this->template RunIteration<true>(
                     data_to_cluster,
                     encoded_data_p,
-                    tmp_distances_buf.data(),
                     centroids_pdx_wrapper,
                     not_pruned_counts.get(),
                     nullptr, // queries
@@ -303,7 +302,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 this->template RunIteration<false>(
                     data_to_cluster,
                     encoded_data_p,
-                    tmp_distances_buf.data(),
                     centroids_pdx_wrapper,
                     not_pruned_counts.get(),
                     nullptr, // queries
@@ -476,7 +474,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     this->template RunIteration<true>(
                         mesocluster_data_to_cluster,
                         mesocluster_encoded_data_p,
-                        tmp_distances_buf.data(),
                         mesocluster_centroids_pdx_wrapper,
                         not_pruned_counts.get(),
                         nullptr, // queries
@@ -491,7 +488,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                     this->template RunIteration<false>(
                         mesocluster_data_to_cluster,
                         mesocluster_encoded_data_p,
-                        tmp_distances_buf.data(),
                         mesocluster_centroids_pdx_wrapper,
                         not_pruned_counts.get(),
                         nullptr, // queries
@@ -602,7 +598,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 this->template RunIteration<true>(
                     data_to_cluster,
                     encoded_data_p,
-                    tmp_distances_buf.data(),
                     final_refinement_pdx_wrapper,
                     not_pruned_counts.get(),
                     nullptr, // queries
@@ -617,7 +612,6 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 this->template RunIteration<false>(
                     data_to_cluster,
                     encoded_data_p,
-                    tmp_distances_buf.data(),
                     final_refinement_pdx_wrapper,
                     not_pruned_counts.get(),
                     nullptr, // queries
