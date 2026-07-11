@@ -136,6 +136,7 @@ class SuperKMeans:
         self._hierarchical_param = hierarchical
         self._hierarchical = None
         self._cpp_skmeans_obj = None
+        self._assign_only_obj = None
         self._config_params = {
             'iters': iters,
             'iters_mesoclustering': iters_mesoclustering,
@@ -264,15 +265,30 @@ class SuperKMeans:
 
         return self._cpp_skmeans_obj.train(data, queries, n_queries)
 
+    def _assign_engine(self):
+        """C++ object used to run exact float32 assign().
+
+        Exact assign() needs no trained state and is identical across the
+        flat/hierarchical/quantized variants, so it can run before train():
+        reuse the trained object if present, otherwise lazily build a flat
+        float32 engine.
+        """
+        if self._cpp_skmeans_obj is not None:
+            return self._cpp_skmeans_obj
+        if self._assign_only_obj is None:
+            self._assign_only_obj = _SuperKMeansCpp(self._n_clusters, self._dimensionality)
+        return self._assign_only_obj
+
     def assign(
         self,
         vectors: NDArray[np.float32],
         centroids: NDArray[np.float32],
     ) -> NDArray[np.uint32]:
         """
-        Assign vectors to their nearest centroid using brute force.
+        Assign vectors to their nearest centroid using exact float32 brute force.
 
-        Works with any vectors, not just the training data.
+        Works with any vectors, not just the training data, and can be called
+        before train() (exact assignment needs no trained state).
 
         Parameters
         ----------
@@ -300,7 +316,7 @@ class SuperKMeans:
                 f"got {vectors.shape[1]} and {centroids.shape[1]}"
             )
 
-        return self._cpp_skmeans_obj.assign(vectors, centroids)
+        return self._assign_engine().assign(vectors, centroids)
 
     # Alias for assign() to match FAISS API
     add = assign

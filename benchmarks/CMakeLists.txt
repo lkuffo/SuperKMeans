@@ -21,7 +21,7 @@ set(FAISS_OPT_LEVEL "${FAISS_OPT_LEVEL}" CACHE STRING "CPU optimization level" F
 FetchContent_Declare(
     faiss
     GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
-    GIT_TAG        v1.11.0
+    GIT_TAG        v1.14.0
 )
 FetchContent_MakeAvailable(faiss)
 
@@ -147,13 +147,13 @@ FetchContent_MakeAvailable(fork_union)
 # target_include_directories(gemm_u8_onednn.out PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(gemm_u8_numkong.out gemm/u8/numkong.cpp)
-target_link_libraries(gemm_u8_numkong.out PRIVATE numkong fork_union)
+target_link_libraries(gemm_u8_numkong.out PRIVATE numkong fork_union ${BENCH_COMMON_LIBS})
 target_compile_definitions(gemm_u8_numkong.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(gemm_u8_numkong.out PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(gemm_u8_numkong.out PRIVATE -march=native)
 
 add_executable(gemm_u8_l2_numkong.out gemm/u8/l2_numkong.cpp)
-target_link_libraries(gemm_u8_l2_numkong.out PRIVATE numkong fork_union)
+target_link_libraries(gemm_u8_l2_numkong.out PRIVATE numkong fork_union ${BENCH_COMMON_LIBS})
 target_compile_definitions(gemm_u8_l2_numkong.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(gemm_u8_l2_numkong.out PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(gemm_u8_l2_numkong.out PRIVATE -march=native)
@@ -175,14 +175,14 @@ target_include_directories(gemm_f32_blas.out PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 # target_include_directories(gemm_f32_onednn.out PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(gemm_f32_numkong.out gemm/f32/numkong.cpp)
-target_link_libraries(gemm_f32_numkong.out PRIVATE numkong fork_union)
+target_link_libraries(gemm_f32_numkong.out PRIVATE numkong fork_union ${BENCH_COMMON_LIBS})
 target_compile_definitions(gemm_f32_numkong.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(gemm_f32_numkong.out PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(gemm_f32_numkong.out PRIVATE -march=native)
 
 # Binary Hamming microbenchmarks
 add_executable(gemm_binary_numkong.out gemm/binary/numkong.cpp)
-target_link_libraries(gemm_binary_numkong.out PRIVATE numkong fork_union)
+target_link_libraries(gemm_binary_numkong.out PRIVATE numkong fork_union ${BENCH_COMMON_LIBS})
 target_compile_definitions(gemm_binary_numkong.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(gemm_binary_numkong.out PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(gemm_binary_numkong.out PRIVATE -march=native)

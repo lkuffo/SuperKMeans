@@ -97,6 +97,29 @@ class TestSuperKMeans:
         assert np.all(assignments >= 0)
         assert np.all(assignments < k)
 
+    def test_assign_without_train(self):
+        np.random.seed(0)
+        n = 500
+        d = 32
+        k = 8
+        data = np.random.randn(n, d).astype(np.float32)
+        centroids = np.random.randn(k, d).astype(np.float32)
+
+        kmeans = SuperKMeans(n_clusters=k, dimensionality=d)
+        assert not kmeans.is_trained_
+
+        assignments = kmeans.assign(data, centroids)
+
+        assert assignments.shape == (n,)
+        assert assignments.dtype == np.uint32
+        assert np.all(assignments < k)
+        assert not kmeans.is_trained_
+
+        dists = ((data[:, None, :] - centroids[None, :, :]) ** 2).sum(axis=2)
+        expected = dists.argmin(axis=1).astype(np.uint32)
+        agreement = np.mean(assignments == expected)
+        assert agreement >= 0.99, f"assign() disagrees with brute force: {agreement:.3f}"
+
     def test_iteration_stats(self):
         np.random.seed(42)
         n = 10000
