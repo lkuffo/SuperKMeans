@@ -496,7 +496,7 @@ class ScalarRaBitQCodec {
         const float sqrt_d = std::sqrt(static_cast<float>(d));
         float* factors = (float*)(code + binary_bytes);
         factors[0] = norm_L2sqr;                        // or_minus_c_l2sqr
-        factors[1] = norm_L2sqr * sqrt_d / dp_oO;       // dp_multiplier
+        factors[1] = dp_oO > 0.0f ? norm_L2sqr * sqrt_d / dp_oO : 0.0f;  // dp_multiplier
     }
 
     /**

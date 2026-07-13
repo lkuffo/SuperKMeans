@@ -7,7 +7,7 @@ These are our current priorities:
 **Features**:
 - Support `uint64_t` for the `assignments`. Right now, we are limited to ~4 billion vectors.
 - Support for different datatypes: 64-bit `double`, 16-bit `half`, 8-bit `uint8` (experimental).
-- Support for out-of-core capabilities
+- Support for out-of-core capabilities.
 
 **Improvements**:
 - A proper benchmarking framework for development.
@@ -26,7 +26,7 @@ git checkout -b my-feature
 4. **Open a Pull Request (PR)** against the `main` branch.
 
 > [!IMPORTANT]
-> Let us know in advance if you plan implementing a big feature!
+> Let us know in advance if you plan to implement a big feature!
 
 ## Testing
 

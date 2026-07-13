@@ -17,10 +17,10 @@
 </p>
 
 ## Why Super K-Means?
-- **100x faster clustering** than FAISS of vector embeddings (Cohere, OpenAI, MXBAI, CLIP, MiniLM).
+- **100x faster clustering** of vector embeddings (Cohere, OpenAI, MXBAI, CLIP, MiniLM) than FAISS.
 - Index 10M embeddings of 1024 dimensions [**in less than a minute**](https://www.lkuffo.com/superkmeans/) on a single CPU.
 - Faster **without compromising clustering quality**.
-- Efficient in **CPUs** (ARM and x86) and **GPUs**.
+- Efficient on **CPUs** (ARM and x86) and **GPUs**.
 
 ## Our secret sauce
 - Carefully interleaving GEMM routines and pruning kernels that **prune dimensions** efficiently
@@ -172,7 +172,7 @@ For a more comprehensive installation and compilation guide, check [INSTALL.md](
 Check [INSTALL.md](./INSTALL.md).
 
 ## Roadmap
-We are actively developing Super K-Means and accepting contributions! Check [CONTRIBUTING.md](./CONTRIBUTING.md)
+We are actively developing Super K-Means and accepting contributions! Check [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Benchmarking
 To run our benchmark suite in C++, refer to [BENCHMARKING.md](./BENCHMARKING.md).

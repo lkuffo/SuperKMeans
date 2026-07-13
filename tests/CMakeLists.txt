@@ -40,10 +40,6 @@ target_link_libraries(generate_wcss_ground_truth.out PRIVATE ${TEST_COMMON_LIBS}
 target_include_directories(generate_wcss_ground_truth.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
 target_compile_definitions(generate_wcss_ground_truth.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-add_executable(generate_wcss_ground_truth_hierarchical.out generate_wcss_ground_truth_hierarchical.cpp)
-target_link_libraries(generate_wcss_ground_truth_hierarchical.out PRIVATE ${TEST_COMMON_LIBS})
-target_compile_definitions(generate_wcss_ground_truth_hierarchical.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-
 add_executable(generate_recall_ground_truth.out generate_recall_ground_truth.cpp)
 target_link_libraries(generate_recall_ground_truth.out PRIVATE ${TEST_COMMON_LIBS})
 target_include_directories(generate_recall_ground_truth.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)

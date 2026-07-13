@@ -61,7 +61,7 @@ struct SuperKMeansConfig {
     bool suppress_warnings = false; // Whether to suppress warnings
 
     bool data_already_rotated = false; // Whether input data is already rotated (skip rotation)
-    bool quantized_centroid_update = false; // Accumulate centroids in quantized domain (u8 only)
+    bool quantized_centroid_update = true; // Accumulate centroids in quantized domain (u8 only)
     bool full_precision_final_centroids = false; // Recompute final centroids from raw float data
     bool verbose_detail = false; // Print per-cluster movement details each iteration
 };

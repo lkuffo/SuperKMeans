@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <omp.h>
 #include <random>
 #include <vector>
@@ -13,9 +14,21 @@
 #include "superkmeans/superkmeans.h"
 
 int main(int argc, char* argv[]) {
-    const std::string algorithm = "superkmeans_lvq4";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
-    bool blas_only = !(argc > 2 && std::string(argv[2]) == "pruning");
+    std::string quantizer = (argc > 2) ? std::string(argv[2]) : std::string("sq8");
+    bool blas_only = !(argc > 3 && std::string(argv[3]) == "pruning");
+
+    const std::map<std::string, skmeans::QuantizerType> quantizers = {
+        {"sq8", skmeans::QuantizerType::sq8},
+        {"lvq4", skmeans::QuantizerType::lvq4},
+        {"rabitq", skmeans::QuantizerType::rabitq},
+    };
+    auto qit = quantizers.find(quantizer);
+    if (qit == quantizers.end()) {
+        std::cerr << "Unknown quantizer '" << quantizer << "' (use sq8|lvq4|rabitq)\n";
+        return 1;
+    }
+    const std::string algorithm = "superkmeans_" + quantizer;
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -76,10 +89,9 @@ int main(int argc, char* argv[]) {
     config.early_termination = false;
     config.sampling_fraction = sampling_fraction;
     config.tol = 1e-3f;
-    config.quantizer_type = skmeans::QuantizerType::lvq4;
-    config.quantized_centroid_update = true;
-    config.full_precision_final_centroids = false;
+    config.quantizer_type = qit->second;
     config.use_blas_only = blas_only;
+    config.quantized_centroid_update = true;
     if (blas_only) {
         std::cout << "BLAS-only mode (no pruning)" << std::endl;
     }

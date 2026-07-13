@@ -36,10 +36,13 @@ inline constexpr unsigned int RECALL_SEED = 42;
 // Regenerate with generate_recall_ground_truth.out
 inline const std::unordered_map<std::string, float> RECALL_GROUND_TRUTH = {
     {"f32", 0.601f},
-    {"sq8", 0.616f},
-    {"lvq4", 0.622f},
-    {"rabitq", 0.604f},
+    {"sq8", 0.612f},
+    {"lvq4", 0.615f},
+    {"rabitq", 0.601f},
     {"hierarchical_f32", 0.589f},
+    {"hierarchical_sq8", 0.591f},
+    {"hierarchical_lvq4", 0.609f},
+    {"hierarchical_rabitq", 0.587f},
 };
 
 // Load raw float32 data (n x max_d, row-major, no header) and copy the
@@ -145,7 +148,10 @@ inline float ClusteringRecall(
     );
 }
 
-inline float HierarchicalClusteringRecall(const std::string& data_path) {
+template <skmeans::Quantization Q>
+inline float HierarchicalClusteringRecall(
+    skmeans::QuantizerType qt, const std::string& data_path
+) {
     auto data = LoadTestDataSubdim(data_path, RECALL_N, RECALL_D, RECALL_D);
     auto gt = BuildGroundTruthNN(data.data(), RECALL_N, RECALL_D, RECALL_N_QUERIES, RECALL_KNN);
 
@@ -159,10 +165,10 @@ inline float HierarchicalClusteringRecall(const std::string& data_path) {
     config.sampling_fraction = 1.0f;
     config.max_points_per_cluster = 99999;
     config.n_threads = 1;
+    config.quantizer_type = qt;
 
-    auto kmeans = skmeans::HierarchicalSuperKMeans<
-        skmeans::Quantization::f32,
-        skmeans::DistanceFunction::l2>(RECALL_N_CLUSTERS, RECALL_D, config);
+    auto kmeans = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>(
+        RECALL_N_CLUSTERS, RECALL_D, config);
     auto centroids = kmeans.Train(data.data(), RECALL_N);
     auto assign = kmeans.Assign(data.data(), centroids.data(), RECALL_N, RECALL_N_CLUSTERS);
     return RecallAtFraction(

@@ -24,7 +24,7 @@ CMake options:
 - `-DBLAS_LIBRARIES`: Full path name of BLAS library to use. Useful if you want to link SuperKMeans against a different BLAS implementation. For example, if you have installed AMD BLIS: `-DBLAS_LIBRARIES=/opt/amd-blis/lib/libblis-mt.so`
 
 > [!TIP]
-> BLAS is critical to achieve high performance. In Linux, we recommend [installing OpenBLAS from source](#installing-blas). 
+> BLAS is critical to achieve high performance. On Linux, we recommend [installing OpenBLAS from source](#installing-blas). 
 
 ## From source
 
@@ -131,7 +131,7 @@ ldconfig
 ```
 
 ### MacOS
-**Silicon Chips (M1 to M5)**: You don't need to do anything special. We automatically detect [Apple Accelerate](https://developer.apple.com/documentation/accelerate) that uses the [AMX](https://github.com/corsix/amx) unit. 
+**Silicon Chips (M1 to M5)**: You don't need to do anything special. We automatically detect [Apple Accelerate](https://developer.apple.com/documentation/accelerate), which uses the [AMX](https://github.com/corsix/amx) unit. 
 
 **Intel Chips (older Macs)**: Install OpenBLAS as detailed above.
 
@@ -155,7 +155,7 @@ sudo apt install python3-dev
 
 
 ### Super K-Means is slow on my Apple Silicon
-If you previously installed OpenBLAS in your machine, the installation may be linking to OpenBLAS instead of Apple Accelerate. You can try forcing the linking of Apple Accelerate: 
+If you previously installed OpenBLAS on your machine, the installation may be linking to OpenBLAS instead of Apple Accelerate. You can try forcing the linking of Apple Accelerate: 
 
 ```sh
 # C++
@@ -167,7 +167,7 @@ pip install --force-reinstall . -C cmake.args="-DBLAS_LIBRARIES=/Library/Develop
 ```
 
 ### Super K-Means is slow even after installing OpenBLAS from source in Linux
-Try forcing the linking to the OpenBlas you just installed. For example:
+Try forcing the linking to the OpenBLAS you just installed. For example:
 ```sh
 # C++
 cmake . -DBLAS_LIBRARIES=/usr/local/lib/libopenblas_neoversev2p-r0.3.31.dev.so
@@ -221,5 +221,9 @@ make TARGET=NEOVERSEV1 DYNAMIC_ARCH=0 USE_OPENMP=1 NUM_THREADS=128
 ### Does Super K-Means use SIMD?
 Yes. We have optimizations for AVX512, AVX2, and NEON. You don't need to do anything special to activate these. If your machine doesn't have any of these, we rely on scalar code. 
 
+### Quantized clustering is slower than full-precision clustering!
+The speed of quantized clustering depends on your hardware capabilities. Here are some known situations in which `f32` ends up being faster than `sq8`:
+- Apple M1-M5: The AMX unit from the silicon chips has optimized GEMM for `float32`. Using `sq8` or `lvq4` will regress clustering time.  
+
 ## GPU 
-Looking for installation on GPU? We have an implementation (see `gpu` branch)! But the installation instructions are still WiP.
+Looking for installation on GPU? We have an implementation (see `gpu` branch)! But the installation instructions are still WIP.

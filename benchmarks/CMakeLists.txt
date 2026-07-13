@@ -71,19 +71,10 @@ skmeans_add_benchmark(pareto_superkmeans.out pareto/pareto_superkmeans.cpp)
 skmeans_add_benchmark(pareto_hierarchical_superkmeans.out pareto/pareto_hierarchical_superkmeans.cpp)
 skmeans_add_benchmark(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp)
 skmeans_add_benchmark(ad_hoc_hierarchical_superkmeans.out ad_hoc_hierarchical_superkmeans.cpp)
-skmeans_add_faiss_benchmark(ad_hoc_hierarchical_superkmeans_quantized.out ad_hoc_hierarchical_superkmeans_quantized.cpp)
+skmeans_add_benchmark(ad_hoc_hierarchical_superkmeans_quantized.out ad_hoc_hierarchical_superkmeans_quantized.cpp)
 skmeans_add_benchmark(ad_hoc_assign.out ad_hoc_assign.cpp)
-skmeans_add_benchmark(ad_hoc_jlt.out ad_hoc_jlt.cpp)
-skmeans_add_benchmark(ad_hoc_mat.out ad_hoc_mat.cpp)
-skmeans_add_faiss_benchmark(ad_hoc_pca.out ad_hoc_pca.cpp)
-skmeans_add_benchmark(ad_hoc_superkmeans_sq8.out ad_hoc_superkmeans_sq8.cpp)
-skmeans_add_benchmark(ad_hoc_id_estimator.out ad_hoc_id_estimator.cpp)
-skmeans_add_benchmark(ad_hoc_ivn.out ad_hoc_ivn.cpp)
+skmeans_add_benchmark(ad_hoc_superkmeans_quantized.out ad_hoc_superkmeans_quantized.cpp)
 skmeans_add_faiss_benchmark(accelerators.out accelerators/accelerators.cpp)
-skmeans_add_faiss_benchmark(ad_hoc_superkmeans_rabitq.out ad_hoc_superkmeans_rabitq.cpp)
-skmeans_add_faiss_benchmark(ad_hoc_rabitq_centroid_analysis.out ad_hoc_rabitq_centroid_analysis.cpp)
-skmeans_add_benchmark(ad_hoc_lvq4.out ad_hoc_lvq4.cpp)
-skmeans_add_benchmark(ad_hoc_assign_quantized.out ad_hoc_assign_quantized.cpp)
 skmeans_add_benchmark(sweet_pruning_spot_superkmeans.out sweet_pruning_spot_superkmeans.cpp)
 skmeans_add_benchmark(microbenchmark_init_positions_array.out microbenchmarks/microbenchmark_init_positions_array.cpp)
 skmeans_add_benchmark(microbenchmark_flip_sign.out microbenchmarks/microbenchmark_flip_sign.cpp)
@@ -210,13 +201,7 @@ add_custom_target(benchmarks
         ad_hoc_superkmeans.out
         ad_hoc_hierarchical_superkmeans.out
         ad_hoc_assign.out
-        ad_hoc_jlt.out
-        ad_hoc_mat.out
-        ad_hoc_pca.out
-        ad_hoc_superkmeans_sq8.out
-        ad_hoc_superkmeans_rabitq.out
-        ad_hoc_lvq4.out
-        ad_hoc_assign_quantized.out
+        ad_hoc_superkmeans_quantized.out
         sweet_pruning_spot_superkmeans.out
         microbenchmark_init_positions_array.out
         microbenchmark_flip_sign.out

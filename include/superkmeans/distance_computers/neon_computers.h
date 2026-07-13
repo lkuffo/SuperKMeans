@@ -780,7 +780,7 @@ class SIMDRaBitQCodec {
 
         float* factors = (float*)(code + binary_bytes);
         factors[0] = norm_L2sqr;
-        factors[1] = norm_L2sqr * sqrt_d / dp_oO;
+        factors[1] = dp_oO > 0.0f ? norm_L2sqr * sqrt_d / dp_oO : 0.0f;
     }
 
     /**

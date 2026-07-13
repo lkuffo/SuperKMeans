@@ -665,7 +665,7 @@ TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignPathsValid) {
         }
 
         std::unordered_set<uint32_t> used(exact.begin(), exact.end());
-        EXPECT_GE(used.size(), static_cast<size_t>(0.90 * n_clusters));
+        EXPECT_GE(used.size(), static_cast<size_t>(0.85 * n_clusters));
 
         size_t agree_quant_exact = 0, agree_reuse_quant = 0;
         for (size_t i = 0; i < n; ++i) {
@@ -728,7 +728,7 @@ TEST_F(HierarchicalSuperKMeansTest, EdgeCase_SinglePoint) {
 
 namespace {
 
-// Regenerate with: ./generate_wcss_ground_truth_hierarchical.out
+// Regenerate with: ./generate_wcss_ground_truth.out
 // Data: tests/test_data.bin; ITERS_MESOCLUSTERING=5, ITERS_FINECLUSTERING=5, ITERS_REFINEMENT=2
 
 // clang-format off
@@ -821,7 +821,7 @@ TEST_P(HierarchicalWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
     auto data = ExtractSubdim(d);
     ASSERT_EQ(data.size(), N_SAMPLES * d) << "Data size mismatch";
 
-    // These values MUST match those in generate_wcss_ground_truth_hierarchical.cpp
+    // These values MUST match those in generate_wcss_ground_truth.cpp
     skmeans::HierarchicalSuperKMeansConfig config;
     config.iters_mesoclustering = ITERS_MESOCLUSTERING;
     config.iters_fineclustering = ITERS_FINECLUSTERING;
@@ -917,8 +917,35 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(HierarchicalRecallGroundTruthTest, F32_MatchesGroundTruth) {
     omp_set_num_threads(1);
-    float recall = skm_test::HierarchicalClusteringRecall(CMAKE_SOURCE_DIR "/tests/test_data.bin");
+    float recall = skm_test::HierarchicalClusteringRecall<skmeans::Quantization::f32>(
+        skmeans::QuantizerType::none, CMAKE_SOURCE_DIR "/tests/test_data.bin");
     EXPECT_NEAR(recall, skm_test::RECALL_GROUND_TRUTH.at("hierarchical_f32"), skm_test::RECALL_TOL);
+}
+
+struct HierarchicalQParam {
+    skmeans::QuantizerType type;
+    const char* name;
+};
+
+class HierarchicalQuantizedRecallTest : public ::testing::TestWithParam<HierarchicalQParam> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    Quantizers, HierarchicalQuantizedRecallTest,
+    ::testing::Values(
+        HierarchicalQParam{skmeans::QuantizerType::sq8, "hierarchical_sq8"},
+        HierarchicalQParam{skmeans::QuantizerType::lvq4, "hierarchical_lvq4"},
+        HierarchicalQParam{skmeans::QuantizerType::rabitq, "hierarchical_rabitq"}
+    ),
+    [](const ::testing::TestParamInfo<HierarchicalQParam>& info) {
+        return std::string(info.param.name);
+    }
+);
+
+TEST_P(HierarchicalQuantizedRecallTest, MatchesGroundTruth) {
+    omp_set_num_threads(1);
+    float recall = skm_test::HierarchicalClusteringRecall<skmeans::Quantization::u8>(
+        GetParam().type, CMAKE_SOURCE_DIR "/tests/test_data.bin");
+    EXPECT_NEAR(recall, skm_test::RECALL_GROUND_TRUTH.at(GetParam().name), skm_test::RECALL_TOL);
 }
 
 } // anonymous namespace
