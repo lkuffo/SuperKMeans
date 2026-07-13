@@ -140,7 +140,6 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
         uint32_t n_threads
     ) const override {
         SKM_PROFILE_SCOPE("F32::UpdateCentroids");
-        assert(fitted);
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)
         {
             uint32_t nt = n_threads;

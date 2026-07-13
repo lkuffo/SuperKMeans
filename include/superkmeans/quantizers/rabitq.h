@@ -113,9 +113,9 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         for (size_t i = 0; i < n; ++i) {
             const uint8_t* code =
                 reinterpret_cast<const uint8_t*>(data) + i * code_size_;
-            const auto* factors =
-                reinterpret_cast<const RaBitQFactors*>(code + binary_bytes_);
-            out_norms[i] = factors->or_minus_c_l2sqr;
+            float or_minus_c_l2sqr;
+            std::memcpy(&or_minus_c_l2sqr, code + binary_bytes_, sizeof(float));
+            out_norms[i] = or_minus_c_l2sqr;
         }
     }
 
@@ -640,9 +640,10 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
             }
             sum_q[i] = pc;
 
-            const auto* fac = reinterpret_cast<const RaBitQFactors*>(code + binary_bytes_);
-            or_c_l2sqr[i] = fac->or_minus_c_l2sqr;
-            dp_mult[i] = fac->dp_multiplier;
+            RaBitQFactors fac;
+            std::memcpy(&fac, code + binary_bytes_, sizeof(fac));
+            or_c_l2sqr[i] = fac.or_minus_c_l2sqr;
+            dp_mult[i] = fac.dp_multiplier;
         }
     }
 

@@ -778,9 +778,10 @@ class SIMDRaBitQCodec {
         const float dp_oO = vaddvq_f32(abs_acc) + abs_tail;
         const float sqrt_d = std::sqrt(static_cast<float>(d));
 
-        float* factors = (float*)(code + binary_bytes);
-        factors[0] = norm_L2sqr;
-        factors[1] = dp_oO > 0.0f ? norm_L2sqr * sqrt_d / dp_oO : 0.0f;
+        const float or_minus_c_l2sqr = norm_L2sqr;
+        const float dp_multiplier = dp_oO > 0.0f ? norm_L2sqr * sqrt_d / dp_oO : 0.0f;
+        std::memcpy(code + binary_bytes, &or_minus_c_l2sqr, sizeof(float));
+        std::memcpy(code + binary_bytes + sizeof(float), &dp_multiplier, sizeof(float));
     }
 
     /**
@@ -793,8 +794,8 @@ class SIMDRaBitQCodec {
         size_t binary_bytes,
         const float* SKM_RESTRICT centroid
     ) {
-        const float* factors = (const float*)(code + binary_bytes);
-        const float dp_multiplier = factors[1];
+        float dp_multiplier;
+        std::memcpy(&dp_multiplier, code + binary_bytes + sizeof(float), sizeof(float));
         const float inv_sqrt_d = 1.0f / std::sqrt(static_cast<float>(d));
         const float scale = dp_multiplier * 2.0f * inv_sqrt_d;
 
@@ -907,9 +908,8 @@ class SIMDLVQ4Codec {
             code[out_off] = static_cast<uint8_t>(q_lo | (q_hi << 4));
         }
 
-        float* footer = (float*)(code + nibble_bytes);
-        footer[0] = scale;
-        footer[1] = bias;
+        std::memcpy(code + nibble_bytes, &scale, sizeof(float));
+        std::memcpy(code + nibble_bytes + sizeof(float), &bias, sizeof(float));
     }
 
     /**
@@ -921,9 +921,9 @@ class SIMDLVQ4Codec {
         size_t d,
         size_t nibble_bytes
     ) {
-        const float* footer = (const float*)(code + nibble_bytes);
-        const float scale = footer[0];
-        const float bias = footer[1];
+        float scale, bias;
+        std::memcpy(&scale, code + nibble_bytes, sizeof(float));
+        std::memcpy(&bias, code + nibble_bytes + sizeof(float), sizeof(float));
 
         const float32x4_t v_scale = vdupq_n_f32(scale);
         const float32x4_t v_bias = vdupq_n_f32(bias);

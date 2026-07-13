@@ -153,11 +153,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             std::cout << "Sampling data..." << std::endl;
         }
         // Samples for both mesoclustering and fineclustering
-        std::vector<float> data_samples_buffer;
-        data_samples_buffer.reserve(this->n_samples * this->d);
+        std::unique_ptr<float[]> data_samples_buffer(new float[this->n_samples * this->d]);
         auto data_to_cluster = this->SampleAndRotateVectors(
             data_p,
-            data_samples_buffer.data(),
+            data_samples_buffer.get(),
             n,
             this->n_samples,
             !this->hierarchical_config.data_already_rotated

@@ -163,9 +163,9 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const uint8_t* code = data + i * code_size_;
-            const float* footer = (const float*)(code + nibble_bytes_);
-            float s = footer[0];
-            float b = footer[1];
+            float s, b;
+            std::memcpy(&s, code + nibble_bytes_, sizeof(float));
+            std::memcpy(&b, code + nibble_bytes_ + sizeof(float), sizeof(float));
 
             uint32_t sum_c = 0, sum_c_sq = 0;
             AccumulateNibbles(code, nibble_bytes_, sum_c, sum_c_sq);
@@ -272,9 +272,9 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const uint8_t* code = codes + i * code_size_;
-            const float* footer = (const float*)(code + nibble_bytes_);
-            const float si = footer[0];
-            const float bi = footer[1];
+            float si, bi;
+            std::memcpy(&si, code + nibble_bytes_, sizeof(float));
+            std::memcpy(&bi, code + nibble_bytes_ + sizeof(float), sizeof(float));
 
             uint32_t sum = 0, sum_sq = 0;
             const size_t min_fb = std::min(front_bytes, mid_bytes);
@@ -649,9 +649,9 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n_x; ++i) {
             const uint8_t* code = x_codes + i * code_size_;
-            const float* footer = (const float*)(code + nibble_bytes_);
-            const float si = footer[0];
-            const float bi = footer[1];
+            float si, bi;
+            std::memcpy(&si, code + nibble_bytes_, sizeof(float));
+            std::memcpy(&bi, code + nibble_bytes_ + sizeof(float), sizeof(float));
             cached_scales_[i] = si;
             cached_biases_[i] = bi;
 
@@ -700,9 +700,8 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t j = 0; j < n_y; ++j) {
             const uint8_t* code_j = y_codes + j * code_size_;
-            const float* footer = (const float*)(code_j + nibble_bytes_);
-            cf.scales[j] = footer[0];
-            cf.biases[j] = footer[1];
+            std::memcpy(&cf.scales[j], code_j + nibble_bytes_, sizeof(float));
+            std::memcpy(&cf.biases[j], code_j + nibble_bytes_ + sizeof(float), sizeof(float));
 
             const size_t fb = std::min(front_bytes, nibble_bytes_);
             const size_t mb = std::min(mid_bytes, nibble_bytes_);

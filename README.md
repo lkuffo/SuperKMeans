@@ -12,14 +12,15 @@
   A super-fast clustering library for high-dimensional vector embeddings
 </h3>
 
-<p align="center">
+<!-- <p align="center">
         <img src="./benchmarks/results/plots/github_1.png" height=260 alt="SuperKMeans vs FAISS and Scikit Learn" style="{max-height: 250px}">
-</p>
+</p> -->
 
 ## Why Super K-Means?
-- **100x faster clustering** of vector embeddings (Cohere, OpenAI, MXBAI, CLIP, MiniLM) than FAISS.
+- **Faster clustering** of vector embeddings (Cohere, OpenAI, MXBAI, CLIP, MiniLM) than FAISS.
 - Index 10M embeddings of 1024 dimensions [**in less than a minute**](https://www.lkuffo.com/superkmeans/) on a single CPU.
 - Faster **without compromising clustering quality**.
+- Support for **quantized clustering** (8-bit Scalar Quantization, LVQ, and RabitQ)
 - Efficient on **CPUs** (ARM and x86) and **GPUs**.
 
 ## Our secret sauce
@@ -82,8 +83,24 @@ int main(int argc, char* argv[]) {
 
 Check our [examples](./examples/) for fully working examples in Python and C++.
 
+## Quantized Clustering
+SuperKMeans support **clustering quantized vectors**, substantially accelerating clustering and barely affecting clustering quality. We support 8-bit scalar quantization, [LVQ](https://arxiv.org/pdf/2304.04759), and [RabitQ](https://github.com/VectorDB-NTU/RaBitQ-Library). You give us `float32` vectors and we handle the rest:
+
+```py
+kmeans = SuperKMeans(
+    n_clusters=k,
+    dimensionality=d,
+    quantizer='rabitq'
+)
+
+centroids = kmeans.train(data) # We return float32 centroids
+assignments = kmeans.quantized_assign(data, centroids)
+```
+
+Check our [fully working example](./examples/quantized_clustering.py).
+
 ## Documentation
-Check [our wiki](https://github.com/cwida/SuperKMeans/wiki/Documentation) for advanced usage.
+Check [our wiki](https://github.com/cwida/SuperKMeans/wiki/Documentation) for advanced usage and API reference.
 
 ## Installation
 
@@ -174,5 +191,12 @@ Check [INSTALL.md](./INSTALL.md).
 ## Roadmap
 We are actively developing Super K-Means and accepting contributions! Check [CONTRIBUTING.md](./CONTRIBUTING.md).
 
+
 ## Benchmarking
 To run our benchmark suite in C++, refer to [BENCHMARKING.md](./BENCHMARKING.md).
+
+## Adoption
+SuperKMeans' ideas are part of:
+- [FAISS](https://github.com/facebookresearch/faiss/pull/5168)
+- [Zilliz](https://github.com/zilliztech/knowhere/pull/1635)
+- [Elastic](https://github.com/elastic/elasticsearch/pull/144599)
