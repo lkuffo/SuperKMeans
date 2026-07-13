@@ -101,6 +101,7 @@ venv
 *.hdf5
 !benchmarks/results/plots/github_*.png
 !benchmarks/results/plots/comparison_*.png
+!benchmarks/results/distributions/*.png
 *.eps
 
 _deps

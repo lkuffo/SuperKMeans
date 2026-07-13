@@ -18,30 +18,90 @@ constexpr int K_VALUES[] = {5, 10, 20, 50, 100};
 constexpr size_t N_K_VALUES = sizeof(K_VALUES) / sizeof(K_VALUES[0]);
 // Maximum k needed (for kNN precomputation).
 // We request K_MAX+1 from BatchComputer to account for self-matches.
-constexpr int K_MAX = 100;
+constexpr int K_MAX = 256;
 constexpr int K_QUERY = K_MAX + 1;
 
 using L2BatchComputer = skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>;
 
 /**
- * @brief Two-NN estimator (Facco et al. 2017).
+ * @brief Two-NN estimator (Facco et al.), DADApy-equivalent.
  *
- * For each point, compute mu = r2/r1 (ratio of 2nd to 1st NN distance).
- * Global ID estimate: d_hat = n / sum(log(mu_i))
+ * mu_i = r2/r1. Degenerate points (r1 = 0, i.e. duplicates) are dropped, and
+ * the largest (1 - fraction) of mu values are trimmed before fitting.
+ *   - id_ml:   MLE  d = N / sum(log mu)
+ *   - id_base: least-squares slope of -log(1 - i/N) vs log(mu) through origin
  */
-static double EstimateTwoNN(const std::vector<float>& knn_dists, size_t n, int k) {
-    double sum_log_mu = 0.0;
+struct TwoNNEstimate {
+    double id_ml_all;
+    double id_ml_trim;
+    double id_base_trim;
+    size_t n_used;
+    size_t n_dropped;
+};
+
+static TwoNNEstimate EstimateTwoNN(
+    const std::vector<float>& knn_dists, size_t n, int k_max, double fraction
+) {
+    std::vector<double> log_mu;
+    log_mu.reserve(n);
+    size_t dropped = 0;
+    for (size_t i = 0; i < n; ++i) {
+        float r1 = knn_dists[i * k_max + 0];
+        float r2 = knn_dists[i * k_max + 1];
+        if (!(r1 > 0.0f) || !(r2 > 0.0f)) { ++dropped; continue; }
+        double lm = std::log(static_cast<double>(r2) / static_cast<double>(r1));
+        if (std::isfinite(lm) && lm >= 0.0) log_mu.push_back(lm);
+        else ++dropped;
+    }
+
+    TwoNNEstimate est{0.0, 0.0, 0.0, 0, dropped};
+    if (log_mu.size() < 2) return est;
+
+    double sum_all = std::accumulate(log_mu.begin(), log_mu.end(), 0.0);
+    if (sum_all > 0.0) est.id_ml_all = static_cast<double>(log_mu.size()) / sum_all;
+
+    std::sort(log_mu.begin(), log_mu.end());
+    const size_t N = log_mu.size();
+    size_t n_eff = static_cast<size_t>(static_cast<double>(N) * fraction);
+    n_eff = std::min(N, std::max<size_t>(2, n_eff));
+    est.n_used = n_eff;
+
+    double sum_trim = 0.0, sxy = 0.0, sxx = 0.0;
+    for (size_t i = 0; i < n_eff; ++i) {
+        double x = log_mu[i];
+        double F = static_cast<double>(i + 1) / static_cast<double>(N);
+        double y = -std::log(1.0 - F);
+        sum_trim += x;
+        sxy += x * y;
+        sxx += x * x;
+    }
+    if (sum_trim > 0.0) est.id_ml_trim = static_cast<double>(n_eff) / sum_trim;
+    if (sxx > 0.0) est.id_base_trim = sxy / sxx;
+    return est;
+}
+
+/**
+ * @brief Generalized Two-NN / Gride estimator (Denti et al. 2022).
+ *
+ * Uses the ratio of the (2k)-th to k-th NN distance, which is robust to the
+ * neighborhood size (unlike the raw 1st/2nd-NN ratio):
+ *   d_hat = (H_{2k-1} - H_{k-1}) / mean_i log(r_{i,2k} / r_{i,k})
+ */
+static double EstimateGride(const std::vector<float>& knn_dists, size_t n, int k_max, int k) {
+    if (2 * k > k_max) return 0.0;
+    double harmonic = 0.0;
+    for (int j = k; j < 2 * k; ++j) harmonic += 1.0 / static_cast<double>(j);
+    double sum_log = 0.0;
     size_t valid = 0;
     for (size_t i = 0; i < n; ++i) {
-        float r1 = knn_dists[i * k + 0];
-        float r2 = knn_dists[i * k + 1];
-        if (r1 > 0.0f) {
-            sum_log_mu += std::log(static_cast<double>(r2) / static_cast<double>(r1));
-            ++valid;
-        }
+        float rk = knn_dists[i * k_max + (k - 1)];
+        float r2k = knn_dists[i * k_max + (2 * k - 1)];
+        if (!(rk > 0.0f) || !(r2k > 0.0f)) continue;
+        double lr = std::log(static_cast<double>(r2k) / static_cast<double>(rk));
+        if (std::isfinite(lr)) { sum_log += lr; ++valid; }
     }
-    if (sum_log_mu <= 0.0) return 0.0;
-    return static_cast<double>(valid) / sum_log_mu;
+    if (valid == 0 || sum_log <= 0.0) return 0.0;
+    return harmonic / (sum_log / static_cast<double>(valid));
 }
 
 /**
@@ -111,7 +171,7 @@ static double EstimateLID(
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <dataset>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <dataset> [n_sample]" << std::endl;
         return 1;
     }
     const std::string dataset = argv[1];
@@ -138,7 +198,9 @@ int main(int argc, char* argv[]) {
     }
 
     // Sample points
-    const size_t n_sample = std::min(N_SAMPLE, n);
+    size_t n_sample_req = N_SAMPLE;
+    if (argc >= 3) n_sample_req = static_cast<size_t>(std::stoull(argv[2]));
+    const size_t n_sample = std::min(n_sample_req, n);
     std::vector<float> sampled(n_sample * d);
     {
         std::mt19937 rng(42);
@@ -195,10 +257,21 @@ int main(int argc, char* argv[]) {
               << timer.GetMilliseconds() << " ms)" << std::endl;
 
     // ── Two-NN ──
-    double two_nn = EstimateTwoNN(knn_dists, n_sample, K_MAX);
+    constexpr double TWO_NN_FRACTION = 0.9;
+    TwoNNEstimate two_nn = EstimateTwoNN(knn_dists, n_sample, K_MAX, TWO_NN_FRACTION);
     std::cout << "\n=== Intrinsic Dimensionality Estimates ===" << std::endl;
     std::cout << std::fixed << std::setprecision(2);
-    std::cout << "\nTwo-NN (Facco et al. 2017):  " << two_nn << std::endl;
+    std::cout << "\nTwo-NN (Facco et al.), dropped " << two_nn.n_dropped
+              << " degenerate pts, used " << two_nn.n_used << ":" << std::endl;
+    std::cout << "  ML (all, no trim)      : " << two_nn.id_ml_all << std::endl;
+    std::cout << "  ML (fraction=0.9)      : " << two_nn.id_ml_trim << std::endl;
+    std::cout << "  base linear fit (0.9)  : " << two_nn.id_base_trim << std::endl;
+
+    std::cout << "\nGride (generalized Two-NN, robust to neighborhood size):" << std::endl;
+    for (int k : {2, 4, 8, 16, 32, 64, 128}) {
+        std::cout << "  k=" << std::setw(3) << k << ", 2k=" << std::setw(3) << 2 * k
+                  << " : " << EstimateGride(knn_dists, n_sample, K_MAX, k) << std::endl;
+    }
 
     // ── MLE and LID for various k values ──
     std::cout << "\n" << std::setw(8) << "k"
