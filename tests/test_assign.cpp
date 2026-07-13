@@ -25,11 +25,12 @@ const std::vector<std::pair<skmeans::QuantizerType, const char*>> kQuantizers = 
 };
 
 void ExpectAssignTrainingPointsFallsBackToQuantizedAssign(
-    skmeans::QuantizerType qt, size_t n, size_t d, size_t n_clusters, bool use_blas_only
+    skmeans::QuantizerType qt, size_t n, size_t d, size_t n_clusters, bool use_blas_only,
+    uint32_t iters = 10
 ) {
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
     skmeans::SuperKMeansConfig config;
-    config.iters = 10;
+    config.iters = iters;
     config.sampling_fraction = 1.0f;
     config.seed = 42;
     config.quantizer_type = qt;
@@ -145,12 +146,12 @@ TEST_F(AssignTest, EachPointAssignedToNearestCentroid_HighDim) {
 }
 
 /**
- * @brief Test that Assign with use_train_state=true matches use_train_state=false
+ * @brief Test that AssignTrainingPoints matches that of Assign brute-force path
  *
  * The GEMM+PRUNING fast path should produce at least 98% identical assignments
  * compared to the brute-force path.
  */
-TEST_F(AssignTest, UseTrainState_MatchesBruteForce) {
+TEST_F(AssignTest, AssignTrainingPoints_MatchesBruteForce) {
     const size_t n = 50000;
     const size_t d = 128;
     const size_t n_clusters = 500;
@@ -191,11 +192,12 @@ TEST_F(AssignTest, UseTrainState_MatchesBruteForce) {
 }
 
 /**
- * @brief Test that Assign with use_train_state matches brute force when sampling
+ * @brief Test that AssignTrainingPoints matches that of Assign brute-force path
  *
- * With sampling_fraction=0.5 the sampled path is exercised (seeding + recompute).
+ * The GEMM+PRUNING fast path should produce at least 98% identical assignments
+ * compared to the brute-force path.
  */
-TEST_F(AssignTest, UseTrainState_MatchesBruteForce_Sampled) {
+TEST_F(AssignTest, AssignTrainingPoints_MatchesBruteForce_Sampled) {
     const size_t n = 50000;
     const size_t d = 128;
     const size_t n_clusters = 500;
@@ -236,9 +238,9 @@ TEST_F(AssignTest, UseTrainState_MatchesBruteForce_Sampled) {
 }
 
 /**
- * @brief Test that HierarchicalSuperKMeans Assign with use_train_state matches brute force
+ * @brief Test that HierarchicalSuperKMeans AssignTrainingPoints matches brute force
  */
-TEST_F(AssignTest, UseTrainState_MatchesBruteForce_Hierarchical) {
+TEST_F(AssignTest, AssignTrainingPoints_MatchesBruteForce_Hierarchical) {
     const size_t n = 50000;
     const size_t d = 128;
     const size_t n_clusters = 500;
@@ -345,6 +347,13 @@ TEST_F(AssignTest, QuantizedAssignTrainingPoints_BlasOnly_FallsBackToQuantizedAs
     }
 }
 
+TEST_F(AssignTest, QuantizedAssignTrainingPoints_SingleIteration_FallsBackToQuantizedAssign) {
+    for (const auto& [qt, name] : kQuantizers) {
+        SCOPED_TRACE(name);
+        ExpectAssignTrainingPointsFallsBackToQuantizedAssign(qt, 5000, 128, 300, false, 1);
+    }
+}
+
 TEST_F(AssignTest, AssignTrainingPoints_WrongVectorCount_Throws) {
     const size_t n = 5000;
     const size_t d = 128;
@@ -364,4 +373,54 @@ TEST_F(AssignTest, AssignTrainingPoints_WrongVectorCount_Throws) {
         kmeans.AssignTrainingPoints(data.data(), centroids.data(), n - 1, n_clusters),
         std::runtime_error
     );
+}
+
+namespace {
+void ExpectQuantizedTrainAndAssignValid(
+    skmeans::QuantizerType qt, const std::vector<float>& data, size_t n, size_t d, size_t n_clusters
+) {
+    skmeans::SuperKMeansConfig config;
+    config.iters = 10;
+    config.seed = 42;
+    config.sampling_fraction = 1.0f;
+    config.quantizer_type = qt;
+
+    auto kmeans = skm_u8(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), n);
+
+    ASSERT_EQ(centroids.size(), n_clusters * d);
+    for (float v : centroids) ASSERT_TRUE(std::isfinite(v));
+
+    auto a = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    ASSERT_EQ(a.size(), n);
+    for (size_t i = 0; i < n; ++i) ASSERT_LT(a[i], n_clusters);
+}
+}  // namespace
+
+TEST_F(AssignTest, EdgeCase_Quantized_SingleCluster) {
+    const size_t n = 500, d = 16, n_clusters = 1;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, 5, false, 1.0f, 10.0f, 42);
+    for (const auto& [qt, name] : kQuantizers) {
+        SCOPED_TRACE(name);
+        ExpectQuantizedTrainAndAssignValid(qt, data, n, d, n_clusters);
+    }
+}
+
+TEST_F(AssignTest, EdgeCase_Quantized_ClustersEqualPoints) {
+    const size_t n = 128, d = 16, n_clusters = 128;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, 16, false, 1.0f, 10.0f, 42);
+    for (const auto& [qt, name] : kQuantizers) {
+        SCOPED_TRACE(name);
+        ExpectQuantizedTrainAndAssignValid(qt, data, n, d, n_clusters);
+    }
+}
+
+TEST_F(AssignTest, EdgeCase_Quantized_SinglePoint) {
+    const size_t n = 1, d = 16, n_clusters = 1;
+    std::vector<float> data(d);
+    for (size_t j = 0; j < d; ++j) data[j] = static_cast<float>(j) * 0.1f + 0.5f;
+    for (const auto& [qt, name] : kQuantizers) {
+        SCOPED_TRACE(name);
+        ExpectQuantizedTrainAndAssignValid(qt, data, n, d, n_clusters);
+    }
 }

@@ -445,7 +445,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 std::unique_ptr<uint16_t[]> all_partial_dots(
                     new uint16_t[n_blks * n_y * kBS]);
 
-                // ── Pass 1a: Multi-block FastScan all centroids ──
+                // Pass 1a: Multi-block FastScan all centroids 
                 {
                     SKM_PROFILE_SCOPE("RQ::FindNearestNeighborWithPruning/fastscan");
                     if (n_blks == kSuperBlock) {
@@ -473,7 +473,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                     }
                 }
 
-                // ── Per-block processing: fused correction + checkpoint pipeline ──
+                //  Per-block processing: fused correction + checkpoint pipeline 
                 for (size_t bi = 0; bi < n_blks; ++bi) {
                     const size_t blk = blk_base + bi;
                     const size_t blk_start = blk * kBS;
@@ -515,7 +515,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                         dp_sum_q_front_buf[k] = dp_mult[blk_start + k] * sum_q_front_f32[k];
                     }
 
-                    // ── Fused loop: for each centroid, checkpoint1 → checkpoint2 → phase3 ──
+                    //  Fused loop: for each centroid, checkpoint1 → checkpoint2 → phase3 
                     for (size_t j = 0; j < n_y; ++j) {
                         const uint16_t* partial_dot_qo =
                             all_partial_dots.get() + (bi * n_y + j) * kBS;
@@ -871,7 +871,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
             c34_mid[j] = inv_sqrt_d *
                 (delta * sum_qq_mid + static_cast<float>(mid_d_clamped) * v_min);
 
-            // Build LUTs (identical to QuantizeCentroidsAndBuildLUTs)
+            // Build LUTs
             uint8_t* lut_j = all_luts + j * n_sub * 16;
             for (size_t b = 0; b < binary_bytes_; ++b) {
                 uint8_t* lut_lo = lut_j + (2 * b) * 16;

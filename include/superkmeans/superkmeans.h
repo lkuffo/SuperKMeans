@@ -681,7 +681,8 @@ class SuperKMeans {
             if (config.sampling_fraction == 1.0f && quantizer->SupportsPruning()
                 && !config.use_blas_only
                 && d >= DIMENSION_THRESHOLD_FOR_PRUNING
-                && n_clusters > N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
+                && n_clusters > N_CLUSTERS_THRESHOLD_FOR_PRUNING
+                && config.iters > 1) {
                 std::vector<uint32_t> result_assignments(
                     assignments.get(), assignments.get() + n_vectors);
                 std::vector<distance_t> result_distances(n_vectors,

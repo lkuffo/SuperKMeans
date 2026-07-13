@@ -704,7 +704,7 @@ class SIMDFastScanComputer {
 
         n_survivors = 0;
 
-        // ── Fast path: blk_count == 32 → manually unrolled 2×16 with interleaved ILP ──
+        // Fast path: blk_count == 32 → manually unrolled 2×16 with interleaved ILP 
         if (blk_count == 32) {
             const __m512i offsets_lo = _mm512_set_epi32(
                 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
@@ -754,7 +754,7 @@ class SIMDFastScanComputer {
             return;
         }
 
-        // ── General path: loop 16 at a time ──
+        //  General path: loop 16 at a time 
         const __m512i offsets = _mm512_set_epi32(
             15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
 

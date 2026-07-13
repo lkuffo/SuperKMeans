@@ -625,6 +625,103 @@ TEST_F(HierarchicalSuperKMeansTest, AngularMode_Normalizes) {
     }
 }
 
+TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignPathsValid) {
+    const std::vector<std::pair<skmeans::QuantizerType, const char*>> quantizers = {
+        {skmeans::QuantizerType::sq8, "sq8"},
+        {skmeans::QuantizerType::lvq4, "lvq4"},
+        {skmeans::QuantizerType::rabitq, "rabitq"},
+    };
+    const size_t n = 15000;
+    const size_t d = 128;
+    const size_t n_clusters = 300;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+
+    for (const auto& [qt, name] : quantizers) {
+        SCOPED_TRACE(name);
+        skmeans::HierarchicalSuperKMeansConfig config;
+        config.iters_mesoclustering = 5;
+        config.iters_fineclustering = 5;
+        config.iters_refinement = 1;
+        config.seed = 42;
+        config.sampling_fraction = 1.0f;
+        config.quantizer_type = qt;
+
+        auto kmeans = skmeans::HierarchicalSuperKMeans<
+            skmeans::Quantization::u8, skmeans::DistanceFunction::l2>(n_clusters, d, config);
+        auto centroids = kmeans.Train(data.data(), n);
+        ASSERT_EQ(centroids.size(), n_clusters * d);
+
+        auto exact = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+        auto quantized = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
+        auto reuse = kmeans.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
+
+        ASSERT_EQ(exact.size(), n);
+        ASSERT_EQ(quantized.size(), n);
+        ASSERT_EQ(reuse.size(), n);
+        for (size_t i = 0; i < n; ++i) {
+            ASSERT_LT(exact[i], n_clusters);
+            ASSERT_LT(quantized[i], n_clusters);
+            ASSERT_LT(reuse[i], n_clusters);
+        }
+
+        std::unordered_set<uint32_t> used(exact.begin(), exact.end());
+        EXPECT_GE(used.size(), static_cast<size_t>(0.90 * n_clusters));
+
+        size_t agree_quant_exact = 0, agree_reuse_quant = 0;
+        for (size_t i = 0; i < n; ++i) {
+            if (quantized[i] == exact[i]) agree_quant_exact++;
+            if (reuse[i] == quantized[i]) agree_reuse_quant++;
+        }
+        EXPECT_GE(static_cast<double>(agree_quant_exact) / n, 0.90)
+            << "quantized vs exact agreement too low";
+        EXPECT_GE(static_cast<double>(agree_reuse_quant) / n, 0.90)
+            << "reuse vs quantized agreement too low";
+    }
+}
+
+namespace {
+void ExpectHierarchicalTrainAndAssignValid(
+    const std::vector<float>& data, size_t n, size_t d, size_t n_clusters
+) {
+    skmeans::HierarchicalSuperKMeansConfig config;
+    config.iters_mesoclustering = 3;
+    config.iters_fineclustering = 3;
+    config.iters_refinement = 1;
+    config.seed = 42;
+    config.sampling_fraction = 1.0f;
+
+    auto kmeans = skmeans::HierarchicalSuperKMeans<
+        skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), n);
+
+    ASSERT_EQ(centroids.size(), n_clusters * d);
+    for (float v : centroids) ASSERT_TRUE(std::isfinite(v));
+
+    auto a = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    ASSERT_EQ(a.size(), n);
+    for (size_t i = 0; i < n; ++i) ASSERT_LT(a[i], n_clusters);
+}
+}  // namespace
+
+TEST_F(HierarchicalSuperKMeansTest, EdgeCase_SingleCluster) {
+    const size_t n = 500, d = 16, n_clusters = 1;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, 5, false, 1.0f, 10.0f, 42);
+    ExpectHierarchicalTrainAndAssignValid(data, n, d, n_clusters);
+}
+
+TEST_F(HierarchicalSuperKMeansTest, EdgeCase_ClustersEqualPoints) {
+    const size_t n = 128, d = 16, n_clusters = 128;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, 16, false, 1.0f, 10.0f, 42);
+    ExpectHierarchicalTrainAndAssignValid(data, n, d, n_clusters);
+}
+
+TEST_F(HierarchicalSuperKMeansTest, EdgeCase_SinglePoint) {
+    const size_t n = 1, d = 16, n_clusters = 1;
+    std::vector<float> data(d);
+    for (size_t j = 0; j < d; ++j) data[j] = static_cast<float>(j) * 0.1f + 0.5f;
+    ExpectHierarchicalTrainAndAssignValid(data, n, d, n_clusters);
+}
+
 // =============================================================================
 // WCSS Ground Truth Tests
 // =============================================================================
@@ -816,7 +913,7 @@ INSTANTIATE_TEST_SUITE_P(
     }
 );
 
-// ── IVF-recall ground truth (test_data.bin, mxbai 10k x 1024) ──
+// IVF-recall ground truth (test_data.bin, mxbai 10k x 1024)
 
 TEST(HierarchicalRecallGroundTruthTest, F32_MatchesGroundTruth) {
     omp_set_num_threads(1);

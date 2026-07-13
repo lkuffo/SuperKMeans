@@ -178,6 +178,32 @@ class TestSuperKMeans:
         with pytest.raises(ValueError, match="same dimensionality"):
             kmeans.assign(data_wrong_dim, centroids)
 
+    def test_quantized_assign_validation(self):
+        np.random.seed(42)
+        n, d, k = 500, 128, 10
+        data = np.random.randn(n, d).astype(np.float32)
+        kmeans = SuperKMeans(n_clusters=k, dimensionality=d, iters=5, sampling_fraction=1.0)
+        centroids = kmeans.train(data)
+
+        with pytest.raises(ValueError, match="dtype float32"):
+            kmeans.quantized_assign(data.astype(np.float64), centroids)
+        wrong_dim = np.random.randn(n, 16).astype(np.float32)
+        with pytest.raises(ValueError, match="same dimensionality"):
+            kmeans.quantized_assign(wrong_dim, centroids)
+
+    def test_assign_training_points_validation(self):
+        np.random.seed(42)
+        n, d, k = 500, 128, 10
+        data = np.random.randn(n, d).astype(np.float32)
+        kmeans = SuperKMeans(n_clusters=k, dimensionality=d, iters=5, sampling_fraction=1.0)
+        centroids = kmeans.train(data)
+
+        with pytest.raises(ValueError, match="dtype float32"):
+            kmeans.assign_training_points(data.astype(np.float64), centroids)
+        wrong_dim = np.random.randn(n, 16).astype(np.float32)
+        with pytest.raises(ValueError, match="same dimensionality"):
+            kmeans.assign_training_points(wrong_dim, centroids)
+
     def test_non_contiguous_arrays(self):
         np.random.seed(42)
         n = 100

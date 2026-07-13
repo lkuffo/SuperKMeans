@@ -75,6 +75,11 @@ target_link_libraries(test_quantized_rabitq.out PRIVATE ${TEST_COMMON_LIBS})
 target_include_directories(test_quantized_rabitq.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
 target_compile_definitions(test_quantized_rabitq.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+add_executable(test_quantized.out test_quantized.cpp)
+target_link_libraries(test_quantized.out PRIVATE ${TEST_COMMON_LIBS})
+target_include_directories(test_quantized.out PRIVATE ${CMAKE_SOURCE_DIR}/benchmarks)
+target_compile_definitions(test_quantized.out PRIVATE CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 include(GoogleTest)
 gtest_discover_tests(test_rotation.out)
 gtest_discover_tests(test_assign.out)
@@ -86,6 +91,7 @@ gtest_discover_tests(test_hierarchical_superkmeans.out)
 gtest_discover_tests(test_quantized_sq8.out)
 gtest_discover_tests(test_quantized_lvq4.out)
 gtest_discover_tests(test_quantized_rabitq.out)
+gtest_discover_tests(test_quantized.out)
 
 add_custom_target(tests
     DEPENDS
@@ -99,4 +105,5 @@ add_custom_target(tests
         test_quantized_sq8.out
         test_quantized_lvq4.out
         test_quantized_rabitq.out
+        test_quantized.out
 )

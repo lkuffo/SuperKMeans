@@ -315,7 +315,7 @@ INSTANTIATE_TEST_SUITE_P(
     }
 );
 
-// ── IVF-recall ground truth (test_data.bin, mxbai 10k x 1024) ──
+//  IVF-recall ground truth (test_data.bin, mxbai 10k x 1024) 
 
 TEST(RecallGroundTruthTest, F32_MatchesGroundTruth) {
     omp_set_num_threads(1);

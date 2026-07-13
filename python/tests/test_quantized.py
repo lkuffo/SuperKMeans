@@ -112,8 +112,13 @@ class TestQuantizedSuperKMeans:
         assert km.hierarchical_ is True
 
         labels = km.assign(data, centroids)
-        assert labels.shape == (n,)
-        assert np.all(labels < k)
+        q_labels = km.quantized_assign(data, centroids)
+        reuse_labels = km.assign_training_points(data, centroids)
+        for lab in (labels, q_labels, reuse_labels):
+            assert lab.shape == (n,)
+            assert lab.dtype == np.uint32
+            assert np.all(lab < k)
+        assert np.mean(q_labels == labels) >= 0.9
 
     @pytest.mark.parametrize("quantizer", QUANTIZERS)
     def test_repr_shows_quantizer(self, quantizer):
