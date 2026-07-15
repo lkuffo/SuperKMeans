@@ -13,7 +13,10 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -51,6 +54,81 @@ inline std::string get_query_path(const std::string& dataset) {
 inline std::string get_ground_truth_path(const std::string& dataset) {
     return GROUND_TRUTH_DIR + "/" + dataset + ".json";
 }
+
+/**
+ * @brief Read-only memory-mapped view of a raw float32 file.
+ *
+ * Maps the file instead of copying it into a heap buffer: the mapped pages are
+ * the OS page cache, so large datasets stay warm across process runs and I/O
+ * overlaps with computation. madvise() hints prefetch a sequential scan.
+ */
+class MmapFloatFile {
+  public:
+    MmapFloatFile() = default;
+    explicit MmapFloatFile(const std::string& path) { Open(path); }
+    ~MmapFloatFile() { Close(); }
+
+    MmapFloatFile(const MmapFloatFile&) = delete;
+    MmapFloatFile& operator=(const MmapFloatFile&) = delete;
+    MmapFloatFile(MmapFloatFile&& other) noexcept { MoveFrom(other); }
+    MmapFloatFile& operator=(MmapFloatFile&& other) noexcept {
+        if (this != &other) {
+            Close();
+            MoveFrom(other);
+        }
+        return *this;
+    }
+
+    bool Open(const std::string& path) {
+        Close();
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) return false;
+        struct stat st;
+        if (::fstat(fd, &st) != 0 || st.st_size <= 0) {
+            Close();
+            return false;
+        }
+        bytes = static_cast<size_t>(st.st_size);
+        void* p = ::mmap(nullptr, bytes, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (p == MAP_FAILED) {
+            Close();
+            return false;
+        }
+        ptr = static_cast<const float*>(p);
+        ::madvise(p, bytes, MADV_SEQUENTIAL);
+        ::madvise(p, bytes, MADV_WILLNEED);
+        return true;
+    }
+
+    const float* data() const { return ptr; }
+    size_t num_floats() const { return bytes / sizeof(float); }
+    bool valid() const { return ptr != nullptr; }
+
+  private:
+    void Close() {
+        if (ptr) {
+            ::munmap(const_cast<float*>(ptr), bytes);
+            ptr = nullptr;
+        }
+        if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+        }
+        bytes = 0;
+    }
+    void MoveFrom(MmapFloatFile& other) {
+        ptr = other.ptr;
+        bytes = other.bytes;
+        fd = other.fd;
+        other.ptr = nullptr;
+        other.bytes = 0;
+        other.fd = -1;
+    }
+
+    const float* ptr = nullptr;
+    size_t bytes = 0;
+    int fd = -1;
+};
 
 class TicToc {
   public:

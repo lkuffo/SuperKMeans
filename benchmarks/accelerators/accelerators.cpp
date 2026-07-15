@@ -180,15 +180,16 @@ void RunPipeline(
     std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters
               << " threads=" << THREADS << std::endl;
 
-    // ── Load data and queries ──
-    std::vector<float> data(n * d);
-    std::vector<float> queries(n_queries * d);
-
-    {
-        std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
-        if (!f) { std::cerr << "Failed to open data file\n"; return; }
-        f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
+    // ── Load data (mmap) and queries ──
+    bench_utils::MmapFloatFile data(bench_utils::get_data_path(dataset));
+    if (!data.valid()) { std::cerr << "Failed to open data file\n"; return; }
+    if (data.num_floats() < n * d) {
+        std::cerr << "Data file has " << data.num_floats() << " floats, expected "
+                  << n * d << "\n";
+        return;
     }
+
+    std::vector<float> queries(n_queries * d);
     {
         std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
         if (!f) { std::cerr << "Failed to open query file\n"; return; }
@@ -759,13 +760,15 @@ void RunHierarchicalPipeline(
               << " use_blas_only=" << use_blas_only << std::endl;
     std::cout << "n_clusters=" << n_clusters << " threads=" << THREADS << std::endl;
 
-    std::vector<float> data(n * d);
-    std::vector<float> queries(n_queries * d);
-    {
-        std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
-        if (!f) { std::cerr << "Failed to open data file\n"; return; }
-        f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
+    bench_utils::MmapFloatFile data(bench_utils::get_data_path(dataset));
+    if (!data.valid()) { std::cerr << "Failed to open data file\n"; return; }
+    if (data.num_floats() < n * d) {
+        std::cerr << "Data file has " << data.num_floats() << " floats, expected "
+                  << n * d << "\n";
+        return;
     }
+
+    std::vector<float> queries(n_queries * d);
     {
         std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
         if (!f) { std::cerr << "Failed to open query file\n"; return; }
