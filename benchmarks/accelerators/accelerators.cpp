@@ -530,9 +530,10 @@ void RunPipeline(
         if (is_raw) {
             // ── RAW: single row ──
             std::cout << "\n--- Final Assignments (raw) ---" << std::endl;
-            auto assignments = kmeans.Assign(
-                data.data(), working_centroids.data(), n, n_clusters
-            );
+            // auto assignments = kmeans.Assign(
+            //     data.data(), working_centroids.data(), n, n_clusters
+            // );
+            std::vector<uint32_t> assignments(n);
             std::string profiler_assign_json = skmeans::Profiler::Get().ToJson();
             skmeans::Profiler::Get().Reset();
 

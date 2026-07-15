@@ -35,7 +35,8 @@ namespace bench_utils {
  * @return Default number of clusters
  */
 inline size_t get_default_n_clusters(size_t n) {
-    return std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
+    return 10000;
+    //return std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
 }
 
 // Path constants for benchmark data
@@ -207,8 +208,8 @@ const std::vector<uint32_t> PQ8_M_VALUES = {32, 64};
 const std::vector<uint32_t> PQ4_M_VALUES = {32, 64, 96, 128, 256};
 
 // HNSW efSearch / efConstruction values to sweep over (with fixed M below)
-const std::vector<int> HNSW_EF_SEARCH_VALUES = {4, 8, 16, 32};
-const std::vector<int> HNSW_EF_CONSTRUCTION_VALUES = {128, 200};
+const std::vector<int> HNSW_EF_SEARCH_VALUES = {4, 8};
+const std::vector<int> HNSW_EF_CONSTRUCTION_VALUES = {128};
 const int HNSW_M = 16;
 
 // Target dimensionalities for PCA/JLT preprocessing (multiples of 64 up to 2048)
