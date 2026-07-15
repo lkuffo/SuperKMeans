@@ -722,9 +722,14 @@ void RunHierarchicalPipeline(
     config.sampling_fraction = 1.0f;
     config.tol = 1e-3f;
     config.use_blas_only = use_blas_only;
-    if (quantizer_name == "sq8") {
-        config.quantizer_type = skmeans::QuantizerType::sq8;
+    if (has_quantizer) {
         config.quantized_centroid_update = true;
+        if (quantizer_name == "sq8")
+            config.quantizer_type = skmeans::QuantizerType::sq8;
+        else if (quantizer_name == "rabitq")
+            config.quantizer_type = skmeans::QuantizerType::rabitq;
+        else if (quantizer_name == "lvq4")
+            config.quantizer_type = skmeans::QuantizerType::lvq4;
     }
     config.angular = is_angular;
     if (is_angular) std::cout << "Using spherical k-means" << std::endl;
@@ -893,13 +898,13 @@ int main(int argc, char* argv[]) {
             RunHierarchicalPipeline<skmeans::Quantization::f32>(
                 dataset, quantizer, use_blas_only
             );
-        } else if (quantizer == "sq8") {
+        } else if (quantizer == "sq8" || quantizer == "rabitq" || quantizer == "lvq4") {
             RunHierarchicalPipeline<skmeans::Quantization::u8>(
                 dataset, quantizer, use_blas_only
             );
         } else {
-            std::cerr << "Hierarchical pipeline only supports f32 and sq8 (got: "
-                      << quantizer << ")\n";
+            std::cerr << "Invalid quantizer: " << quantizer
+                      << " (expected: f32, sq8, rabitq, lvq4)\n";
             return 1;
         }
         return 0;

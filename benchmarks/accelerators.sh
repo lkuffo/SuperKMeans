@@ -88,11 +88,17 @@ for DATASET in "${DATASETS[@]}"; do
     #  RAW (no dimensionality reduction)
     # ==================================================================
 
-    # ── hierarchical superkmeans (raw only; f32 and sq8) ──
-    run "raw / f32 / hsk / blas-only"                               "$DATASET" hsk f32 false false true
-    run "raw / sq8 / hsk / blas-only"                               "$DATASET" hsk sq8 true false true
-    run "raw / f32 / hsk / pruning"                               "$DATASET" hsk f32 false false true
-    run "raw / sq8 / hsk / pruning"                               "$DATASET" hsk sq8 true false true
+    # ── hierarchical superkmeans (raw only; f32, sq8, lvq4, rabitq) ──
+    # No pruning (BLAS-only): use_blas_only=true
+    run "raw / f32 / hsk / blas-only"     "$DATASET" hsk f32    false false true
+    run "raw / sq8 / hsk / blas-only"     "$DATASET" hsk sq8    true  false true
+    run "raw / lvq4 / hsk / blas-only"    "$DATASET" hsk lvq4   true  false true
+    run "raw / rabitq / hsk / blas-only"  "$DATASET" hsk rabitq true  false true
+    # Pruning: use_blas_only=false
+    run "raw / f32 / hsk / pruning"       "$DATASET" hsk f32    false false false
+    run "raw / sq8 / hsk / pruning"       "$DATASET" hsk sq8    true  false false
+    run "raw / lvq4 / hsk / pruning"      "$DATASET" hsk lvq4   true  false false
+    run "raw / rabitq / hsk / pruning"    "$DATASET" hsk rabitq true  false false
 
     continue
 
