@@ -116,6 +116,44 @@ static std::unordered_map<std::string, std::string> BuildConfigDict(
     return c;
 }
 
+/**
+ * @brief Load a dataset's train + query vectors once (eager, up front).
+ *
+ * Reserves (no zero-init) and reads the raw float32 files. Returns false on an
+ * unknown dataset or a file-open failure.
+ */
+static bool LoadDatasetRaw(
+    const std::string& dataset,
+    std::vector<float>& data,
+    std::vector<float>& queries,
+    size_t& n,
+    size_t& d
+) {
+    auto it = bench_utils::DATASET_PARAMS.find(dataset);
+    if (it == bench_utils::DATASET_PARAMS.end()) {
+        std::cerr << "Unknown dataset '" << dataset << "'\n";
+        return false;
+    }
+    n = it->second.first;
+    d = it->second.second;
+    const size_t n_queries = bench_utils::N_QUERIES;
+    data.reserve(n * d);
+    queries.reserve(n_queries * d);
+    {
+        std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
+        if (!f) { std::cerr << "Failed to open data file\n"; return false; }
+        f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
+        f.close();
+    }
+    {
+        std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
+        if (!f) { std::cerr << "Failed to open query file\n"; return false; }
+        f.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
+        f.close();
+    }
+    return true;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Core pipeline
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,7 +170,10 @@ void RunPipeline(
     int hnsw_M = 32,
     int hnsw_ef_construction = 40,
     int hnsw_ef_search = 16,
-    bool hnsw_use_warm_start = false
+    bool hnsw_use_warm_start = false,
+    const std::vector<float>* preloaded_data = nullptr,
+    const std::vector<float>* preloaded_queries = nullptr,
+    size_t n_clusters_override = 0
 ) {
     using SKM = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>;
 
@@ -147,7 +188,8 @@ void RunPipeline(
     const size_t n = it->second.first;
     const size_t d = it->second.second;
     const size_t n_queries = bench_utils::N_QUERIES;
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters =
+        n_clusters_override ? n_clusters_override : bench_utils::get_default_n_clusters(n);
     const int n_iters = bench_utils::MAX_ITERS;
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
@@ -180,21 +222,25 @@ void RunPipeline(
     std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters
               << " threads=" << THREADS << std::endl;
 
-    // ── Load data (mmap) and queries ──
-    bench_utils::MmapFloatFile data(bench_utils::get_data_path(dataset));
-    if (!data.valid()) { std::cerr << "Failed to open data file\n"; return; }
-    if (data.num_floats() < n * d) {
-        std::cerr << "Data file has " << data.num_floats() << " floats, expected "
-                  << n * d << "\n";
-        return;
+    // ── Load data and queries (or reuse preloaded buffers) ──
+    std::vector<float> data_owned;
+    std::vector<float> queries_owned;
+    if (!preloaded_data) {
+        data_owned.reserve(n * d);
+        std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
+        if (!f) { std::cerr << "Failed to open data file\n"; return; }
+        f.read(reinterpret_cast<char*>(data_owned.data()), n * d * sizeof(float));
+        f.close();
     }
-
-    std::vector<float> queries(n_queries * d);
-    {
+    if (!preloaded_queries) {
+        queries_owned.reserve(n_queries * d);
         std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
         if (!f) { std::cerr << "Failed to open query file\n"; return; }
-        f.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
+        f.read(reinterpret_cast<char*>(queries_owned.data()), n_queries * d * sizeof(float));
+        f.close();
     }
+    const std::vector<float>& data = preloaded_data ? *preloaded_data : data_owned;
+    const std::vector<float>& queries = preloaded_queries ? *preloaded_queries : queries_owned;
 
     // ── Angular detection ──
     bool is_angular = std::find(
@@ -761,19 +807,21 @@ void RunHierarchicalPipeline(
               << " use_blas_only=" << use_blas_only << std::endl;
     std::cout << "n_clusters=" << n_clusters << " threads=" << THREADS << std::endl;
 
-    bench_utils::MmapFloatFile data(bench_utils::get_data_path(dataset));
-    if (!data.valid()) { std::cerr << "Failed to open data file\n"; return; }
-    if (data.num_floats() < n * d) {
-        std::cerr << "Data file has " << data.num_floats() << " floats, expected "
-                  << n * d << "\n";
-        return;
+    std::vector<float> data;
+    std::vector<float> queries;
+    data.reserve(n * d);
+    queries.reserve(n_queries * d);
+    {
+        std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
+        if (!f) { std::cerr << "Failed to open data file\n"; return; }
+        f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
+        f.close();
     }
-
-    std::vector<float> queries(n_queries * d);
     {
         std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
         if (!f) { std::cerr << "Failed to open query file\n"; return; }
         f.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
+        f.close();
     }
 
     bool is_angular = std::find(
@@ -986,18 +1034,25 @@ int main(int argc, char* argv[]) {
             quantized_centroid_update, full_precision_final_centroids, use_blas_only
         );
     } else if (quantizer == "hnsw") {
-        for (int efc : bench_utils::HNSW_EF_CONSTRUCTION_VALUES) {
-            for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
-                for (bool ws : {false, true}) {
-                    RunPipeline<skmeans::Quantization::f32>(
-                        dataset, dim_reduction, quantizer,
-                        quantized_centroid_update, full_precision_final_centroids, use_blas_only,
-                        /*pq_m=*/16,
-                        bench_utils::HNSW_M,
-                        efc,
-                        efs,
-                        ws
-                    );
+        std::vector<float> data, queries;
+        size_t n, d;
+        if (!LoadDatasetRaw(dataset, data, queries, n, d)) return 1;
+        for (size_t k : bench_utils::HNSW_K_VALUES) {
+            if (k > n) continue;
+            for (int efc : bench_utils::HNSW_EF_CONSTRUCTION_VALUES) {
+                for (int efs : bench_utils::HNSW_EF_SEARCH_VALUES) {
+                    for (bool ws : {false, true}) {
+                        RunPipeline<skmeans::Quantization::f32>(
+                            dataset, dim_reduction, quantizer,
+                            quantized_centroid_update, full_precision_final_centroids, use_blas_only,
+                            /*pq_m=*/16,
+                            bench_utils::HNSW_M,
+                            efc,
+                            efs,
+                            ws,
+                            &data, &queries, k
+                        );
+                    }
                 }
             }
         }
