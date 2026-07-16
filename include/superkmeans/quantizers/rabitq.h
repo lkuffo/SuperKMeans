@@ -311,6 +311,12 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t /*d*/, uint32_t partial_d
     ) override {
+        ComputeDataPartialNorms(data, n, partial_d);
+    }
+
+    void ComputeDataPartialNorms(
+        const quantized_t* data, size_t n, uint32_t partial_d
+    ) const {
         SKM_PROFILE_SCOPE("RQ::CacheDataPartialNorms");
         const uint8_t* codes = reinterpret_cast<const uint8_t*>(data);
         const size_t front_bytes = partial_d / 8;
@@ -374,6 +380,9 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         // Ensure data-side caches
         EnsureCodeFactorsCache(x_codes, n_x);
         EnsureTransposedBlocksCache(x_codes, n_x);
+        if (cached_sum_q_front_.size() != n_x || cached_partial_d_ != partial_d) {
+            ComputeDataPartialNorms(x, n_x, partial_d);
+        }
         EnsurePartialNormsCache(x_float, n_x, d, partial_d);
 
         const uint32_t* sum_q = cached_sum_q_.data();

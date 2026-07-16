@@ -221,6 +221,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         const quantized_t* data, size_t n, size_t d, uint32_t partial_d
     ) override {
         CachePartialNorms(data, n, d, partial_d, cached_data_partial_norms);
+        cached_data_partial_d_ = partial_d;
     }
 
     void CacheCentroidPartialNorms(
@@ -255,6 +256,11 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         SKM_PROFILE_SCOPE("search");
         (void) x_float;
         (void) y_float;
+
+        if (cached_data_partial_norms.size() != n_x || cached_data_partial_d_ != partial_d) {
+            CachePartialNorms(x, n_x, d, partial_d, cached_data_partial_norms);
+            cached_data_partial_d_ = partial_d;
+        }
 
         const float inv_scale_sq =
             params.inv_quantization_scale * params.inv_quantization_scale;
@@ -425,7 +431,8 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     ScalarQuantizationParams params{};
     bool fitted = false;
     bool has_amx = false;
-    std::vector<uint32_t> cached_data_partial_norms;
+    mutable std::vector<uint32_t> cached_data_partial_norms;
+    mutable uint32_t cached_data_partial_d_ = 0;
     std::vector<uint32_t> cached_centroid_partial_norms;
     mutable std::vector<uint32_t> centroid_accumulators;
     mutable std::vector<uint32_t> tmp_dots_buf;

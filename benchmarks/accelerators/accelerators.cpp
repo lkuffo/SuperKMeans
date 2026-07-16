@@ -754,6 +754,7 @@ void RunHierarchicalPipeline(
 
     // ── Final assignments ──
     auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    // std::vector<uint32_t> assignments(n);
     std::string profiler_assign_json = skmeans::Profiler::Get().ToJson();
     skmeans::Profiler::Get().Reset();
 

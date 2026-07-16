@@ -254,6 +254,12 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     void CacheDataPartialNorms(
         const quantized_t* data, size_t n, size_t /*d*/, uint32_t partial_d
     ) override {
+        ComputeDataPartialNorms(data, n, partial_d);
+    }
+
+    void ComputeDataPartialNorms(
+        const quantized_t* data, size_t n, uint32_t partial_d
+    ) const {
         SKM_PROFILE_SCOPE("LVQ4::CacheDataPartialNorms");
         const uint8_t* codes = reinterpret_cast<const uint8_t*>(data);
         const size_t front_bytes = partial_d / 2;
@@ -333,6 +339,10 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         const uint8_t* y_codes = reinterpret_cast<const uint8_t*>(y);
 
         EnsureCodeFactorsCache(x_codes, n_x);
+
+        if (cached_partial_d_ != partial_d || cached_norm_x_front_.size() != n_x) {
+            ComputeDataPartialNorms(x, n_x, partial_d);
+        }
 
         // Pruning geometry
         const size_t front_bytes = partial_d / 2;

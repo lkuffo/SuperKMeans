@@ -636,46 +636,49 @@ TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignPathsValid) {
     const size_t n_clusters = 300;
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
 
-    for (const auto& [qt, name] : quantizers) {
-        SCOPED_TRACE(name);
-        skmeans::HierarchicalSuperKMeansConfig config;
-        config.iters_mesoclustering = 5;
-        config.iters_fineclustering = 5;
-        config.iters_refinement = 1;
-        config.seed = 42;
-        config.sampling_fraction = 1.0f;
-        config.quantizer_type = qt;
+    for (int iters_refinement : {0, 1}) {
+        SCOPED_TRACE("iters_refinement=" + std::to_string(iters_refinement));
+        for (const auto& [qt, name] : quantizers) {
+            SCOPED_TRACE(name);
+            skmeans::HierarchicalSuperKMeansConfig config;
+            config.iters_mesoclustering = 5;
+            config.iters_fineclustering = 5;
+            config.iters_refinement = iters_refinement;
+            config.seed = 42;
+            config.sampling_fraction = 1.0f;
+            config.quantizer_type = qt;
 
-        auto kmeans = skmeans::HierarchicalSuperKMeans<
-            skmeans::Quantization::u8, skmeans::DistanceFunction::l2>(n_clusters, d, config);
-        auto centroids = kmeans.Train(data.data(), n);
-        ASSERT_EQ(centroids.size(), n_clusters * d);
+            auto kmeans = skmeans::HierarchicalSuperKMeans<
+                skmeans::Quantization::u8, skmeans::DistanceFunction::l2>(n_clusters, d, config);
+            auto centroids = kmeans.Train(data.data(), n);
+            ASSERT_EQ(centroids.size(), n_clusters * d);
 
-        auto exact = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
-        auto quantized = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
-        auto reuse = kmeans.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
+            auto exact = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+            auto quantized = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
+            auto reuse = kmeans.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
 
-        ASSERT_EQ(exact.size(), n);
-        ASSERT_EQ(quantized.size(), n);
-        ASSERT_EQ(reuse.size(), n);
-        for (size_t i = 0; i < n; ++i) {
-            ASSERT_LT(exact[i], n_clusters);
-            ASSERT_LT(quantized[i], n_clusters);
-            ASSERT_LT(reuse[i], n_clusters);
+            ASSERT_EQ(exact.size(), n);
+            ASSERT_EQ(quantized.size(), n);
+            ASSERT_EQ(reuse.size(), n);
+            for (size_t i = 0; i < n; ++i) {
+                ASSERT_LT(exact[i], n_clusters);
+                ASSERT_LT(quantized[i], n_clusters);
+                ASSERT_LT(reuse[i], n_clusters);
+            }
+
+            std::unordered_set<uint32_t> used(exact.begin(), exact.end());
+            EXPECT_GE(used.size(), static_cast<size_t>(0.85 * n_clusters));
+
+            size_t agree_quant_exact = 0, agree_reuse_quant = 0;
+            for (size_t i = 0; i < n; ++i) {
+                if (quantized[i] == exact[i]) agree_quant_exact++;
+                if (reuse[i] == quantized[i]) agree_reuse_quant++;
+            }
+            EXPECT_GE(static_cast<double>(agree_quant_exact) / n, 0.90)
+                << "quantized vs exact agreement too low";
+            EXPECT_GE(static_cast<double>(agree_reuse_quant) / n, 0.90)
+                << "reuse vs quantized agreement too low";
         }
-
-        std::unordered_set<uint32_t> used(exact.begin(), exact.end());
-        EXPECT_GE(used.size(), static_cast<size_t>(0.85 * n_clusters));
-
-        size_t agree_quant_exact = 0, agree_reuse_quant = 0;
-        for (size_t i = 0; i < n; ++i) {
-            if (quantized[i] == exact[i]) agree_quant_exact++;
-            if (reuse[i] == quantized[i]) agree_reuse_quant++;
-        }
-        EXPECT_GE(static_cast<double>(agree_quant_exact) / n, 0.90)
-            << "quantized vs exact agreement too low";
-        EXPECT_GE(static_cast<double>(agree_reuse_quant) / n, 0.90)
-            << "reuse vs quantized agreement too low";
     }
 }
 
