@@ -24,7 +24,7 @@ const std::vector<std::pair<skmeans::QuantizerType, const char*>> kQuantizers = 
     {skmeans::QuantizerType::rabitq, "rabitq"},
 };
 
-void ExpectAssignTrainingPointsFallsBackToQuantizedAssign(
+void ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
     skmeans::QuantizerType qt, size_t n, size_t d, size_t n_clusters, bool use_blas_only,
     uint32_t iters = 10
 ) {
@@ -43,10 +43,12 @@ void ExpectAssignTrainingPointsFallsBackToQuantizedAssign(
     auto quantized = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
 
     ASSERT_EQ(fast.size(), n);
+    size_t agree = 0;
     for (size_t i = 0; i < n; ++i) {
         ASSERT_LT(fast[i], n_clusters);
+        if (fast[i] == quantized[i]) agree++;
     }
-    ASSERT_EQ(fast, quantized);
+    EXPECT_GT(static_cast<double>(agree) / n, 0.95);
 }
 }  // namespace
 
@@ -326,31 +328,56 @@ TEST_F(AssignTest, AllClustersNonEmpty) {
         << used_clusters.size() << " were assigned.";
 }
 
-TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallK_FallsBackToQuantizedAssign) {
+TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallK_AgreesWithQuantizedAssign) {
     for (const auto& [qt, name] : kQuantizers) {
         SCOPED_TRACE(name);
-        ExpectAssignTrainingPointsFallsBackToQuantizedAssign(qt, 5000, 128, 50, false);
+        ExpectAssignTrainingPointsAgreesWithQuantizedAssign(qt, 5000, 128, 50, false);
     }
 }
 
-TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallDim_FallsBackToQuantizedAssign) {
+TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallDim_AgreesWithQuantizedAssign) {
     for (const auto& [qt, name] : kQuantizers) {
         SCOPED_TRACE(name);
-        ExpectAssignTrainingPointsFallsBackToQuantizedAssign(qt, 5000, 64, 300, false);
+        ExpectAssignTrainingPointsAgreesWithQuantizedAssign(qt, 5000, 64, 300, false);
     }
 }
 
-TEST_F(AssignTest, QuantizedAssignTrainingPoints_BlasOnly_FallsBackToQuantizedAssign) {
+TEST_F(AssignTest, QuantizedAssignTrainingPoints_BlasOnly_AgreesWithQuantizedAssign) {
     for (const auto& [qt, name] : kQuantizers) {
         SCOPED_TRACE(name);
-        ExpectAssignTrainingPointsFallsBackToQuantizedAssign(qt, 5000, 128, 300, true);
+        ExpectAssignTrainingPointsAgreesWithQuantizedAssign(qt, 5000, 128, 300, true);
     }
 }
 
-TEST_F(AssignTest, QuantizedAssignTrainingPoints_SingleIteration_FallsBackToQuantizedAssign) {
+TEST_F(AssignTest, QuantizedAssignTrainingPoints_SingleIteration_AgreesWithQuantizedAssign) {
     for (const auto& [qt, name] : kQuantizers) {
         SCOPED_TRACE(name);
-        ExpectAssignTrainingPointsFallsBackToQuantizedAssign(qt, 5000, 128, 300, false, 1);
+        ExpectAssignTrainingPointsAgreesWithQuantizedAssign(qt, 5000, 128, 300, false, 1);
+    }
+}
+
+TEST_F(AssignTest, QuantizedAssignTrainingPoints_Sampled_FallsBackToQuantizedAssign) {
+    const size_t n = 5000, d = 128, n_clusters = 300;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+    for (const auto& [qt, name] : kQuantizers) {
+        SCOPED_TRACE(name);
+        skmeans::SuperKMeansConfig config;
+        config.iters = 10;
+        config.sampling_fraction = 0.5f;
+        config.seed = 42;
+        config.quantizer_type = qt;
+
+        auto kmeans = skm_u8(n_clusters, d, config);
+        auto centroids = kmeans.Train(data.data(), n);
+
+        auto fast = kmeans.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
+        auto quantized = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
+
+        ASSERT_EQ(fast.size(), n);
+        for (size_t i = 0; i < n; ++i) {
+            ASSERT_LT(fast[i], n_clusters);
+        }
+        ASSERT_EQ(fast, quantized);
     }
 }
 

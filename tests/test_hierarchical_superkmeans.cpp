@@ -682,6 +682,47 @@ TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignPathsValid) {
     }
 }
 
+TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignTrainingPointsBlasOnlyReuse) {
+    const std::vector<std::pair<skmeans::QuantizerType, const char*>> quantizers = {
+        {skmeans::QuantizerType::sq8, "sq8"},
+        {skmeans::QuantizerType::lvq4, "lvq4"},
+        {skmeans::QuantizerType::rabitq, "rabitq"},
+    };
+    const size_t n = 15000;
+    const size_t d = 128;
+    const size_t n_clusters = 300;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+
+    for (const auto& [qt, name] : quantizers) {
+        SCOPED_TRACE(name);
+        skmeans::HierarchicalSuperKMeansConfig config;
+        config.iters_mesoclustering = 5;
+        config.iters_fineclustering = 5;
+        config.iters_refinement = 0;
+        config.seed = 42;
+        config.sampling_fraction = 1.0f;
+        config.use_blas_only = true;
+        config.quantizer_type = qt;
+
+        auto kmeans = skmeans::HierarchicalSuperKMeans<
+            skmeans::Quantization::u8, skmeans::DistanceFunction::l2>(n_clusters, d, config);
+        auto centroids = kmeans.Train(data.data(), n);
+        ASSERT_EQ(centroids.size(), n_clusters * d);
+
+        auto exact = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+        auto reuse = kmeans.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
+
+        ASSERT_EQ(reuse.size(), n);
+        size_t agree_reuse_exact = 0;
+        for (size_t i = 0; i < n; ++i) {
+            ASSERT_LT(reuse[i], n_clusters);
+            if (reuse[i] == exact[i]) agree_reuse_exact++;
+        }
+        EXPECT_GE(static_cast<double>(agree_reuse_exact) / n, 0.90)
+            << "gemm-only reuse vs exact agreement too low";
+    }
+}
+
 namespace {
 void ExpectHierarchicalTrainAndAssignValid(
     const std::vector<float>& data, size_t n, size_t d, size_t n_clusters

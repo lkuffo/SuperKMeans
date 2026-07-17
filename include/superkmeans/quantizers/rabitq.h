@@ -456,7 +456,6 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
 
                 // Pass 1a: Multi-block FastScan all centroids 
                 {
-                    SKM_PROFILE_SCOPE("RQ::FindNearestNeighborWithPruning/fastscan");
                     if (n_blks == kSuperBlock) {
                         for (size_t j = 0; j < n_y; ++j) {
                             uint16_t* out_ptrs[kSuperBlock];

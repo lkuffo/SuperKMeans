@@ -595,7 +595,7 @@ class SuperKMeans {
         EnsureTmpDistances();
 
         std::vector<uint32_t> result_assignments(n_vectors);
-        std::vector<distance_t> result_distances(n_vectors);
+        std::unique_ptr<distance_t[]> result_distances(new distance_t[n_vectors]);
 
         // Rotate input data to match the domain the quantizer was fitted on 
         // We cannot just simply retrain the quantizer on the new data because
@@ -604,8 +604,6 @@ class SuperKMeans {
         const float* encode_centroids = centroids;
         std::unique_ptr<float[]> rotated_vectors_buf;
         std::unique_ptr<float[]> rotated_centroids_buf;
-        // TODO(@lkuffo, high): Only really needed for RabitQ
-        // The rest of quantizers don't need rotation
         if (!config.data_already_rotated) {
             rotated_vectors_buf.reset(new float[n_vectors * d]);
             rotated_centroids_buf.reset(new float[n_centroids * d]);
@@ -616,28 +614,28 @@ class SuperKMeans {
         }
 
         const size_t cs = quantizer->CodeSize(d);
-        std::vector<vector_value_t> q_vectors(n_vectors * cs);
-        std::vector<vector_value_t> q_centroids(n_centroids * cs);
-        quantizer->Encode(encode_vectors, q_vectors.data(), n_vectors, d);
-        quantizer->Encode(encode_centroids, q_centroids.data(), n_centroids, d);
+        std::unique_ptr<vector_value_t[]> q_vectors(new vector_value_t[n_vectors * cs]);
+        std::unique_ptr<vector_value_t[]> q_centroids(new vector_value_t[n_centroids * cs]);
+        quantizer->Encode(encode_vectors, q_vectors.get(), n_vectors, d);
+        quantizer->Encode(encode_centroids, q_centroids.get(), n_centroids, d);
         quantizer->InvalidateCaches();
 
-        std::vector<float> v_norms(n_vectors);
-        std::vector<float> c_norms(n_centroids);
-        quantizer->ComputeNorms(q_vectors.data(), n_vectors, d, v_norms.data());
-        quantizer->ComputeNorms(q_centroids.data(), n_centroids, d, c_norms.data());
+        std::unique_ptr<float[]> v_norms(new float[n_vectors]);
+        std::unique_ptr<float[]> c_norms(new float[n_centroids]);
+        quantizer->ComputeNorms(q_vectors.get(), n_vectors, d, v_norms.get());
+        quantizer->ComputeNorms(q_centroids.get(), n_centroids, d, c_norms.get());
         quantizer->FindNearestNeighbor(
-            q_vectors.data(),
-            q_centroids.data(),
+            q_vectors.get(),
+            q_centroids.get(),
             encode_vectors,
             encode_centroids,
             n_vectors,
             n_centroids,
             d,
-            v_norms.data(),
-            c_norms.data(),
+            v_norms.get(),
+            c_norms.get(),
             result_assignments.data(),
-            result_distances.data(),
+            result_distances.get(),
             tmp_distances_buffer.get()
         );
 
@@ -714,6 +712,27 @@ class SuperKMeans {
 
                 return result_assignments;
             }
+
+            if (config.sampling_fraction == 1.0f) {
+                EnsureTmpDistances();
+                quantizer->InvalidateCaches();
+                std::vector<uint32_t> result_assignments(n_vectors);
+                std::unique_ptr<distance_t[]> result_distances(new distance_t[n_vectors]);
+                std::unique_ptr<float[]> v_norms(new float[n_vectors]);
+                std::unique_ptr<float[]> c_norms(new float[n_centroids]);
+                quantizer->ComputeNorms(quantized_data.get(), n_vectors, d, v_norms.get());
+                quantizer->ComputeNorms(quantized_centroids.get(), n_centroids, d, c_norms.get());
+                quantizer->FindNearestNeighbor(
+                    quantized_data.get(), quantized_centroids.get(),
+                    vectors, horizontal_centroids.get(),
+                    n_vectors, n_centroids, d,
+                    v_norms.get(), c_norms.get(),
+                    result_assignments.data(), result_distances.get(),
+                    tmp_distances_buffer.get()
+                );
+                return result_assignments;
+            }
+
             if (!config.suppress_warnings) {
                 std::cout << "WARNING: AssignTrainingPoints cannot reuse trained state, falling "
                              "back to QuantizedAssign"
