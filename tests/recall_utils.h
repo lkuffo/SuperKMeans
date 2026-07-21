@@ -48,9 +48,13 @@ inline const std::unordered_map<std::string, float> RECALL_GROUND_TRUTH = {
 // Load raw float32 data (n x max_d, row-major, no header) and copy the
 // first `d` dimensions of each row.
 inline std::vector<float> LoadTestDataSubdim(
-    const std::string& path, size_t n, size_t max_d, size_t d
+    const std::string& path,
+    size_t n,
+    size_t max_d,
+    size_t d
 ) {
-    if (d > max_d) throw std::runtime_error("Requested d exceeds max_d");
+    if (d > max_d)
+        throw std::runtime_error("Requested d exceeds max_d");
     std::vector<float> full(n * max_d);
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -72,7 +76,11 @@ inline std::vector<float> LoadTestDataSubdim(
 // of `data` over the whole `data` set. Query row q is included in its own list
 // (distance 0), matching the standard recall convention.
 inline std::unordered_map<int, std::vector<int>> BuildGroundTruthNN(
-    const float* data, size_t n, size_t d, size_t n_queries, int k
+    const float* data,
+    size_t n,
+    size_t d,
+    size_t n_queries,
+    int k
 ) {
     std::unordered_map<int, std::vector<int>> gt;
     const size_t kk = std::min(static_cast<size_t>(k), n);
@@ -90,7 +98,8 @@ inline std::unordered_map<int, std::vector<int>> BuildGroundTruthNN(
         }
         std::partial_sort(dists.begin(), dists.begin() + kk, dists.end());
         std::vector<int> nn(kk);
-        for (size_t i = 0; i < kk; ++i) nn[i] = dists[i].second;
+        for (size_t i = 0; i < kk; ++i)
+            nn[i] = dists[i].second;
         gt[static_cast<int>(q)] = std::move(nn);
     }
     return gt;
@@ -113,7 +122,8 @@ inline float RecallAtFraction(
         gt_map, assignments, queries, centroids, n_queries, n_clusters, d, knn
     );
     for (const auto& r : results) {
-        if (std::abs(std::get<1>(r) - frac) < 1e-4f) return std::get<2>(r);
+        if (std::abs(std::get<1>(r) - frac) < 1e-4f)
+            return std::get<2>(r);
     }
     return -1.0f;
 }
@@ -122,8 +132,11 @@ inline float RecallAtFraction(
 // average recall@RECALL_KNN at RECALL_FRAC. Defaults reproduce the ground-truth config.
 template <skmeans::Quantization Q>
 inline float ClusteringRecall(
-    skmeans::QuantizerType qt, const std::string& data_path,
-    size_t n_clusters = RECALL_N_CLUSTERS, size_t d = RECALL_D, bool pruning = false
+    skmeans::QuantizerType qt,
+    const std::string& data_path,
+    size_t n_clusters = RECALL_N_CLUSTERS,
+    size_t d = RECALL_D,
+    bool pruning = false
 ) {
     auto data = LoadTestDataSubdim(data_path, RECALL_N, RECALL_D, d);
     auto gt = BuildGroundTruthNN(data.data(), RECALL_N, d, RECALL_N_QUERIES, RECALL_KNN);
@@ -143,15 +156,20 @@ inline float ClusteringRecall(
     auto centroids = kmeans.Train(data.data(), RECALL_N);
     auto assign = kmeans.Assign(data.data(), centroids.data(), RECALL_N, n_clusters);
     return RecallAtFraction(
-        gt, assign, data.data(), centroids.data(), RECALL_N_QUERIES, n_clusters, d,
-        RECALL_KNN, RECALL_FRAC
+        gt,
+        assign,
+        data.data(),
+        centroids.data(),
+        RECALL_N_QUERIES,
+        n_clusters,
+        d,
+        RECALL_KNN,
+        RECALL_FRAC
     );
 }
 
 template <skmeans::Quantization Q>
-inline float HierarchicalClusteringRecall(
-    skmeans::QuantizerType qt, const std::string& data_path
-) {
+inline float HierarchicalClusteringRecall(skmeans::QuantizerType qt, const std::string& data_path) {
     auto data = LoadTestDataSubdim(data_path, RECALL_N, RECALL_D, RECALL_D);
     auto gt = BuildGroundTruthNN(data.data(), RECALL_N, RECALL_D, RECALL_N_QUERIES, RECALL_KNN);
 
@@ -168,12 +186,20 @@ inline float HierarchicalClusteringRecall(
     config.quantizer_type = qt;
 
     auto kmeans = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>(
-        RECALL_N_CLUSTERS, RECALL_D, config);
+        RECALL_N_CLUSTERS, RECALL_D, config
+    );
     auto centroids = kmeans.Train(data.data(), RECALL_N);
     auto assign = kmeans.Assign(data.data(), centroids.data(), RECALL_N, RECALL_N_CLUSTERS);
     return RecallAtFraction(
-        gt, assign, data.data(), centroids.data(), RECALL_N_QUERIES, RECALL_N_CLUSTERS, RECALL_D,
-        RECALL_KNN, RECALL_FRAC
+        gt,
+        assign,
+        data.data(),
+        centroids.data(),
+        RECALL_N_QUERIES,
+        RECALL_N_CLUSTERS,
+        RECALL_D,
+        RECALL_KNN,
+        RECALL_FRAC
     );
 }
 
@@ -187,7 +213,10 @@ struct AssignMethodRecall {
 // re-encode). Used to check both yield comparable end-to-end recall.
 template <skmeans::Quantization Q>
 inline AssignMethodRecall ClusteringRecallAssignMethods(
-    skmeans::QuantizerType qt, const std::string& data_path, size_t n_clusters, size_t d
+    skmeans::QuantizerType qt,
+    const std::string& data_path,
+    size_t n_clusters,
+    size_t d
 ) {
     auto data = LoadTestDataSubdim(data_path, RECALL_N, RECALL_D, d);
     auto gt = BuildGroundTruthNN(data.data(), RECALL_N, d, RECALL_N_QUERIES, RECALL_KNN);
@@ -211,12 +240,26 @@ inline AssignMethodRecall ClusteringRecallAssignMethods(
 
     return {
         RecallAtFraction(
-            gt, atp, data.data(), centroids.data(), RECALL_N_QUERIES, n_clusters, d,
-            RECALL_KNN, RECALL_FRAC
+            gt,
+            atp,
+            data.data(),
+            centroids.data(),
+            RECALL_N_QUERIES,
+            n_clusters,
+            d,
+            RECALL_KNN,
+            RECALL_FRAC
         ),
         RecallAtFraction(
-            gt, qa, data.data(), centroids.data(), RECALL_N_QUERIES, n_clusters, d,
-            RECALL_KNN, RECALL_FRAC
+            gt,
+            qa,
+            data.data(),
+            centroids.data(),
+            RECALL_N_QUERIES,
+            n_clusters,
+            d,
+            RECALL_KNN,
+            RECALL_FRAC
         ),
     };
 }

@@ -211,9 +211,11 @@ class SIMDComputer<DistanceFunction::l2, Quantization::b8> {
             size_t chunk_idx = i / 16;
             size_t byte_in_chunk = i % 16;
             for (int bp = 0; bp < qb; ++bp) {
-                result += static_cast<uint32_t>(__builtin_popcount(
-                    data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
-                )) << bp;
+                result +=
+                    static_cast<uint32_t>(__builtin_popcount(
+                        data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
+                    ))
+                    << bp;
             }
         }
         return result;
@@ -489,10 +491,13 @@ class SIMDFastScanComputer {
      * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
      * @param sum_q_f32 Pre-converted float array (caller converts uint32_t→float once per block).
      */
-    template<bool U32Dot = false>
+    template <bool U32Dot = false>
     static void RabitQCorrection(
         const void* partial_dot,
-        float c1j, float c2j, float c34j, float qr_j,
+        float c1j,
+        float c2j,
+        float c34j,
+        float qr_j,
         const float* sum_q_f32,
         const float* or_c_l2sqr,
         const float* dp_mult,
@@ -519,10 +524,7 @@ class SIMDFastScanComputer {
 
             float32x4_t v_sq = vld1q_f32(sum_q_f32 + k);
 
-            float32x4_t fdt = vmlaq_f32(
-                vmlaq_f32(vnegq_f32(v_c34j), v_c1j, v_pd),
-                v_c2j, v_sq
-            );
+            float32x4_t fdt = vmlaq_f32(vmlaq_f32(vnegq_f32(v_c34j), v_c1j, v_pd), v_c2j, v_sq);
 
             float32x4_t v_or = vld1q_f32(or_c_l2sqr + k);
             float32x4_t v_dp = vld1q_f32(dp_mult + k);
@@ -539,16 +541,17 @@ class SIMDFastScanComputer {
                 dot_f = static_cast<float>(pd_u16[k]);
             }
             const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
-            out_partial_l2[k] = or_c_l2sqr[k] + qr_j
-                              - 2.0f * dp_mult[k] * fdt;
+            out_partial_l2[k] = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
         }
     }
 
     /// Fused correction + compaction: no intermediate buffer store/load.
-    template<bool U32Dot = false>
+    template <bool U32Dot = false>
     static void RabitQCorrectionAndCompact(
         const void* partial_dot,
-        float c1j, float c34j, float qr_j,
+        float c1j,
+        float c34j,
+        float qr_j,
         float neg2_c2j,
         const float* or_c_l2sqr,
         const float* neg2_dp,
@@ -558,9 +561,9 @@ class SIMDFastScanComputer {
         size_t& n_survivors,
         size_t blk_count
     ) {
-        const float32x4_t v_c1j     = vdupq_n_f32(c1j);
-        const float32x4_t v_c34j    = vdupq_n_f32(c34j);
-        const float32x4_t v_qr_j    = vdupq_n_f32(qr_j);
+        const float32x4_t v_c1j = vdupq_n_f32(c1j);
+        const float32x4_t v_c34j = vdupq_n_f32(c34j);
+        const float32x4_t v_qr_j = vdupq_n_f32(qr_j);
         const float32x4_t v_neg2c2j = vdupq_n_f32(neg2_c2j);
 
         const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
@@ -578,8 +581,8 @@ class SIMDFastScanComputer {
 
             // Chain A: base = or + qr + neg2_c2j * dp_sum_q
             float32x4_t base = vmlaq_f32(
-                vaddq_f32(vld1q_f32(or_c_l2sqr + k), v_qr_j),
-                v_neg2c2j, vld1q_f32(dp_sum_q + k));
+                vaddq_f32(vld1q_f32(or_c_l2sqr + k), v_qr_j), v_neg2c2j, vld1q_f32(dp_sum_q + k)
+            );
 
             // Chain B: shifted = c1j * dot - c34j
             float32x4_t shifted = vmlaq_f32(vnegq_f32(v_c34j), v_c1j, v_pd);
@@ -614,7 +617,7 @@ class SIMDFastScanComputer {
         }
     }
 
-    template<bool WideAdd = false>
+    template <bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -630,7 +633,7 @@ class SIMDFastScanComputer {
     }
 
     /// Multi-block ScanBlock: delegates to per-block (NEON could be optimized later).
-    template<int NBlocks>
+    template <int NBlocks>
     static void ScanBlockMulti(
         const uint8_t* const* packed,
         const uint8_t* lut,
@@ -697,10 +700,10 @@ class SIMDFastScanComputer {
         // Deinterleave from kPerm0 order to natural order
         // acc_A_lo = {v0,v8,v1,v9,v2,v10,v3,v11}, acc_A_hi = {v4,v12,v5,v13,v6,v14,v7,v15}
         // vuzp1 takes even indices, vuzp2 takes odd indices
-        uint16x8_t out_0_7   = vuzp1q_u16(acc_A_lo, acc_A_hi);  // {v0,v1,v2,v3,v4,v5,v6,v7}
-        uint16x8_t out_8_15  = vuzp2q_u16(acc_A_lo, acc_A_hi);  // {v8,v9,...,v15}
-        uint16x8_t out_16_23 = vuzp1q_u16(acc_B_lo, acc_B_hi);  // {v16,...,v23}
-        uint16x8_t out_24_31 = vuzp2q_u16(acc_B_lo, acc_B_hi);  // {v24,...,v31}
+        uint16x8_t out_0_7 = vuzp1q_u16(acc_A_lo, acc_A_hi);   // {v0,v1,v2,v3,v4,v5,v6,v7}
+        uint16x8_t out_8_15 = vuzp2q_u16(acc_A_lo, acc_A_hi);  // {v8,v9,...,v15}
+        uint16x8_t out_16_23 = vuzp1q_u16(acc_B_lo, acc_B_hi); // {v16,...,v23}
+        uint16x8_t out_24_31 = vuzp2q_u16(acc_B_lo, acc_B_hi); // {v24,...,v31}
 
         vst1q_u16(out_dot, out_0_7);
         vst1q_u16(out_dot + 8, out_8_15);
@@ -755,11 +758,11 @@ class SIMDRaBitQCodec {
             static const uint8_t shift_vals[8] = {0, 1, 2, 3, 4, 5, 6, 7};
             uint8x8_t shifts = vld1_u8(shift_vals);
             // Convert 0xFF→1, 0x00→0, then shift each to its bit position
-            uint8x8_t bits = vshr_n_u8(n8, 7);  // 0xFF→1, 0x00→0
+            uint8x8_t bits = vshr_n_u8(n8, 7); // 0xFF→1, 0x00→0
             uint8x8_t shifted = vshl_u8(bits, vreinterpret_s8_u8(shifts));
             // Horizontal OR to combine 8 bits into one byte
-            uint8_t byte_val = shifted[0] | shifted[1] | shifted[2] | shifted[3]
-                             | shifted[4] | shifted[5] | shifted[6] | shifted[7];
+            uint8_t byte_val = shifted[0] | shifted[1] | shifted[2] | shifted[3] | shifted[4] |
+                               shifted[5] | shifted[6] | shifted[7];
             code[j / 8] = byte_val;
         }
 
@@ -811,7 +814,7 @@ class SIMDRaBitQCodec {
             if (bit_off + 4 <= 8) {
                 bits = (code[byte_idx] >> bit_off) & 0x0F;
             } else {
-                uint16_t two_bytes = *(const uint16_t*)(code + byte_idx);
+                uint16_t two_bytes = *(const uint16_t*) (code + byte_idx);
                 bits = (two_bytes >> bit_off) & 0x0F;
             }
 
@@ -838,7 +841,8 @@ class SIMDRaBitQCodec {
 class SIMDLVQ4Codec {
   public:
     /**
-     * @brief NEON LVQ4 encode: min/max reduction 4 floats/iter, quantize 8 floats/iter, pack via vuzp.
+     * @brief NEON LVQ4 encode: min/max reduction 4 floats/iter, quantize 8 floats/iter, pack via
+     * vuzp.
      */
     static void EncodeOne(
         const float* SKM_RESTRICT x,
@@ -863,7 +867,8 @@ class SIMDLVQ4Codec {
         }
 
         float range = v_max - v_min;
-        if (range < 1e-30f) range = 1e-30f;
+        if (range < 1e-30f)
+            range = 1e-30f;
         const float scale = range / 15.0f;
         const float inv_scale = 1.0f / scale;
         const float bias = v_min;
@@ -897,7 +902,7 @@ class SIMDLVQ4Codec {
             // Pack pairs via vuzp: even→lo nibbles, odd→hi nibbles
             uint8x8x2_t pairs = vuzp_u8(n8, vdup_n_u8(0));
             uint8x8_t packed = vorr_u8(pairs.val[0], vshl_n_u8(pairs.val[1], 4));
-            vst1_lane_u32((uint32_t*)(code + out_off), vreinterpret_u32_u8(packed), 0);
+            vst1_lane_u32((uint32_t*) (code + out_off), vreinterpret_u32_u8(packed), 0);
         }
         // Scalar tail
         for (; j + 2 <= d; j += 2, ++out_off) {
@@ -930,7 +935,7 @@ class SIMDLVQ4Codec {
 
         size_t b = 0;
         for (; b + 4 <= nibble_bytes; b += 4) {
-            uint32_t four_bytes = *(const uint32_t*)(code + b);
+            uint32_t four_bytes = *(const uint32_t*) (code + b);
             uint8x8_t packed = vreinterpret_u8_u32(vdup_n_u32(four_bytes));
 
             uint8x8_t lo = vand_u8(packed, vdup_n_u8(0x0F));
@@ -950,8 +955,8 @@ class SIMDLVQ4Codec {
         }
         // Scalar tail
         for (; b < nibble_bytes; ++b) {
-            x[2 * b]     = scale * static_cast<float>(code[b] & 0x0F) + bias;
-            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4)   + bias;
+            x[2 * b] = scale * static_cast<float>(code[b] & 0x0F) + bias;
+            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4) + bias;
         }
     }
 };

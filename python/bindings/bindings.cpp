@@ -28,8 +28,11 @@ void ValidatePyArray(py::array_t<T> arr, const std::string& name, size_t expecte
 // Shared body for assign()/quantized_assign()/assign_training_points(): validate the two float
 // matrices, invoke the assign-family callable, and copy the uint32 result into a NumPy array.
 template <typename Fn>
-py::array_t<uint32_t>
-AssignmentsToArray(py::array_t<float> vectors, py::array_t<float> centroids, Fn&& call) {
+py::array_t<uint32_t> AssignmentsToArray(
+    py::array_t<float> vectors,
+    py::array_t<float> centroids,
+    Fn&& call
+) {
     ValidatePyArray(vectors, "vectors", 2);
     ValidatePyArray(centroids, "centroids", 2);
 
@@ -56,10 +59,15 @@ AssignmentsToArray(py::array_t<float> vectors, py::array_t<float> centroids, Fn&
     return result;
 }
 
-// Shared body for train(): run clustering and return the centroids as an (n_clusters, d) NumPy array.
+// Shared body for train(): run clustering and return the centroids as an (n_clusters, d) NumPy
+// array.
 template <typename KMeans>
-py::array_t<float>
-TrainToArray(KMeans& self, py::array_t<float> data, py::object queries_obj, size_t n_queries) {
+py::array_t<float> TrainToArray(
+    KMeans& self,
+    py::array_t<float> data,
+    py::object queries_obj,
+    size_t n_queries
+) {
     ValidatePyArray(data, "data", 2);
     auto data_info = data.request();
     size_t n = data_info.shape[0];
@@ -221,8 +229,7 @@ void BindSuperKMeans(py::module& m, const char* name) {
         )
 
         .def("__repr__", [name](const KMeans& self) {
-            return std::string("<") + name + ": n_clusters=" +
-                   std::to_string(self.GetNClusters()) +
+            return std::string("<") + name + ": n_clusters=" + std::to_string(self.GetNClusters()) +
                    ", trained=" + (self.IsTrained() ? "True" : "False") + ">";
         });
 }
@@ -367,8 +374,7 @@ void BindHierarchicalSuperKMeans(py::module& m, const char* name) {
         )
 
         .def("__repr__", [name](const KMeans& self) {
-            return std::string("<") + name + ": n_clusters=" +
-                   std::to_string(self.GetNClusters()) +
+            return std::string("<") + name + ": n_clusters=" + std::to_string(self.GetNClusters()) +
                    ", trained=" + (self.IsTrained() ? "True" : "False") + ">";
         });
 }

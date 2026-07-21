@@ -1,8 +1,8 @@
 #undef HAS_FFTW
 
-#include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <gtest/gtest.h>
 #include <limits>
 #include <random>
 #include <unordered_set>
@@ -10,8 +10,8 @@
 
 #include "superkmeans/common.h"
 #include "superkmeans/pdx/utils.h"
-#include "superkmeans/quantizers/quantizer.h"
 #include "superkmeans/quantizers/lvq4.h"
+#include "superkmeans/quantizers/quantizer.h"
 #include "superkmeans/superkmeans.h"
 
 #include "recall_utils.h"
@@ -114,10 +114,18 @@ TEST_F(LVQ4QuantizerTest, FindNearestNeighbor_MatchesBruteForce) {
     std::vector<float> tmp_buf(X_BATCH_SIZE * Y_BATCH_SIZE);
 
     quantizer.FindNearestNeighbor(
-        queries, centroids, data.data() + n_centroids * d, data.data(),
-        n_queries, n_centroids, d,
-        norms.data() + n_centroids, norms.data(),
-        knn.data(), distances.data(), tmp_buf.data()
+        queries,
+        centroids,
+        data.data() + n_centroids * d,
+        data.data(),
+        n_queries,
+        n_centroids,
+        d,
+        norms.data() + n_centroids,
+        norms.data(),
+        knn.data(),
+        distances.data(),
+        tmp_buf.data()
     );
 
     // LVQ4's distance is exact L2 on the decoded vectors, so the returned
@@ -158,9 +166,10 @@ TEST_F(LVQ4QuantizerTest, ComputeNorms_MatchDecodedNorm) {
             double val = decoded[i * d + j];
             expected += val * val;
         }
-        EXPECT_NEAR(norms[i], static_cast<float>(expected),
-                    static_cast<float>(expected) * 1e-3f + 1e-2f)
-            << "norm mismatch at vector " << i;
+        EXPECT_NEAR(
+            norms[i], static_cast<float>(expected), static_cast<float>(expected) * 1e-3f + 1e-2f
+        ) << "norm mismatch at vector "
+          << i;
     }
 }
 

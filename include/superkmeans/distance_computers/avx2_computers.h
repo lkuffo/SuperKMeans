@@ -52,7 +52,6 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u8> {
         }
         return distance;
     };
-
 };
 
 template <>
@@ -209,12 +208,10 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u4> {
             __m256i a_hi = _mm256_and_si256(_mm256_srli_epi16(a_vec, 4), nibble_mask);
             __m256i b_hi = _mm256_and_si256(_mm256_srli_epi16(b_vec, 4), nibble_mask);
             // Absolute diff via saturating subtraction: |a-b| = (a⊖b) | (b⊖a)
-            __m256i diff_lo = _mm256_or_si256(
-                _mm256_subs_epu8(a_lo, b_lo), _mm256_subs_epu8(b_lo, a_lo)
-            );
-            __m256i diff_hi = _mm256_or_si256(
-                _mm256_subs_epu8(a_hi, b_hi), _mm256_subs_epu8(b_hi, a_hi)
-            );
+            __m256i diff_lo =
+                _mm256_or_si256(_mm256_subs_epu8(a_lo, b_lo), _mm256_subs_epu8(b_lo, a_lo));
+            __m256i diff_hi =
+                _mm256_or_si256(_mm256_subs_epu8(a_hi, b_hi), _mm256_subs_epu8(b_hi, a_hi));
             // Square: maddubs treats first arg as unsigned, second as signed.
             // Since diff values are in [0,15], signed interpretation is fine.
             __m256i sq_lo = _mm256_maddubs_epi16(diff_lo, diff_lo); // u16 sums of pairs
@@ -259,8 +256,38 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
         size_t num_bytes
     ) {
         const __m256i lookup = _mm256_setr_epi8(
-            0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4,
-            0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4
+            0,
+            1,
+            1,
+            2,
+            1,
+            2,
+            2,
+            3,
+            1,
+            2,
+            2,
+            3,
+            2,
+            3,
+            3,
+            4,
+            0,
+            1,
+            1,
+            2,
+            1,
+            2,
+            2,
+            3,
+            1,
+            2,
+            2,
+            3,
+            2,
+            3,
+            3,
+            4
         );
         const __m256i nibble_mask = _mm256_set1_epi8(0x0F);
         __m256i acc = _mm256_setzero_si256();
@@ -270,9 +297,8 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
             __m256i vb = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(vector2 + i));
             __m256i v = _mm256_and_si256(va, vb);
             __m256i lo = _mm256_shuffle_epi8(lookup, _mm256_and_si256(v, nibble_mask));
-            __m256i hi = _mm256_shuffle_epi8(
-                lookup, _mm256_and_si256(_mm256_srli_epi16(v, 4), nibble_mask)
-            );
+            __m256i hi =
+                _mm256_shuffle_epi8(lookup, _mm256_and_si256(_mm256_srli_epi16(v, 4), nibble_mask));
             __m256i byte_cnt = _mm256_add_epi8(lo, hi);
             acc = _mm256_add_epi64(acc, _mm256_sad_epu8(byte_cnt, _mm256_setzero_si256()));
         }
@@ -296,8 +322,38 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
         int qb
     ) {
         const __m256i lookup = _mm256_setr_epi8(
-            0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4,
-            0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4
+            0,
+            1,
+            1,
+            2,
+            1,
+            2,
+            2,
+            3,
+            1,
+            2,
+            2,
+            3,
+            2,
+            3,
+            3,
+            4,
+            0,
+            1,
+            1,
+            2,
+            1,
+            2,
+            2,
+            3,
+            1,
+            2,
+            2,
+            3,
+            2,
+            3,
+            3,
+            4
         );
         const __m256i nibble_mask = _mm256_set1_epi8(0x0F);
         const __m256i zero = _mm256_setzero_si256();
@@ -313,7 +369,8 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
             __m256i v01 = _mm256_and_si256(x, p01);
             __m256i lo01 = _mm256_shuffle_epi8(lookup, _mm256_and_si256(v01, nibble_mask));
             __m256i hi01 = _mm256_shuffle_epi8(
-                lookup, _mm256_and_si256(_mm256_srli_epi16(v01, 4), nibble_mask));
+                lookup, _mm256_and_si256(_mm256_srli_epi16(v01, 4), nibble_mask)
+            );
             __m256i cnt01 = _mm256_sad_epu8(_mm256_add_epi8(lo01, hi01), zero);
             // lane0,1 = bp0 popcounts (shift 0), lane2,3 = bp1 popcounts (shift 1)
             __m256i shift01 = _mm256_set_epi64x(1, 1, 0, 0);
@@ -323,7 +380,8 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
             __m256i v23 = _mm256_and_si256(x, p23);
             __m256i lo23 = _mm256_shuffle_epi8(lookup, _mm256_and_si256(v23, nibble_mask));
             __m256i hi23 = _mm256_shuffle_epi8(
-                lookup, _mm256_and_si256(_mm256_srli_epi16(v23, 4), nibble_mask));
+                lookup, _mm256_and_si256(_mm256_srli_epi16(v23, 4), nibble_mask)
+            );
             __m256i cnt23 = _mm256_sad_epu8(_mm256_add_epi8(lo23, hi23), zero);
             __m256i shift23 = _mm256_set_epi64x(3, 3, 2, 2);
             acc = _mm256_add_epi64(acc, _mm256_sllv_epi64(cnt23, shift23));
@@ -338,9 +396,11 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
             size_t chunk_idx = i / 16;
             size_t byte_in_chunk = i % 16;
             for (int bp = 0; bp < qb; ++bp) {
-                result += static_cast<uint32_t>(__builtin_popcount(
-                    data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
-                )) << bp;
+                result +=
+                    static_cast<uint32_t>(__builtin_popcount(
+                        data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
+                    ))
+                    << bp;
             }
         }
         return result;
@@ -369,11 +429,12 @@ class SIMDUtilsComputer {
         constexpr size_t k_simd_width = 8;
         const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
         const __m256i bias = _mm256_set1_epi32(static_cast<int32_t>(0x80000000u));
-        __m256i threshold_vec = _mm256_sub_epi32(
-            _mm256_set1_epi32(static_cast<int32_t>(pruning_threshold)), bias);
+        __m256i threshold_vec =
+            _mm256_sub_epi32(_mm256_set1_epi32(static_cast<int32_t>(pruning_threshold)), bias);
         for (; vector_idx < n_vectors_simd; vector_idx += k_simd_width) {
-            __m256i distances = _mm256_loadu_si256(
-                reinterpret_cast<const __m256i*>(pruning_distances + vector_idx));
+            __m256i distances =
+                _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pruning_distances + vector_idx)
+                );
             __m256i biased = _mm256_sub_epi32(distances, bias);
             __m256i cmp_result = _mm256_cmpgt_epi32(threshold_vec, biased);
             int mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp_result));
@@ -495,11 +556,12 @@ class SIMDUtilsComputer<skmeans::Quantization::u4> {
         constexpr size_t k_simd_width = 8;
         const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
         const __m256i bias = _mm256_set1_epi32(static_cast<int32_t>(0x80000000u));
-        __m256i threshold_vec = _mm256_sub_epi32(
-            _mm256_set1_epi32(static_cast<int32_t>(pruning_threshold)), bias);
+        __m256i threshold_vec =
+            _mm256_sub_epi32(_mm256_set1_epi32(static_cast<int32_t>(pruning_threshold)), bias);
         for (; vector_idx < n_vectors_simd; vector_idx += k_simd_width) {
-            __m256i distances = _mm256_loadu_si256(
-                reinterpret_cast<const __m256i*>(pruning_distances + vector_idx));
+            __m256i distances =
+                _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pruning_distances + vector_idx)
+                );
             __m256i biased = _mm256_sub_epi32(distances, bias);
             __m256i cmp_result = _mm256_cmpgt_epi32(threshold_vec, biased);
             int mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp_result));
@@ -533,8 +595,7 @@ class SIMDUtilsComputer<skmeans::Quantization::u4> {
             __m256i packed = _mm256_packus_epi16(sum16, _mm256_setzero_si256());
             packed = _mm256_permute4x64_epi64(packed, 0b00001000);
             _mm_storeu_si128(
-                reinterpret_cast<__m128i*>(dst + i / 2),
-                _mm256_castsi256_si128(packed)
+                reinterpret_cast<__m128i*>(dst + i / 2), _mm256_castsi256_si128(packed)
             );
         }
         for (; i + 2 <= count; i += 2) {
@@ -612,10 +673,13 @@ class SIMDFastScanComputer {
      * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
      * Processes 8 floats per AVX2 iteration (4 iterations for kBlockSize=32).
      */
-    template<bool U32Dot = false>
+    template <bool U32Dot = false>
     static void RabitQCorrection(
         const void* partial_dot,
-        float c1j, float c2j, float c34j, float qr_j,
+        float c1j,
+        float c2j,
+        float c34j,
+        float qr_j,
         const float* sum_q_f32,
         const float* or_c_l2sqr,
         const float* dp_mult,
@@ -644,8 +708,7 @@ class SIMDFastScanComputer {
 
             __m256 v_sq = _mm256_loadu_ps(sum_q_f32 + k);
 
-            __m256 fdt = _mm256_fmadd_ps(v_c2j, v_sq,
-                         _mm256_fmsub_ps(v_c1j, v_pd, v_c34j));
+            __m256 fdt = _mm256_fmadd_ps(v_c2j, v_sq, _mm256_fmsub_ps(v_c1j, v_pd, v_c34j));
 
             __m256 v_or = _mm256_loadu_ps(or_c_l2sqr + k);
             __m256 v_dp = _mm256_loadu_ps(dp_mult + k);
@@ -663,16 +726,17 @@ class SIMDFastScanComputer {
                 dot_f = static_cast<float>(pd_u16[k]);
             }
             const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
-            out_partial_l2[k] = or_c_l2sqr[k] + qr_j
-                              - 2.0f * dp_mult[k] * fdt;
+            out_partial_l2[k] = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
         }
     }
 
     /// Fused correction + compaction: no intermediate buffer store/load.
-    template<bool U32Dot = false>
+    template <bool U32Dot = false>
     static void RabitQCorrectionAndCompact(
         const void* partial_dot,
-        float c1j, float c34j, float qr_j,
+        float c1j,
+        float c34j,
+        float qr_j,
         float neg2_c2j,
         const float* or_c_l2sqr,
         const float* neg2_dp,
@@ -682,9 +746,9 @@ class SIMDFastScanComputer {
         size_t& n_survivors,
         size_t blk_count
     ) {
-        const __m256 v_c1j     = _mm256_set1_ps(c1j);
-        const __m256 v_c34j    = _mm256_set1_ps(c34j);
-        const __m256 v_qr_j    = _mm256_set1_ps(qr_j);
+        const __m256 v_c1j = _mm256_set1_ps(c1j);
+        const __m256 v_c34j = _mm256_set1_ps(c34j);
+        const __m256 v_qr_j = _mm256_set1_ps(qr_j);
         const __m256 v_neg2c2j = _mm256_set1_ps(neg2_c2j);
 
         const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
@@ -703,8 +767,11 @@ class SIMDFastScanComputer {
             }
 
             // Chain A: base = or + qr + neg2_c2j * dp_sum_q
-            __m256 base = _mm256_fmadd_ps(v_neg2c2j, _mm256_loadu_ps(dp_sum_q + k),
-                          _mm256_add_ps(_mm256_loadu_ps(or_c_l2sqr + k), v_qr_j));
+            __m256 base = _mm256_fmadd_ps(
+                v_neg2c2j,
+                _mm256_loadu_ps(dp_sum_q + k),
+                _mm256_add_ps(_mm256_loadu_ps(or_c_l2sqr + k), v_qr_j)
+            );
 
             // Chain B: shifted = c1j * dot - c34j
             __m256 shifted = _mm256_fmsub_ps(v_c1j, v_pd, v_c34j);
@@ -737,7 +804,7 @@ class SIMDFastScanComputer {
         }
     }
 
-    template<bool WideAdd = false>
+    template <bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -753,7 +820,7 @@ class SIMDFastScanComputer {
     }
 
     /// Multi-block ScanBlock: delegates to scalar (AVX2 could be optimized later).
-    template<int NBlocks>
+    template <int NBlocks>
     static void ScanBlockMulti(
         const uint8_t* const* packed,
         const uint8_t* lut,
@@ -787,10 +854,9 @@ class SIMDFastScanComputer {
         __m256i accu3 = _mm256_setzero_si256();
 
         for (size_t b = 0; b < binary_bytes; ++b) {
-            __m256i c   = _mm256_loadu_si256(
-                reinterpret_cast<const __m256i*>(packed + b * kBlockSize));
-            __m256i tab = _mm256_loadu_si256(
-                reinterpret_cast<const __m256i*>(lut + b * 32));
+            __m256i c =
+                _mm256_loadu_si256(reinterpret_cast<const __m256i*>(packed + b * kBlockSize));
+            __m256i tab = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(lut + b * 32));
 
             __m256i lo = _mm256_and_si256(c, lo_mask);
             __m256i hi = _mm256_and_si256(_mm256_srli_epi16(c, 4), lo_mask);
@@ -812,12 +878,10 @@ class SIMDFastScanComputer {
         // accu0 lane0=lo_vecs_0_7, lane1=hi_vecs_0_7 → sum = total_vecs_0_7
         // accu1 lane0=lo_vecs_8_15, lane1=hi_vecs_8_15 → sum = total_vecs_8_15
         __m256i dis0 = _mm256_add_epi16(
-            _mm256_permute2f128_si256(accu0, accu1, 0x21),
-            _mm256_blend_epi32(accu0, accu1, 0xF0)
+            _mm256_permute2f128_si256(accu0, accu1, 0x21), _mm256_blend_epi32(accu0, accu1, 0xF0)
         );
         __m256i dis1 = _mm256_add_epi16(
-            _mm256_permute2f128_si256(accu2, accu3, 0x21),
-            _mm256_blend_epi32(accu2, accu3, 0xF0)
+            _mm256_permute2f128_si256(accu2, accu3, 0x21), _mm256_blend_epi32(accu2, accu3, 0xF0)
         );
 
         _mm256_storeu_si256(reinterpret_cast<__m256i*>(out_dot), dis0);
@@ -975,7 +1039,8 @@ class SIMDLVQ4Codec {
         }
 
         float range = v_max - v_min;
-        if (range < 1e-30f) range = 1e-30f;
+        if (range < 1e-30f)
+            range = 1e-30f;
         const float scale = range / 15.0f;
         const float inv_scale = 1.0f / scale;
         const float bias = v_min;
@@ -998,13 +1063,13 @@ class SIMDLVQ4Codec {
             // Narrow 8 × epi32 → 8 × epi8 (cross-lane safe)
             __m128i lo = _mm256_castsi256_si128(qi);
             __m128i hi = _mm256_extracti128_si256(qi, 1);
-            __m128i packed16 = _mm_packs_epi32(lo, hi);              // 8 × int16
+            __m128i packed16 = _mm_packs_epi32(lo, hi);                        // 8 × int16
             __m128i packed8 = _mm_packus_epi16(packed16, _mm_setzero_si128()); // 8 × uint8
 
             // Pack nibble pairs: maddubs → 4 packed bytes
             __m128i nibbles16 = _mm_maddubs_epi16(packed8, v_mul);
             __m128i nibbles8 = _mm_packus_epi16(nibbles16, _mm_setzero_si128());
-            *(uint32_t*)(code + out_off) = static_cast<uint32_t>(_mm_cvtsi128_si32(nibbles8));
+            *(uint32_t*) (code + out_off) = static_cast<uint32_t>(_mm_cvtsi128_si32(nibbles8));
         }
         // Scalar tail
         for (; j + 2 <= d; j += 2, ++out_off) {
@@ -1037,8 +1102,8 @@ class SIMDLVQ4Codec {
 
         size_t b = 0;
         for (; b + 4 <= nibble_bytes; b += 4) {
-            __m128i packed = _mm_cvtsi32_si128(*(const int32_t*)(code + b));
-            __m128i wide = _mm_cvtepu8_epi32(packed);  // 4 × epi32
+            __m128i packed = _mm_cvtsi32_si128(*(const int32_t*) (code + b));
+            __m128i wide = _mm_cvtepu8_epi32(packed); // 4 × epi32
 
             __m128i lo = _mm_and_si128(wide, _mm_set1_epi32(0x0F));
             __m128i hi = _mm_srli_epi32(wide, 4);
@@ -1046,9 +1111,7 @@ class SIMDLVQ4Codec {
             // Interleave: [lo0,hi0,lo1,hi1] and [lo2,hi2,lo3,hi3]
             __m128i first = _mm_unpacklo_epi32(lo, hi);
             __m128i second = _mm_unpackhi_epi32(lo, hi);
-            __m256i interleaved = _mm256_inserti128_si256(
-                _mm256_castsi128_si256(first), second, 1
-            );
+            __m256i interleaved = _mm256_inserti128_si256(_mm256_castsi128_si256(first), second, 1);
 
             __m256 floats = _mm256_cvtepi32_ps(interleaved);
             __m256 result = _mm256_fmadd_ps(floats, v_scale, v_bias);
@@ -1056,8 +1119,8 @@ class SIMDLVQ4Codec {
         }
         // Scalar tail
         for (; b < nibble_bytes; ++b) {
-            x[2 * b]     = scale * static_cast<float>(code[b] & 0x0F) + bias;
-            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4)   + bias;
+            x[2 * b] = scale * static_cast<float>(code[b] & 0x0F) + bias;
+            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4) + bias;
         }
     }
 };

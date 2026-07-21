@@ -125,12 +125,12 @@ int main(int argc, char* argv[]) {
               << std::endl;
 
     // Assignments of last iteration
-    std::vector<uint32_t> assignments(kmeans_state.assignments.get(), kmeans_state.assignments.get() + n);
+    std::vector<uint32_t> assignments(
+        kmeans_state.assignments.get(), kmeans_state.assignments.get() + n
+    );
 
     using SKM = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>;
-    double wcss_f32 = SKM::ComputeWCSS(
-        data.data(), centroids.data(), assignments.data(), n, d
-    );
+    double wcss_f32 = SKM::ComputeWCSS(data.data(), centroids.data(), assignments.data(), n, d);
     std::cout << "WCSS (f32): " << std::fixed << std::setprecision(2) << wcss_f32 << std::endl;
 
     auto balance_stats = skmeans::HierarchicalSuperKMeans<

@@ -34,14 +34,7 @@ constexpr int MEASURED_RUNS = 10;
  * BLAS uses column-major, so we compute C^T = B × A^T in Fortran layout,
  * which is equivalent to C = A × B^T in row-major.
  */
-double RunBlasGemm(
-    const float* a,
-    const float* b,
-    size_t m,
-    size_t n,
-    size_t d,
-    float* out
-) {
+double RunBlasGemm(const float* a, const float* b, size_t m, size_t n, size_t d, float* out) {
     // Row-major C(m,n) = A(m,d) × B(n,d)^T  ↔  col-major C'(n,m) = B'^T(n,d) × A'(d,m)
     char transa = 'T'; // B stored col-major as (d,n), transpose to get (n,d)
     char transb = 'N'; // A stored col-major as (d,m), no transpose
@@ -55,8 +48,7 @@ double RunBlasGemm(
     int ldc = static_cast<int>(n); // leading dim of C in col-major = n
 
     auto t0 = std::chrono::high_resolution_clock::now();
-    sgemm_(&transa, &transb, &blas_m, &blas_n, &blas_k,
-           &alpha, b, &lda, a, &ldb, &beta, out, &ldc);
+    sgemm_(&transa, &transb, &blas_m, &blas_n, &blas_k, &alpha, b, &lda, a, &ldb, &beta, out, &ldc);
     auto t1 = std::chrono::high_resolution_clock::now();
 
     return std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -82,7 +74,8 @@ int main(int argc, char** argv) {
     std::cout << "=== BLAS sgemm f32 Microbenchmark ===" << std::endl;
     std::cout << "C(" << m << ", " << n << ") = A(" << m << ", " << d << ") * B(" << n << ", " << d
               << ")^T" << std::endl;
-    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS << std::endl;
+    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS
+              << std::endl;
     std::cout << std::endl;
 
     auto a = bench_utils::generate_random_f32(m, d, 42);

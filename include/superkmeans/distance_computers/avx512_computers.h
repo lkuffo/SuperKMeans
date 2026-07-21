@@ -42,8 +42,7 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::u8> {
 
     nk_sqeuclidean_u8_ice_cycle:
         if (num_dimensions < 64) {
-            __mmask64 mask =
-                static_cast<__mmask64>(_bzhi_u64(0xFFFFFFFFFFFFFFFF, num_dimensions));
+            __mmask64 mask = static_cast<__mmask64>(_bzhi_u64(0xFFFFFFFFFFFFFFFF, num_dimensions));
             a_u8 = _mm512_maskz_loadu_epi8(mask, vector1);
             b_u8 = _mm512_maskz_loadu_epi8(mask, vector2);
             num_dimensions = 0;
@@ -54,9 +53,7 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::u8> {
         }
 
         // Absolute difference via saturating subtraction
-        diff_u8 = _mm512_or_si512(
-            _mm512_subs_epu8(a_u8, b_u8), _mm512_subs_epu8(b_u8, a_u8)
-        );
+        diff_u8 = _mm512_or_si512(_mm512_subs_epu8(a_u8, b_u8), _mm512_subs_epu8(b_u8, a_u8));
         // Widen u8 -> i16 (zero-extend) to avoid signed misinterpretation
         diff_low_i16 = _mm512_unpacklo_epi8(diff_u8, zeros);
         diff_high_i16 = _mm512_unpackhi_epi8(diff_u8, zeros);
@@ -203,12 +200,8 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::u4> {
         b_lo = _mm512_and_si512(b_vec, nibble_mask);
         b_hi = _mm512_and_si512(_mm512_srli_epi16(b_vec, 4), nibble_mask);
         // Absolute diff via saturating sub: |a-b| = (a⊖b) | (b⊖a)
-        diff_lo = _mm512_or_si512(
-            _mm512_subs_epu8(a_lo, b_lo), _mm512_subs_epu8(b_lo, a_lo)
-        );
-        diff_hi = _mm512_or_si512(
-            _mm512_subs_epu8(a_hi, b_hi), _mm512_subs_epu8(b_hi, a_hi)
-        );
+        diff_lo = _mm512_or_si512(_mm512_subs_epu8(a_lo, b_lo), _mm512_subs_epu8(b_lo, a_lo));
+        diff_hi = _mm512_or_si512(_mm512_subs_epu8(a_hi, b_hi), _mm512_subs_epu8(b_hi, a_hi));
         // Square and accumulate using DPBUSD (VNNI)
         d2_i32x16 = _mm512_dpbusd_epi32(d2_i32x16, diff_lo, diff_lo);
         d2_i32x16 = _mm512_dpbusd_epi32(d2_i32x16, diff_hi, diff_hi);
@@ -271,8 +264,8 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::b8> {
         __m512i acc = _mm512_setzero_si512();
         size_t i = 0;
         for (; i + 16 <= num_bytes; i += 16) {
-            __m512i x = _mm512_broadcast_i32x4(
-                _mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i)));
+            __m512i x =
+                _mm512_broadcast_i32x4(_mm_loadu_si128(reinterpret_cast<const __m128i*>(data + i)));
             __m512i bp = _mm512_loadu_si512(planes_interleaved + i * qb);
             __m512i popcnt = _mm512_popcnt_epi64(_mm512_and_si512(x, bp));
             acc = _mm512_add_epi64(acc, _mm512_sllv_epi64(popcnt, shift_vec));
@@ -293,9 +286,7 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::b8> {
             __m256i popcnt = _mm256_popcnt_epi64(_mm256_and_si256(x, bp));
             __m256i shifted = _mm256_sllv_epi64(popcnt, shift_vec_256);
             // Zero-extend to 512-bit and accumulate
-            acc = _mm512_add_epi64(
-                acc, _mm512_inserti64x4(_mm512_setzero_si512(), shifted, 0)
-            );
+            acc = _mm512_add_epi64(acc, _mm512_inserti64x4(_mm512_setzero_si512(), shifted, 0));
             i += 8;
         }
         // Single reduce after both SIMD paths
@@ -305,9 +296,11 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::b8> {
             size_t chunk = i / 16;
             size_t byte_in_chunk = i % 16;
             for (int bp = 0; bp < qb; ++bp) {
-                result += static_cast<uint32_t>(__builtin_popcount(
-                    data[i] & planes_interleaved[chunk * qb * 16 + bp * 16 + byte_in_chunk]
-                )) << bp;
+                result +=
+                    static_cast<uint32_t>(__builtin_popcount(
+                        data[i] & planes_interleaved[chunk * qb * 16 + bp * 16 + byte_in_chunk]
+                    ))
+                    << bp;
             }
         }
         return result;
@@ -512,12 +505,9 @@ class SIMDUtilsComputer<Quantization::u4> {
             __m512i v = _mm512_loadu_si512(src + i);
             __m512i sum16 = _mm512_maddubs_epi16(v, mul);
             __m512i packed = _mm512_packus_epi16(sum16, _mm512_setzero_si512());
-            packed = _mm512_permutexvar_epi64(
-                _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0), packed
-            );
+            packed = _mm512_permutexvar_epi64(_mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0), packed);
             _mm256_storeu_si256(
-                reinterpret_cast<__m256i*>(dst + i / 2),
-                _mm512_castsi512_si256(packed)
+                reinterpret_cast<__m256i*>(dst + i / 2), _mm512_castsi512_si256(packed)
             );
         }
         const __m256i mul256 = _mm256_set1_epi16(0x1001);
@@ -527,8 +517,7 @@ class SIMDUtilsComputer<Quantization::u4> {
             __m256i packed = _mm256_packus_epi16(sum16, _mm256_setzero_si256());
             packed = _mm256_permute4x64_epi64(packed, 0b00001000);
             _mm_storeu_si128(
-                reinterpret_cast<__m128i*>(dst + i / 2),
-                _mm256_castsi256_si128(packed)
+                reinterpret_cast<__m128i*>(dst + i / 2), _mm256_castsi256_si128(packed)
             );
         }
         for (; i + 2 <= count; i += 2) {
@@ -561,7 +550,9 @@ class SIMDUtilsComputer<Quantization::u4> {
             __m128i lo = _mm_and_si128(v, mask8);
             __m128i hi = _mm_and_si128(_mm_srli_epi16(v, 4), mask8);
             _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i * 2), _mm_unpacklo_epi8(lo, hi));
-            _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + i * 2 + 16), _mm_unpackhi_epi8(lo, hi));
+            _mm_storeu_si128(
+                reinterpret_cast<__m128i*>(dst + i * 2 + 16), _mm_unpackhi_epi8(lo, hi)
+            );
         }
         for (; i < n_packed; ++i) {
             dst[2 * i] = src[i] & 0x0F;
@@ -591,7 +582,8 @@ class SIMDFastScanComputer {
         size_t k = 0;
         constexpr size_t k_simd_width = 16;
         const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
-        const __m512i offsets = _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+        const __m512i offsets =
+            _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
         for (; k < n_vectors_simd; k += k_simd_width) {
             __m512 thresh = _mm512_loadu_ps(threshold + k);
             __m512 dists = _mm512_loadu_ps(partial_l2 + k);
@@ -616,10 +608,13 @@ class SIMDFastScanComputer {
      * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
      * Processes 16 floats per AVX-512 iteration (2 iterations for kBlockSize=32).
      */
-    template<bool U32Dot = false>
+    template <bool U32Dot = false>
     static void RabitQCorrection(
         const void* partial_dot,
-        float c1j, float c2j, float c34j, float qr_j,
+        float c1j,
+        float c2j,
+        float c34j,
+        float qr_j,
         const float* sum_q_f32,
         const float* or_c_l2sqr,
         const float* dp_mult,
@@ -648,8 +643,7 @@ class SIMDFastScanComputer {
 
             __m512 v_sq = _mm512_loadu_ps(sum_q_f32 + k);
 
-            __m512 fdt = _mm512_fmadd_ps(v_c2j, v_sq,
-                         _mm512_fmsub_ps(v_c1j, v_pd, v_c34j));
+            __m512 fdt = _mm512_fmadd_ps(v_c2j, v_sq, _mm512_fmsub_ps(v_c1j, v_pd, v_c34j));
 
             __m512 v_or = _mm512_loadu_ps(or_c_l2sqr + k);
             __m512 v_dp = _mm512_loadu_ps(dp_mult + k);
@@ -666,11 +660,8 @@ class SIMDFastScanComputer {
             } else {
                 dot_f = static_cast<float>(pd_u16[k]);
             }
-            const float fdt = c1j * dot_f
-                            + c2j * sum_q_f32[k]
-                            - c34j;
-            out_partial_l2[k] = or_c_l2sqr[k] + qr_j
-                              - 2.0f * dp_mult[k] * fdt;
+            const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
+            out_partial_l2[k] = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
         }
     }
 
@@ -681,10 +672,12 @@ class SIMDFastScanComputer {
      * The L2 result stays in registers and is compared directly against the
      * threshold, feeding into vpcompressd without a memory round-trip.
      */
-    template<bool U32Dot = false>
+    template <bool U32Dot = false>
     static void RabitQCorrectionAndCompact(
         const void* partial_dot,
-        float c1j, float c34j, float qr_j,
+        float c1j,
+        float c34j,
+        float qr_j,
         float neg2_c2j,
         const float* or_c_l2sqr,
         const float* neg2_dp,
@@ -694,9 +687,9 @@ class SIMDFastScanComputer {
         size_t& n_survivors,
         size_t blk_count
     ) {
-        const __m512 v_c1j     = _mm512_set1_ps(c1j);
-        const __m512 v_c34j    = _mm512_set1_ps(c34j);
-        const __m512 v_qr_j    = _mm512_set1_ps(qr_j);
+        const __m512 v_c1j = _mm512_set1_ps(c1j);
+        const __m512 v_c34j = _mm512_set1_ps(c34j);
+        const __m512 v_qr_j = _mm512_set1_ps(qr_j);
         const __m512 v_neg2c2j = _mm512_set1_ps(neg2_c2j);
 
         const auto* pd_u16 = static_cast<const uint16_t*>(partial_dot);
@@ -704,12 +697,12 @@ class SIMDFastScanComputer {
 
         n_survivors = 0;
 
-        // Fast path: blk_count == 32 → manually unrolled 2×16 with interleaved ILP 
+        // Fast path: blk_count == 32 → manually unrolled 2×16 with interleaved ILP
         if (blk_count == 32) {
-            const __m512i offsets_lo = _mm512_set_epi32(
-                15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
-            const __m512i offsets_hi = _mm512_set_epi32(
-                31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16);
+            const __m512i offsets_lo =
+                _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+            const __m512i offsets_hi =
+                _mm512_set_epi32(31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16);
 
             // Load dot products for both halves
             __m512 v_pd_lo, v_pd_hi;
@@ -718,45 +711,54 @@ class SIMDFastScanComputer {
                 v_pd_hi = _mm512_cvtepi32_ps(_mm512_loadu_si512(pd_u32 + 16));
             } else {
                 v_pd_lo = _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(
-                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16))));
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16))
+                ));
                 v_pd_hi = _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(
-                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16 + 16))));
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16 + 16))
+                ));
             }
 
             // Chain A (dot-independent): base = or + qr + neg2_c2j * dp_sum_q
-            __m512 base_lo = _mm512_fmadd_ps(v_neg2c2j, _mm512_loadu_ps(dp_sum_q),
-                             _mm512_add_ps(_mm512_loadu_ps(or_c_l2sqr), v_qr_j));
-            __m512 base_hi = _mm512_fmadd_ps(v_neg2c2j, _mm512_loadu_ps(dp_sum_q + 16),
-                             _mm512_add_ps(_mm512_loadu_ps(or_c_l2sqr + 16), v_qr_j));
+            __m512 base_lo = _mm512_fmadd_ps(
+                v_neg2c2j,
+                _mm512_loadu_ps(dp_sum_q),
+                _mm512_add_ps(_mm512_loadu_ps(or_c_l2sqr), v_qr_j)
+            );
+            __m512 base_hi = _mm512_fmadd_ps(
+                v_neg2c2j,
+                _mm512_loadu_ps(dp_sum_q + 16),
+                _mm512_add_ps(_mm512_loadu_ps(or_c_l2sqr + 16), v_qr_j)
+            );
 
             // Chain B (dot-dependent): shifted = c1j * dot - c34j
             __m512 shifted_lo = _mm512_fmsub_ps(v_c1j, v_pd_lo, v_c34j);
             __m512 shifted_hi = _mm512_fmsub_ps(v_c1j, v_pd_hi, v_c34j);
 
             // Merge: dist = neg2_dp * shifted + base
-            __m512 dist_lo = _mm512_fmadd_ps(_mm512_loadu_ps(neg2_dp),      shifted_lo, base_lo);
+            __m512 dist_lo = _mm512_fmadd_ps(_mm512_loadu_ps(neg2_dp), shifted_lo, base_lo);
             __m512 dist_hi = _mm512_fmadd_ps(_mm512_loadu_ps(neg2_dp + 16), shifted_hi, base_hi);
 
             // Compare + compact
-            __mmask16 mask_lo = _mm512_cmp_ps_mask(dist_lo, _mm512_loadu_ps(threshold),      _CMP_LE_OQ);
-            __mmask16 mask_hi = _mm512_cmp_ps_mask(dist_hi, _mm512_loadu_ps(threshold + 16), _CMP_LE_OQ);
+            __mmask16 mask_lo = _mm512_cmp_ps_mask(dist_lo, _mm512_loadu_ps(threshold), _CMP_LE_OQ);
+            __mmask16 mask_hi =
+                _mm512_cmp_ps_mask(dist_hi, _mm512_loadu_ps(threshold + 16), _CMP_LE_OQ);
 
             if (SKM_UNLIKELY(mask_lo)) {
-                _mm512_mask_compressstoreu_epi32(
-                    survivor_positions, mask_lo, offsets_lo);
+                _mm512_mask_compressstoreu_epi32(survivor_positions, mask_lo, offsets_lo);
                 n_survivors = _mm_popcnt_u32(mask_lo);
             }
             if (SKM_UNLIKELY(mask_hi)) {
                 _mm512_mask_compressstoreu_epi32(
-                    survivor_positions + n_survivors, mask_hi, offsets_hi);
+                    survivor_positions + n_survivors, mask_hi, offsets_hi
+                );
                 n_survivors += _mm_popcnt_u32(mask_hi);
             }
             return;
         }
 
-        //  General path: loop 16 at a time 
-        const __m512i offsets = _mm512_set_epi32(
-            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
+        //  General path: loop 16 at a time
+        const __m512i offsets =
+            _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
 
         size_t k = 0;
         for (; k + 16 <= blk_count; k += 16) {
@@ -765,12 +767,16 @@ class SIMDFastScanComputer {
                 v_pd = _mm512_cvtepi32_ps(_mm512_loadu_si512(pd_u32 + k));
             } else {
                 v_pd = _mm512_cvtepi32_ps(_mm512_cvtepu16_epi32(
-                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16 + k))));
+                    _mm256_loadu_si256(reinterpret_cast<const __m256i*>(pd_u16 + k))
+                ));
             }
 
             // Chain A: base = or + qr + neg2_c2j * dp_sum_q
-            __m512 base = _mm512_fmadd_ps(v_neg2c2j, _mm512_loadu_ps(dp_sum_q + k),
-                          _mm512_add_ps(_mm512_loadu_ps(or_c_l2sqr + k), v_qr_j));
+            __m512 base = _mm512_fmadd_ps(
+                v_neg2c2j,
+                _mm512_loadu_ps(dp_sum_q + k),
+                _mm512_add_ps(_mm512_loadu_ps(or_c_l2sqr + k), v_qr_j)
+            );
 
             // Chain B: shifted = c1j * dot - c34j
             __m512 shifted = _mm512_fmsub_ps(v_c1j, v_pd, v_c34j);
@@ -781,10 +787,10 @@ class SIMDFastScanComputer {
             __m512 thresh = _mm512_loadu_ps(threshold + k);
             __mmask16 cmp_mask = _mm512_cmp_ps_mask(result, thresh, _CMP_LE_OQ);
             if (SKM_UNLIKELY(cmp_mask)) {
-                __m512i indices = _mm512_add_epi32(
-                    _mm512_set1_epi32(static_cast<int>(k)), offsets);
+                __m512i indices = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int>(k)), offsets);
                 _mm512_mask_compressstoreu_epi32(
-                    survivor_positions + n_survivors, cmp_mask, indices);
+                    survivor_positions + n_survivors, cmp_mask, indices
+                );
                 n_survivors += _mm_popcnt_u32(cmp_mask);
             }
         }
@@ -804,7 +810,7 @@ class SIMDFastScanComputer {
         }
     }
 
-    template<bool WideAdd = false>
+    template <bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -823,7 +829,7 @@ class SIMDFastScanComputer {
      * @brief Multi-block ScanBlock: process NBlocks data blocks against one shared LUT.
      * Amortizes LUT loads across multiple blocks of 32 X points.
      */
-    template<int NBlocks>
+    template <int NBlocks>
     static void ScanBlockMulti(
         const uint8_t* const* packed,
         const uint8_t* lut,
@@ -856,7 +862,7 @@ class SIMDFastScanComputer {
         // Process 2 byte positions per iteration (64B packed + 64B LUT)
         size_t b = 0;
         for (; b + 2 <= binary_bytes; b += 2) {
-            __m512i c   = _mm512_loadu_si512(packed + b * kBlockSize);
+            __m512i c = _mm512_loadu_si512(packed + b * kBlockSize);
             __m512i tab = _mm512_loadu_si512(lut + b * 32);
 
             __m512i lo = _mm512_and_si512(c, lo_mask);
@@ -873,7 +879,8 @@ class SIMDFastScanComputer {
 
         // Handle odd trailing byte position with 256-bit
         if (b < binary_bytes) {
-            __m256i c256   = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(packed + b * kBlockSize));
+            __m256i c256 =
+                _mm256_loadu_si256(reinterpret_cast<const __m256i*>(packed + b * kBlockSize));
             __m256i tab256 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(lut + b * 32));
             __m256i lo_mask_256 = _mm256_set1_epi8(0x0F);
 
@@ -885,9 +892,13 @@ class SIMDFastScanComputer {
 
             // Zero-extend to 512-bit before accumulating
             accu0 = _mm512_add_epi16(accu0, _mm512_inserti64x4(_mm512_setzero_si512(), res_lo, 0));
-            accu1 = _mm512_add_epi16(accu1, _mm512_inserti64x4(_mm512_setzero_si512(), _mm256_srli_epi16(res_lo, 8), 0));
+            accu1 = _mm512_add_epi16(
+                accu1, _mm512_inserti64x4(_mm512_setzero_si512(), _mm256_srli_epi16(res_lo, 8), 0)
+            );
             accu2 = _mm512_add_epi16(accu2, _mm512_inserti64x4(_mm512_setzero_si512(), res_hi, 0));
-            accu3 = _mm512_add_epi16(accu3, _mm512_inserti64x4(_mm512_setzero_si512(), _mm256_srli_epi16(res_hi, 8), 0));
+            accu3 = _mm512_add_epi16(
+                accu3, _mm512_inserti64x4(_mm512_setzero_si512(), _mm256_srli_epi16(res_hi, 8), 0)
+            );
         }
 
         // Fix up: remove odd-byte contamination
@@ -914,19 +925,26 @@ class SIMDFastScanComputer {
 
     /// Reduce 4 interleaved accumulators → 32 uint16 and store.
     SKM_ALWAYS_INLINE static void ReduceAndStore(
-        __m512i a0, __m512i a1, __m512i a2, __m512i a3, uint16_t* out
+        __m512i a0,
+        __m512i a1,
+        __m512i a2,
+        __m512i a3,
+        uint16_t* out
     ) {
         a0 = _mm512_sub_epi16(a0, _mm512_slli_epi16(a1, 8));
         a2 = _mm512_sub_epi16(a2, _mm512_slli_epi16(a3, 8));
         __m512i r1 = _mm512_add_epi16(
-            _mm512_mask_blend_epi64(0b11110000, a0, a1),
-            _mm512_shuffle_i64x2(a0, a1, 0b01001110));
+            _mm512_mask_blend_epi64(0b11110000, a0, a1), _mm512_shuffle_i64x2(a0, a1, 0b01001110)
+        );
         __m512i r2 = _mm512_add_epi16(
-            _mm512_mask_blend_epi64(0b11110000, a2, a3),
-            _mm512_shuffle_i64x2(a2, a3, 0b01001110));
-        _mm512_storeu_si512(out, _mm512_add_epi16(
-            _mm512_shuffle_i64x2(r1, r2, 0b10001000),
-            _mm512_shuffle_i64x2(r1, r2, 0b11011101)));
+            _mm512_mask_blend_epi64(0b11110000, a2, a3), _mm512_shuffle_i64x2(a2, a3, 0b01001110)
+        );
+        _mm512_storeu_si512(
+            out,
+            _mm512_add_epi16(
+                _mm512_shuffle_i64x2(r1, r2, 0b10001000), _mm512_shuffle_i64x2(r1, r2, 0b11011101)
+            )
+        );
     }
 
     /**
@@ -934,7 +952,7 @@ class SIMDFastScanComputer {
      * NBlocks is a compile-time constant (1-4) so the compiler fully unrolls the block loop,
      * keeping all 4×NBlocks accumulators in registers.
      */
-    template<int NBlocks>
+    template <int NBlocks>
     static void ScanBlockAVX512Multi(
         const uint8_t* const* packed,
         const uint8_t* lut,
@@ -975,16 +993,21 @@ class SIMDFastScanComputer {
 
             for (int blk = 0; blk < NBlocks; ++blk) {
                 __m256i c256 = _mm256_loadu_si256(
-                    reinterpret_cast<const __m256i*>(packed[blk] + b * kBlockSize));
+                    reinterpret_cast<const __m256i*>(packed[blk] + b * kBlockSize)
+                );
                 __m256i lo = _mm256_and_si256(c256, lo_mask_256);
                 __m256i hi = _mm256_and_si256(_mm256_srli_epi16(c256, 4), lo_mask_256);
                 __m256i res_lo = _mm256_shuffle_epi8(tab256, lo);
                 __m256i res_hi = _mm256_shuffle_epi8(tab256, hi);
                 __m512i zero = _mm512_setzero_si512();
                 accu[blk][0] = _mm512_add_epi16(accu[blk][0], _mm512_inserti64x4(zero, res_lo, 0));
-                accu[blk][1] = _mm512_add_epi16(accu[blk][1], _mm512_inserti64x4(zero, _mm256_srli_epi16(res_lo, 8), 0));
+                accu[blk][1] = _mm512_add_epi16(
+                    accu[blk][1], _mm512_inserti64x4(zero, _mm256_srli_epi16(res_lo, 8), 0)
+                );
                 accu[blk][2] = _mm512_add_epi16(accu[blk][2], _mm512_inserti64x4(zero, res_hi, 0));
-                accu[blk][3] = _mm512_add_epi16(accu[blk][3], _mm512_inserti64x4(zero, _mm256_srli_epi16(res_hi, 8), 0));
+                accu[blk][3] = _mm512_add_epi16(
+                    accu[blk][3], _mm512_inserti64x4(zero, _mm256_srli_epi16(res_hi, 8), 0)
+                );
             }
         }
 
@@ -1028,7 +1051,7 @@ class SIMDRaBitQCodec {
             abs_acc = _mm512_add_ps(abs_acc, _mm512_andnot_ps(sign_mask, res));
 
             __mmask16 signs = _mm512_cmp_ps_mask(res, zero, _CMP_GT_OQ);
-            *(uint16_t*)(code + byte_off) = static_cast<uint16_t>(signs);
+            *(uint16_t*) (code + byte_off) = static_cast<uint16_t>(signs);
         }
 
         // Scalar tail
@@ -1076,7 +1099,7 @@ class SIMDRaBitQCodec {
         size_t j = 0;
         size_t byte_off = 0;
         for (; j + 16 <= d; j += 16, byte_off += 2) {
-            __mmask16 bits = static_cast<__mmask16>(*(const uint16_t*)(code + byte_off));
+            __mmask16 bits = static_cast<__mmask16>(*(const uint16_t*) (code + byte_off));
             __m512 val = _mm512_mask_blend_ps(bits, neg, pos);
             __m512 cv = _mm512_loadu_ps(centroid + j);
             _mm512_storeu_ps(x + j, _mm512_add_ps(val, cv));
@@ -1119,7 +1142,8 @@ class SIMDLVQ4Codec {
         }
 
         float range = v_max - v_min;
-        if (range < 1e-30f) range = 1e-30f;
+        if (range < 1e-30f)
+            range = 1e-30f;
         const float scale = range / 15.0f;
         const float inv_scale = 1.0f / scale;
         const float bias = v_min;
@@ -1144,7 +1168,7 @@ class SIMDLVQ4Codec {
             // Pack nibble pairs: maddubs with [1, 16] → val[2k] + val[2k+1]*16
             __m128i packed16 = _mm_maddubs_epi16(narrow, v_mul);
             __m128i packed8 = _mm_packus_epi16(packed16, _mm_setzero_si128());
-            _mm_storel_epi64((__m128i*)(code + out_off), packed8);
+            _mm_storel_epi64((__m128i*) (code + out_off), packed8);
         }
         // Scalar tail
         for (; j + 2 <= d; j += 2, ++out_off) {
@@ -1160,7 +1184,8 @@ class SIMDLVQ4Codec {
     }
 
     /**
-     * @brief AVX-512 LVQ4 decode: 8 packed bytes → 16 floats per iteration via permutex2var interleave.
+     * @brief AVX-512 LVQ4 decode: 8 packed bytes → 16 floats per iteration via permutex2var
+     * interleave.
      * @TODO(lkuffo, low): This could be optimized further
      */
     static void DecodeOne(
@@ -1177,13 +1202,12 @@ class SIMDLVQ4Codec {
         const __m512 v_bias = _mm512_set1_ps(bias);
         // Interleave index: lo[0], hi[0], lo[1], hi[1], ..., lo[7], hi[7]
         // lo indices 0-7 from src1, hi indices 16-23 from src2
-        const __m512i interleave_idx = _mm512_set_epi32(
-            23, 7, 22, 6, 21, 5, 20, 4, 19, 3, 18, 2, 17, 1, 16, 0
-        );
+        const __m512i interleave_idx =
+            _mm512_set_epi32(23, 7, 22, 6, 21, 5, 20, 4, 19, 3, 18, 2, 17, 1, 16, 0);
 
         size_t b = 0;
         for (; b + 8 <= nibble_bytes; b += 8) {
-            __m128i packed = _mm_loadl_epi64((const __m128i*)(code + b));
+            __m128i packed = _mm_loadl_epi64((const __m128i*) (code + b));
             __m256i wide = _mm256_cvtepu8_epi32(packed);
 
             __m256i lo = _mm256_and_si256(wide, _mm256_set1_epi32(0x0F));
@@ -1199,8 +1223,8 @@ class SIMDLVQ4Codec {
         }
         // Scalar tail
         for (; b < nibble_bytes; ++b) {
-            x[2 * b]     = scale * static_cast<float>(code[b] & 0x0F) + bias;
-            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4)   + bias;
+            x[2 * b] = scale * static_cast<float>(code[b] & 0x0F) + bias;
+            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4) + bias;
         }
     }
 };

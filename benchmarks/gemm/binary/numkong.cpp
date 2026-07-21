@@ -59,11 +59,11 @@ double RunNumKongHamming(
             reinterpret_cast<const nk_u1x8_t*>(a + start * bytes_per_row),
             b_packed,
             out + start * n,
-            count,              // rows
-            n,                  // cols
-            d,                  // depth in bits
-            bytes_per_row,      // v_stride in bytes
-            c_stride            // r_stride in bytes
+            count,         // rows
+            n,             // cols
+            d,             // depth in bits
+            bytes_per_row, // v_stride in bytes
+            c_stride       // r_stride in bytes
         );
     });
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -98,11 +98,12 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "=== NumKong Binary Hamming Packed Microbenchmark ===" << std::endl;
-    std::cout << "C(" << m << ", " << n << ") = hamming(A(" << m << ", " << d << "b), B(" << n << ", " << d
-              << "b))" << std::endl;
+    std::cout << "C(" << m << ", " << n << ") = hamming(A(" << m << ", " << d << "b), B(" << n
+              << ", " << d << "b))" << std::endl;
     std::cout << "Bytes per row: " << bytes_per_row << std::endl;
     std::cout << "Threads: " << threads << std::endl;
-    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS << std::endl;
+    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS
+              << std::endl;
     std::cout << std::endl;
 
     nk_configure_thread(nk_capabilities());
@@ -115,7 +116,9 @@ int main(int argc, char** argv) {
     size_t packed_size = nk_dots_packed_size_u1(n, d);
     std::vector<char> b_packed(packed_size);
     std::cout << "Packing B (" << packed_size / (1024 * 1024) << " MB)..." << std::flush;
-    nk_dots_pack_u1(reinterpret_cast<const nk_u1x8_t*>(b.data()), n, d, bytes_per_row, b_packed.data());
+    nk_dots_pack_u1(
+        reinterpret_cast<const nk_u1x8_t*>(b.data()), n, d, bytes_per_row, b_packed.data()
+    );
     std::cout << " done" << std::endl;
 
     // Warmup
@@ -131,7 +134,8 @@ int main(int argc, char** argv) {
     double min_ms = std::numeric_limits<double>::max();
     double max_ms = 0.0;
     for (int i = 0; i < MEASURED_RUNS; ++i) {
-        double ms = RunNumKongHamming(a.data(), b_packed.data(), m, n, d, out.data(), bytes_per_row, pool);
+        double ms =
+            RunNumKongHamming(a.data(), b_packed.data(), m, n, d, out.data(), bytes_per_row, pool);
         total_ms += ms;
         min_ms = std::min(min_ms, ms);
         max_ms = std::max(max_ms, ms);

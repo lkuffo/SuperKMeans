@@ -51,9 +51,8 @@ class IQuantizer {
      * The returned norms must be in the original float distance space
      * so that L2(x,y) = norm(x) + norm(y) - 2 * dot_scaled(x,y) holds.
      */
-    virtual void ComputeNorms(
-        const quantized_t* data, size_t n, size_t d, float* out_norms
-    ) const = 0;
+    virtual void ComputeNorms(const quantized_t* data, size_t n, size_t d, float* out_norms)
+        const = 0;
 
     /**
      * @brief Find top-1 nearest neighbor for each query vector.
@@ -145,7 +144,8 @@ class IQuantizer {
      * their internal uint32 accumulator buffer. Default: no-op.
      */
     virtual void ResetCentroidAccumulators(size_t n_clusters, size_t d) {
-        (void) n_clusters; (void) d;
+        (void) n_clusters;
+        (void) d;
     }
 
     /**
@@ -169,11 +169,19 @@ class IQuantizer {
         const uint32_t* assignments,
         float* centroid_accumulators,
         uint32_t* cluster_sizes,
-        size_t n, size_t n_clusters, size_t d,
+        size_t n,
+        size_t n_clusters,
+        size_t d,
         uint32_t n_threads
     ) const {
-        (void) encoded_data; (void) assignments; (void) centroid_accumulators;
-        (void) cluster_sizes; (void) n; (void) n_clusters; (void) d; (void) n_threads;
+        (void) encoded_data;
+        (void) assignments;
+        (void) centroid_accumulators;
+        (void) cluster_sizes;
+        (void) n;
+        (void) n_clusters;
+        (void) d;
+        (void) n_threads;
         assert(false && "UpdateCentroids not supported by this quantizer");
     }
 
@@ -186,10 +194,12 @@ class IQuantizer {
     virtual void FinalizeCentroids(
         float* centroids,
         const uint32_t* cluster_sizes,
-        size_t n_clusters, size_t d
+        size_t n_clusters,
+        size_t d
     ) const {
         for (size_t i = 0; i < n_clusters; ++i) {
-            if (cluster_sizes[i] == 0) continue;
+            if (cluster_sizes[i] == 0)
+                continue;
             float mult = 1.0f / static_cast<float>(cluster_sizes[i]);
             float* row = centroids + i * d;
             for (size_t j = 0; j < d; ++j) {
@@ -211,9 +221,15 @@ class IQuantizer {
      * @param partial_d Number of leading dimensions to compute norms over
      */
     virtual void CacheDataPartialNorms(
-        const quantized_t* data, size_t n, size_t d, uint32_t partial_d
+        const quantized_t* data,
+        size_t n,
+        size_t d,
+        uint32_t partial_d
     ) {
-        (void) data; (void) n; (void) d; (void) partial_d;
+        (void) data;
+        (void) n;
+        (void) d;
+        (void) partial_d;
         assert(false && "CacheDataPartialNorms not supported by this quantizer");
     }
 
@@ -224,9 +240,15 @@ class IQuantizer {
      * Must be called before each pruning iteration (centroids change every iteration).
      */
     virtual void CacheCentroidPartialNorms(
-        const quantized_t* centroids, size_t n, size_t d, uint32_t partial_d
+        const quantized_t* centroids,
+        size_t n,
+        size_t d,
+        uint32_t partial_d
     ) {
-        (void) centroids; (void) n; (void) d; (void) partial_d;
+        (void) centroids;
+        (void) n;
+        (void) d;
+        (void) partial_d;
         assert(false && "CacheCentroidPartialNorms not supported by this quantizer");
     }
 
@@ -265,10 +287,18 @@ class IQuantizer {
         uint32_t partial_d,
         size_t* out_not_pruned_counts
     ) const {
-        (void) x; (void) y; (void) x_float; (void) y_float;
-        (void) n_x; (void) n_y; (void) d;
-        (void) out_knn; (void) out_distances;
-        (void) pdx_centroids; (void) partial_d; (void) out_not_pruned_counts;
+        (void) x;
+        (void) y;
+        (void) x_float;
+        (void) y_float;
+        (void) n_x;
+        (void) n_y;
+        (void) d;
+        (void) out_knn;
+        (void) out_distances;
+        (void) pdx_centroids;
+        (void) partial_d;
+        (void) out_not_pruned_counts;
         assert(false && "FindNearestNeighborWithPruning not supported by this quantizer");
     }
 };

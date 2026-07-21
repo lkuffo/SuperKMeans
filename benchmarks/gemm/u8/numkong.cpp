@@ -38,14 +38,14 @@ double RunNumKongGemm(
         nk_configure_thread(nk_capabilities());
         size_t start = prong.task;
         nk_dots_packed_u8(
-            a + start * d,    // contiguous row chunk of A
-            b_packed,          // shared pre-packed B
-            out + start * n,   // contiguous row chunk of C
-            count,             // height: multiple rows per thread
-            n,                 // width: number of B rows
-            d,                 // depth: shared dimension
-            d,                 // a_stride in bytes (u8 → 1 byte per element)
-            c_stride           // c_stride in bytes
+            a + start * d,   // contiguous row chunk of A
+            b_packed,        // shared pre-packed B
+            out + start * n, // contiguous row chunk of C
+            count,           // height: multiple rows per thread
+            n,               // width: number of B rows
+            d,               // depth: shared dimension
+            d,               // a_stride in bytes (u8 → 1 byte per element)
+            c_stride         // c_stride in bytes
         );
     });
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -82,7 +82,8 @@ int main(int argc, char** argv) {
     std::cout << "C(" << m << ", " << n << ") = A(" << m << ", " << d << ") * B(" << n << ", " << d
               << ")^T" << std::endl;
     std::cout << "Threads: " << threads << std::endl;
-    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS << std::endl;
+    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS
+              << std::endl;
     std::cout << std::endl;
 
     nk_configure_thread(nk_capabilities());

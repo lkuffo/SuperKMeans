@@ -1,8 +1,8 @@
 #undef HAS_FFTW
 
-#include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <gtest/gtest.h>
 #include <limits>
 #include <string>
 #include <unordered_set>
@@ -25,12 +25,13 @@ struct QParam {
     const char* name;
 };
 
-}  // namespace
+} // namespace
 
 class QuantizedIntegrationTest : public ::testing::TestWithParam<QParam> {};
 
 INSTANTIATE_TEST_SUITE_P(
-    Quantizers, QuantizedIntegrationTest,
+    Quantizers,
+    QuantizedIntegrationTest,
     ::testing::Values(
         QParam{QuantizerType::sq8, "sq8"},
         QParam{QuantizerType::lvq4, "lvq4"},
@@ -70,7 +71,8 @@ TEST_P(QuantizedIntegrationTest, AllClustersUsed_AssignmentsValid) {
     auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
 
     EXPECT_EQ(assignments.size(), n);
-    for (size_t i = 0; i < n; ++i) EXPECT_LT(assignments[i], n_clusters) << "at " << i;
+    for (size_t i = 0; i < n; ++i)
+        EXPECT_LT(assignments[i], n_clusters) << "at " << i;
 
     std::unordered_set<uint32_t> used(assignments.begin(), assignments.end());
     EXPECT_EQ(used.size(), n_clusters);
@@ -125,7 +127,9 @@ TEST_P(QuantizedIntegrationTest, QuantizedAssign_MatchesAssign) {
     EXPECT_LT(max_size, n / 2) << "imbalanced (max cluster " << max_size << ")";
 
     size_t agree = 0;
-    for (size_t i = 0; i < n; ++i) if (assign_gt[i] == assign_q[i]) agree++;
+    for (size_t i = 0; i < n; ++i)
+        if (assign_gt[i] == assign_q[i])
+            agree++;
     EXPECT_GT(static_cast<double>(agree) / n, 0.5);
 }
 
@@ -148,7 +152,8 @@ TEST_P(QuantizedIntegrationTest, QuantizedAssign_RepeatedDifferentData) {
     size_t agree = 0;
     for (size_t i = 0; i < n; ++i) {
         ASSERT_LT(q_B[i], n_clusters);
-        if (q_B[i] == gt_B[i]) agree++;
+        if (q_B[i] == gt_B[i])
+            agree++;
     }
     EXPECT_GT(static_cast<double>(agree) / n, 0.5)
         << "QuantizedAssign did not reflect the second (different) dataset";
@@ -161,25 +166,57 @@ TEST_P(QuantizedIntegrationTest, InvalidInputs_Throw) {
     SuperKMeansConfig base;
     base.quantizer_type = GetParam().type;
 
-    EXPECT_THROW(([&]{ auto km = make(base, n + 10, d); km.Train(data.data(), n); }()),
-                 std::runtime_error);
-    EXPECT_THROW(([&]{
-        SuperKMeansConfig c = base; c.sampling_fraction = 0.0001f; c.max_points_per_cluster = 1;
-        auto km = make(c, n_clusters, d); km.Train(data.data(), n);
-    }()), std::runtime_error);
+    EXPECT_THROW(
+        ([&] {
+            auto km = make(base, n + 10, d);
+            km.Train(data.data(), n);
+        }()),
+        std::runtime_error
+    );
+    EXPECT_THROW(
+        ([&] {
+            SuperKMeansConfig c = base;
+            c.sampling_fraction = 0.0001f;
+            c.max_points_per_cluster = 1;
+            auto km = make(c, n_clusters, d);
+            km.Train(data.data(), n);
+        }()),
+        std::runtime_error
+    );
     EXPECT_THROW(make(base, 0, d), std::invalid_argument);
     EXPECT_THROW(make(base, n_clusters, 0), std::invalid_argument);
-    EXPECT_THROW(([&]{ SuperKMeansConfig c = base; c.iters = 0; make(c, n_clusters, d); }()),
-                 std::invalid_argument);
-    EXPECT_THROW(([&]{ SuperKMeansConfig c = base; c.sampling_fraction = 0.0f; make(c, n_clusters, d); }()),
-                 std::invalid_argument);
-    EXPECT_THROW(([&]{ SuperKMeansConfig c = base; c.sampling_fraction = 1.5f; make(c, n_clusters, d); }()),
-                 std::invalid_argument);
-    EXPECT_THROW(([&]{
-        auto km = make(base, n_clusters, d);
-        km.Train(data.data(), n);
-        km.Train(data.data(), n);
-    }()), std::runtime_error);
+    EXPECT_THROW(
+        ([&] {
+            SuperKMeansConfig c = base;
+            c.iters = 0;
+            make(c, n_clusters, d);
+        }()),
+        std::invalid_argument
+    );
+    EXPECT_THROW(
+        ([&] {
+            SuperKMeansConfig c = base;
+            c.sampling_fraction = 0.0f;
+            make(c, n_clusters, d);
+        }()),
+        std::invalid_argument
+    );
+    EXPECT_THROW(
+        ([&] {
+            SuperKMeansConfig c = base;
+            c.sampling_fraction = 1.5f;
+            make(c, n_clusters, d);
+        }()),
+        std::invalid_argument
+    );
+    EXPECT_THROW(
+        ([&] {
+            auto km = make(base, n_clusters, d);
+            km.Train(data.data(), n);
+            km.Train(data.data(), n);
+        }()),
+        std::runtime_error
+    );
 }
 
 TEST_P(QuantizedIntegrationTest, EarlyTermination) {
@@ -223,7 +260,8 @@ TEST_P(QuantizedIntegrationTest, AngularMode_NormalizesCentroids) {
     auto centroids = kmeans.Train(data.data(), n);
     for (size_t c = 0; c < n_clusters; ++c) {
         float norm = 0.0f;
-        for (size_t j = 0; j < d; ++j) norm += centroids[c * d + j] * centroids[c * d + j];
+        for (size_t j = 0; j < d; ++j)
+            norm += centroids[c * d + j] * centroids[c * d + j];
         EXPECT_NEAR(std::sqrt(norm), 1.0f, 1e-4f) << "centroid " << c;
     }
 }
@@ -242,7 +280,8 @@ TEST_P(QuantizedIntegrationTest, Determinism_SameSeedSameCentroids) {
     auto c1 = skm_u8(n_clusters, d, config).Train(data.data(), n);
     auto c2 = skm_u8(n_clusters, d, config).Train(data.data(), n);
     ASSERT_EQ(c1.size(), c2.size());
-    for (size_t i = 0; i < c1.size(); ++i) EXPECT_FLOAT_EQ(c1[i], c2[i]) << "at " << i;
+    for (size_t i = 0; i < c1.size(); ++i)
+        EXPECT_FLOAT_EQ(c1[i], c2[i]) << "at " << i;
 }
 
 TEST_P(QuantizedIntegrationTest, FullPrecisionFinalCentroids_ImprovesReconstruction) {
@@ -267,7 +306,8 @@ TEST_P(QuantizedIntegrationTest, FullPrecisionFinalCentroids_ImprovesReconstruct
 
     ASSERT_EQ(centroids_q.size(), n_clusters * d);
     ASSERT_EQ(centroids_fp.size(), n_clusters * d);
-    for (float v : centroids_fp) ASSERT_TRUE(std::isfinite(v));
+    for (float v : centroids_fp)
+        ASSERT_TRUE(std::isfinite(v));
 
     float max_diff = 0.0f;
     for (size_t i = 0; i < centroids_q.size(); ++i) {
@@ -280,8 +320,8 @@ TEST_P(QuantizedIntegrationTest, FullPrecisionFinalCentroids_ImprovesReconstruct
     auto a_fp = assigner.Assign(data.data(), centroids_fp.data(), n, n_clusters);
     double wcss_q = skm_u8::ComputeWCSS(data.data(), centroids_q.data(), a_q.data(), n, d);
     double wcss_fp = skm_u8::ComputeWCSS(data.data(), centroids_fp.data(), a_fp.data(), n, d);
-    EXPECT_LE(wcss_fp, wcss_q)
-        << "full-precision WCSS " << wcss_fp << " > quantized WCSS " << wcss_q;
+    EXPECT_LE(wcss_fp, wcss_q) << "full-precision WCSS " << wcss_fp << " > quantized WCSS "
+                               << wcss_q;
 }
 
 // Pruning integration tests (need d >= 128 and k > 256)
@@ -308,17 +348,18 @@ TEST_P(QuantizedIntegrationTest, SLOW_PruningConverges) {
 
 TEST_P(QuantizedIntegrationTest, SLOW_PruningRecallCloseToNoPruning) {
     const std::string path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
-    float pruned = skm_test::ClusteringRecall<Quantization::u8>(GetParam().type, path, 300, 1024, true);
-    float unpruned = skm_test::ClusteringRecall<Quantization::u8>(GetParam().type, path, 300, 1024, false);
+    float pruned =
+        skm_test::ClusteringRecall<Quantization::u8>(GetParam().type, path, 300, 1024, true);
+    float unpruned =
+        skm_test::ClusteringRecall<Quantization::u8>(GetParam().type, path, 300, 1024, false);
     EXPECT_NEAR(pruned, unpruned, skm_test::RECALL_PRUNE_TOL)
         << "pruned=" << pruned << " unpruned=" << unpruned;
 }
 
 TEST_P(QuantizedIntegrationTest, SLOW_AssignTrainingPointsRecallMatchesQuantizedAssign) {
     const std::string path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
-    auto r = skm_test::ClusteringRecallAssignMethods<Quantization::u8>(
-        GetParam().type, path, 300, 1024
-    );
+    auto r =
+        skm_test::ClusteringRecallAssignMethods<Quantization::u8>(GetParam().type, path, 300, 1024);
     EXPECT_GT(r.assign_training_points, 0.0f);
     EXPECT_GT(r.quantized_assign, 0.0f);
     EXPECT_NEAR(r.assign_training_points, r.quantized_assign, skm_test::RECALL_PRUNE_TOL)
@@ -343,14 +384,17 @@ TEST_P(QuantizedIntegrationTest, SLOW_AssignTrainingPointsReuseMatchesQuantizedA
     auto kmeans = skm_u8(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
-    auto approximate_assignments = kmeans.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
-    auto brute_force_assignments = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
+    auto approximate_assignments =
+        kmeans.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
+    auto brute_force_assignments =
+        kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
 
     ASSERT_EQ(approximate_assignments.size(), n);
     size_t agree = 0;
     for (size_t i = 0; i < n; ++i) {
         ASSERT_LT(approximate_assignments[i], n_clusters);
-        if (approximate_assignments[i] == brute_force_assignments[i]) agree++;
+        if (approximate_assignments[i] == brute_force_assignments[i])
+            agree++;
     }
     const double ratio = static_cast<double>(agree) / n;
     EXPECT_GT(ratio, 0.98) << "agreement=" << ratio;

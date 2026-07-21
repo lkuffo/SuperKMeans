@@ -155,8 +155,8 @@ class ScalarComputer<DistanceFunction::l2, Quantization::b8> {
             for (int w = 0; w < 2; ++w) {
                 uint64_t x = d64[w];
                 for (int bp = 0; bp < qb; ++bp) {
-                    const uint64_t* p64 = reinterpret_cast<const uint64_t*>(
-                        planes_interleaved + i * qb + bp * 16);
+                    const uint64_t* p64 =
+                        reinterpret_cast<const uint64_t*>(planes_interleaved + i * qb + bp * 16);
                     result += static_cast<uint32_t>(__builtin_popcountll(x & p64[w])) << bp;
                 }
             }
@@ -166,9 +166,11 @@ class ScalarComputer<DistanceFunction::l2, Quantization::b8> {
             size_t chunk_idx = i / 16;
             size_t byte_in_chunk = i % 16;
             for (int bp = 0; bp < qb; ++bp) {
-                result += static_cast<uint32_t>(__builtin_popcount(
-                    data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
-                )) << bp;
+                result +=
+                    static_cast<uint32_t>(__builtin_popcount(
+                        data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
+                    ))
+                    << bp;
             }
         }
         return result;
@@ -349,10 +351,13 @@ class ScalarFastScanComputer {
      * @tparam U32Dot If true, partial_dot is uint32_t*; if false, uint16_t*.
      * @param sum_q_f32 Pre-converted float array (caller converts uint32_t→float once per block).
      */
-    template<bool U32Dot = false>
+    template <bool U32Dot = false>
     static void RabitQCorrection(
         const void* partial_dot,
-        float c1j, float c2j, float c34j, float qr_j,
+        float c1j,
+        float c2j,
+        float c34j,
+        float qr_j,
         const float* sum_q_f32,
         const float* or_c_l2sqr,
         const float* dp_mult,
@@ -367,8 +372,7 @@ class ScalarFastScanComputer {
                 dot_f = static_cast<float>(static_cast<const uint16_t*>(partial_dot)[k]);
             }
             const float fdt = c1j * dot_f + c2j * sum_q_f32[k] - c34j;
-            out_partial_l2[k] = or_c_l2sqr[k] + qr_j
-                              - 2.0f * dp_mult[k] * fdt;
+            out_partial_l2[k] = or_c_l2sqr[k] + qr_j - 2.0f * dp_mult[k] * fdt;
         }
     }
 
@@ -387,10 +391,12 @@ class ScalarFastScanComputer {
      * @param neg2_dp   Precomputed -2 * dp_mult[k] (per-element, centroid-independent)
      * @param dp_sum_q  Precomputed dp_mult[k] * sum_q[k] (per-element, centroid-independent)
      */
-    template<bool U32Dot = false>
+    template <bool U32Dot = false>
     static void RabitQCorrectionAndCompact(
         const void* partial_dot,
-        float c1j, float c34j, float qr_j,
+        float c1j,
+        float c34j,
+        float qr_j,
         float neg2_c2j,
         const float* or_c_l2sqr,
         const float* neg2_dp,
@@ -418,11 +424,9 @@ class ScalarFastScanComputer {
     }
 
     /// kPerm0 interleaving used by nibble-split TransposeBlock.
-    static constexpr int kPerm0[16] = {
-        0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15
-    };
+    static constexpr int kPerm0[16] = {0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15};
 
-    template<bool WideAdd = false>
+    template <bool WideAdd = false>
     static void ScanBlock(
         const uint8_t* packed,
         const uint8_t* lut,
@@ -430,8 +434,8 @@ class ScalarFastScanComputer {
         uint16_t* out_dot,
         size_t blk_count
     ) {
-        (void)sizeof(WideAdd);
-        (void)blk_count;
+        (void) sizeof(WideAdd);
+        (void) blk_count;
         std::memset(out_dot, 0, kBlockSize * sizeof(uint16_t));
         for (size_t b = 0; b < binary_bytes; ++b) {
             const uint8_t* lut_lo = lut + b * 32;
@@ -442,16 +446,16 @@ class ScalarFastScanComputer {
                 const uint8_t hi_byte = row[j + 16];
                 const int vA = kPerm0[j];
                 const int vB = kPerm0[j] + 16;
-                out_dot[vA] += static_cast<uint16_t>(lut_lo[lo_byte & 0x0F])
-                             + static_cast<uint16_t>(lut_hi[hi_byte & 0x0F]);
-                out_dot[vB] += static_cast<uint16_t>(lut_lo[lo_byte >> 4])
-                             + static_cast<uint16_t>(lut_hi[hi_byte >> 4]);
+                out_dot[vA] += static_cast<uint16_t>(lut_lo[lo_byte & 0x0F]) +
+                               static_cast<uint16_t>(lut_hi[hi_byte & 0x0F]);
+                out_dot[vB] += static_cast<uint16_t>(lut_lo[lo_byte >> 4]) +
+                               static_cast<uint16_t>(lut_hi[hi_byte >> 4]);
             }
         }
     }
 
     /// Scalar fallback: just call ScanBlock per block.
-    template<int NBlocks>
+    template <int NBlocks>
     static void ScanBlockMulti(
         const uint8_t* const* packed,
         const uint8_t* lut,
@@ -539,7 +543,8 @@ class ScalarLVQ4Codec {
         }
 
         float range = v_max - v_min;
-        if (range < 1e-30f) range = 1e-30f;
+        if (range < 1e-30f)
+            range = 1e-30f;
         float scale = range / 15.0f;
         float inv_scale = 1.0f / scale;
         float bias = v_min;
@@ -567,8 +572,8 @@ class ScalarLVQ4Codec {
         std::memcpy(&bias, code + nibble_bytes + sizeof(float), sizeof(float));
 
         for (size_t b = 0; b < nibble_bytes; ++b) {
-            x[2 * b]     = scale * static_cast<float>(code[b] & 0x0F) + bias;
-            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4)   + bias;
+            x[2 * b] = scale * static_cast<float>(code[b] & 0x0F) + bias;
+            x[2 * b + 1] = scale * static_cast<float>(code[b] >> 4) + bias;
         }
     }
 };

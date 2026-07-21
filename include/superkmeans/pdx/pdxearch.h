@@ -69,8 +69,7 @@ class PDXearch {
             (Q == Quantization::u4) ? current_dimension_idx * 2 : current_dimension_idx;
         if constexpr (Q == Quantization::u8 || Q == Quantization::u4) {
             const float float_threshold =
-                pruner.template GetPruningThreshold<Q>(
-                    best_candidate, pruner_dim_idx);
+                pruner.template GetPruningThreshold<Q>(best_candidate, pruner_dim_idx);
             const float scaled = float_threshold * pdx_data.quantization_scale_squared;
             pruning_threshold =
                 scaled >= static_cast<float>(std::numeric_limits<DISTANCES_TYPE>::max())

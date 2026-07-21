@@ -364,8 +364,10 @@ TEST_F(DistanceComputerTest, SIMD_MatchesScalar_L2_U8) {
         SCOPED_TRACE("Testing d=" + std::to_string(d));
 
         std::vector<uint8_t> vectors1(n_pairs * d), vectors2(n_pairs * d);
-        for (auto& v : vectors1) v = static_cast<uint8_t>(dist(rng));
-        for (auto& v : vectors2) v = static_cast<uint8_t>(dist(rng));
+        for (auto& v : vectors1)
+            v = static_cast<uint8_t>(dist(rng));
+        for (auto& v : vectors2)
+            v = static_cast<uint8_t>(dist(rng));
 
         for (size_t i = 0; i < n_pairs; ++i) {
             const uint8_t* v1 = vectors1.data() + i * d;
@@ -400,8 +402,10 @@ TEST_F(DistanceComputerTest, SIMD_MatchesScalar_L2_U4) {
 
         std::vector<uint8_t> vectors1(n_pairs * num_packed_bytes);
         std::vector<uint8_t> vectors2(n_pairs * num_packed_bytes);
-        for (auto& v : vectors1) v = static_cast<uint8_t>(dist(rng));
-        for (auto& v : vectors2) v = static_cast<uint8_t>(dist(rng));
+        for (auto& v : vectors1)
+            v = static_cast<uint8_t>(dist(rng));
+        for (auto& v : vectors2)
+            v = static_cast<uint8_t>(dist(rng));
 
         for (size_t i = 0; i < n_pairs; ++i) {
             const uint8_t* v1 = vectors1.data() + i * num_packed_bytes;
@@ -416,7 +420,8 @@ TEST_F(DistanceComputerTest, SIMD_MatchesScalar_L2_U4) {
                 skmeans::Quantization::u4>::Horizontal(v1, v2, num_packed_bytes);
 
             EXPECT_EQ(scalar_dist, simd_dist)
-                << "SIMD/Scalar mismatch at num_packed_bytes=" << num_packed_bytes << ", pair " << i;
+                << "SIMD/Scalar mismatch at num_packed_bytes=" << num_packed_bytes << ", pair "
+                << i;
         }
     }
 }
@@ -480,7 +485,8 @@ TEST_F(DistanceComputerTest, PackU8ToU4x2_SIMD_MatchesScalar) {
         SCOPED_TRACE("Testing count=" + std::to_string(count));
 
         std::vector<uint8_t> src(count);
-        for (auto& v : src) v = static_cast<uint8_t>(dist(rng));
+        for (auto& v : src)
+            v = static_cast<uint8_t>(dist(rng));
 
         // Scalar reference
         std::vector<uint8_t> expected(count / 2);
@@ -495,8 +501,7 @@ TEST_F(DistanceComputerTest, PackU8ToU4x2_SIMD_MatchesScalar) {
         );
 
         for (size_t i = 0; i < count / 2; ++i) {
-            EXPECT_EQ(actual[i], expected[i])
-                << "mismatch at byte " << i << " for count=" << count;
+            EXPECT_EQ(actual[i], expected[i]) << "mismatch at byte " << i << " for count=" << count;
         }
     }
 }

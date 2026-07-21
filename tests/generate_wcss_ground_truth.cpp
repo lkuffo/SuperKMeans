@@ -45,7 +45,8 @@ void PrintFlatWCSS(const std::string& data_file) {
 
             auto kmeans =
                 skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                    k, d, config);
+                    k, d, config
+                );
             kmeans.Train(data.data(), N_SAMPLES);
             const float wcss = kmeans.iteration_stats.back().objective;
             std::cout << "    {{" << k << ", " << d << "}, " << wcss << "f},\n";
@@ -78,19 +79,20 @@ void PrintHierarchicalWCSS(const std::string& data_file) {
             config.n_threads = 1;
 
             auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(k, d, config);
+                skmeans::Quantization::f32,
+                skmeans::DistanceFunction::l2>(k, d, config);
             kmeans.Train(data.data(), N_SAMPLES);
 
             const auto& hstats = kmeans.hierarchical_iteration_stats;
             const float wcss = hstats.refinement_iteration_stats.empty()
-                                    ? hstats.fineclustering_iteration_stats.back().objective
-                                    : hstats.refinement_iteration_stats.back().objective;
+                                   ? hstats.fineclustering_iteration_stats.back().objective
+                                   : hstats.refinement_iteration_stats.back().objective;
             std::cout << "    {{" << k << ", " << d << "}, " << wcss << "f},\n";
         }
     }
 }
 
-}  // namespace
+} // namespace
 
 int main() {
     omp_set_num_threads(1);

@@ -2,11 +2,11 @@
 
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
+#include "superkmeans/distance_computers/gemms.h"
 #include "superkmeans/pdx/layout.h"
 #include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
 #include "superkmeans/quantizers/sq_common.h"
-#include "superkmeans/distance_computers/gemms.h"
 
 #include <algorithm>
 #include <cassert>
@@ -63,7 +63,9 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     void Fit(const float* embeddings, size_t n, size_t d) override {
         SKM_PROFILE_SCOPE("fitting");
         const size_t total_elements = n * d;
-        params = ComputeScalarQuantizationParams(embeddings, total_elements, static_cast<float>(MAX_VALUE));
+        params = ComputeScalarQuantizationParams(
+            embeddings, total_elements, static_cast<float>(MAX_VALUE)
+        );
         tmp_dots_buf.resize(X_BATCH_SIZE * Y_BATCH_SIZE);
         centroids_nk_packed_buf.resize(nk_dots_packed_size_u8(Y_BATCH_SIZE, d));
         fitted = true;
@@ -128,12 +130,10 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
      * Since base cancels in L2 distance:
      *   norm[i] = inv_scale² * Σ q[i][dim]²
      */
-    void ComputeNorms(
-        const quantized_t* quantized_embeddings, size_t n, size_t d, float* out_norms
-    ) const override {
+    void ComputeNorms(const quantized_t* quantized_embeddings, size_t n, size_t d, float* out_norms)
+        const override {
         assert(fitted);
-        const float inv_scale_sq =
-            params.inv_quantization_scale * params.inv_quantization_scale;
+        const float inv_scale_sq = params.inv_quantization_scale * params.inv_quantization_scale;
 
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
@@ -171,10 +171,9 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         SKM_PROFILE_SCOPE("search");
         SKM_PROFILE_SCOPE("search/1st_blas");
         assert(fitted);
-        (void)x_float;
-        (void)y_float;
-        const float inv_scale_sq =
-            params.inv_quantization_scale * params.inv_quantization_scale;
+        (void) x_float;
+        (void) y_float;
+        const float inv_scale_sq = params.inv_quantization_scale * params.inv_quantization_scale;
         std::fill_n(out_distances, n_x, std::numeric_limits<float>::max());
 
         for (size_t i = 0; i < n_x; i += X_BATCH_SIZE) {
@@ -184,14 +183,13 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                 const size_t batch_n_y = std::min(Y_BATCH_SIZE, n_y - j);
 
                 MatrixMultiplication(
-                    x + i * d, y + j * d,
-                    tmp_dots_buf.data(),
-                    batch_n_x, batch_n_y, d, d, d
+                    x + i * d, y + j * d, tmp_dots_buf.data(), batch_n_x, batch_n_y, d, d, d
                 );
 
                 // L2²(x,y) = ||x||² + ||y||² - 2·inv_scale²·dot(x,y)
                 // TODO(@lkuffo, low): I believe we can just avoid the inv_scale term
-                using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+                using MatrixR =
+                    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
                 Eigen::Map<MatrixR> dists_matrix(tmp_buf, batch_n_x, batch_n_y);
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
@@ -202,8 +200,8 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
                     SKM_VECTORIZE_LOOP
                     for (size_t c = 0; c < batch_n_y; ++c) {
-                        dists_row[c] = nx + norms_y[j + c]
-                            - 2.0f * inv_scale_sq * static_cast<float>(dots_row[c]);
+                        dists_row[c] = nx + norms_y[j + c] -
+                                       2.0f * inv_scale_sq * static_cast<float>(dots_row[c]);
                     }
 
                     uint32_t knn_idx;
@@ -217,15 +215,17 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-    void CacheDataPartialNorms(
-        const quantized_t* data, size_t n, size_t d, uint32_t partial_d
-    ) override {
+    void CacheDataPartialNorms(const quantized_t* data, size_t n, size_t d, uint32_t partial_d)
+        override {
         CachePartialNorms(data, n, d, partial_d, cached_data_partial_norms);
         cached_data_partial_d_ = partial_d;
     }
 
     void CacheCentroidPartialNorms(
-        const quantized_t* centroids, size_t n, size_t d, uint32_t partial_d
+        const quantized_t* centroids,
+        size_t n,
+        size_t d,
+        uint32_t partial_d
     ) override {
         CachePartialNorms(centroids, n, d, partial_d, cached_centroid_partial_norms);
     }
@@ -262,8 +262,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
             cached_data_partial_d_ = partial_d;
         }
 
-        const float inv_scale_sq =
-            params.inv_quantization_scale * params.inv_quantization_scale;
+        const float inv_scale_sq = params.inv_quantization_scale * params.inv_quantization_scale;
 
         pdx_centroids.index->quantization_scale_squared =
             params.quantization_scale * params.quantization_scale;
@@ -281,9 +280,14 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                 {
                     SKM_PROFILE_SCOPE("search/blas");
                     MatrixMultiplication(
-                        x + i * d, y + j * d,
+                        x + i * d,
+                        y + j * d,
                         tmp_dots_buf.data(),
-                        batch_n_x, batch_n_y, partial_d, d, d
+                        batch_n_x,
+                        batch_n_y,
+                        partial_d,
+                        d,
+                        d
                     );
                 }
 
@@ -303,8 +307,9 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                         uint32_t* partial_distances_p = tmp_dots_buf.data() + r * batch_n_y;
                         SKM_VECTORIZE_LOOP
                         for (size_t c = 0; c < batch_n_y; ++c) {
-                            partial_distances_p[c] =
-                                norm_x_i + cached_centroid_partial_norms[j + c] - 2 * partial_distances_p[c];
+                            partial_distances_p[c] = norm_x_i +
+                                                     cached_centroid_partial_norms[j + c] -
+                                                     2 * partial_distances_p[c];
                         }
 
                         // PDX pruned search per vector
@@ -312,9 +317,8 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
                         const auto prev_assignment = out_knn[i_idx];
                         float dist_to_prev_centroid;
                         if (j == 0) {
-                            uint32_t u8_dist = u8_computer::Horizontal(
-                                data_p, y + prev_assignment * d, d
-                            );
+                            uint32_t u8_dist =
+                                u8_computer::Horizontal(data_p, y + prev_assignment * d, d);
                             dist_to_prev_centroid = static_cast<float>(u8_dist) * inv_scale_sq;
                         } else {
                             dist_to_prev_centroid = out_distances[i_idx];
@@ -322,18 +326,17 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
                         // PDXearch with uint32_t partial distances
                         size_t local_not_pruned = 0;
-                        auto assignment =
-                            pdx_centroids.searcher
-                                ->Top1PartialSearchWithThresholdAndPartialDistances(
-                                    data_p,
-                                    dist_to_prev_centroid,
-                                    prev_assignment,
-                                    partial_distances_p,
-                                    partial_d,
-                                    j / VECTOR_CHUNK_SIZE,
-                                    (j + Y_BATCH_SIZE) / VECTOR_CHUNK_SIZE,
-                                    local_not_pruned
-                                );
+                        auto assignment = pdx_centroids.searcher
+                                              ->Top1PartialSearchWithThresholdAndPartialDistances(
+                                                  data_p,
+                                                  dist_to_prev_centroid,
+                                                  prev_assignment,
+                                                  partial_distances_p,
+                                                  partial_d,
+                                                  j / VECTOR_CHUNK_SIZE,
+                                                  (j + Y_BATCH_SIZE) / VECTOR_CHUNK_SIZE,
+                                                  local_not_pruned
+                                              );
                         out_not_pruned_counts[i_idx] += local_not_pruned;
                         out_knn[i_idx] = assignment.index;
                         out_distances[i_idx] = assignment.distance;
@@ -345,7 +348,8 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
     void ResetCentroidAccumulators(size_t n_clusters, size_t d) override {
         const size_t total = n_clusters * d;
-        if (centroid_accumulators.size() < total) centroid_accumulators.resize(total);
+        if (centroid_accumulators.size() < total)
+            centroid_accumulators.resize(total);
         std::fill_n(centroid_accumulators.data(), total, 0u);
     }
 
@@ -354,7 +358,9 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         const uint32_t* assignments,
         float* /*centroid_accumulators_float*/,
         uint32_t* cluster_sizes,
-        size_t n, size_t n_clusters, size_t d,
+        size_t n,
+        size_t n_clusters,
+        size_t d,
         uint32_t n_threads
     ) const override {
         SKM_PROFILE_SCOPE("SQ8::UpdateCentroids");
@@ -383,7 +389,8 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
     void FinalizeCentroids(
         float* centroids,
         const uint32_t* cluster_sizes,
-        size_t n_clusters, size_t d
+        size_t n_clusters,
+        size_t d
     ) const override {
         assert(fitted);
         const float quantization_base = params.quantization_base;
@@ -392,7 +399,8 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 #pragma omp parallel for num_threads(g_n_threads)
         // TODO(@lkuffo, low): large clusters may overflow the uint32 accumulator
         for (size_t i = 0; i < n_clusters; ++i) {
-            if (cluster_sizes[i] == 0) continue;
+            if (cluster_sizes[i] == 0)
+                continue;
             const uint32_t* acc = centroid_accumulators.data() + i * d;
             float* row = centroids + i * d;
             const uint32_t half = cluster_sizes[i] / 2;
@@ -411,7 +419,10 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
 
   private:
     void CachePartialNorms(
-        const quantized_t* vecs, size_t n, size_t d, uint32_t partial_d,
+        const quantized_t* vecs,
+        size_t n,
+        size_t d,
+        uint32_t partial_d,
         std::vector<uint32_t>& out
     ) const {
         out.resize(n);

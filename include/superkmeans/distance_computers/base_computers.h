@@ -87,7 +87,6 @@ class UtilsComputer {
     constexpr static auto UnpackU4x2ToU8 = computer::UnpackU4x2ToU8;
 };
 
-
 class FastScanComputer {
 #if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
     using computer = ScalarFastScanComputer;
@@ -103,9 +102,10 @@ class FastScanComputer {
     constexpr static auto RabitQCorrectionU32 = computer::RabitQCorrection<true>;
     constexpr static auto RabitQCompactSurvivors = computer::RabitQCompactSurvivors;
     constexpr static auto RabitQCorrectionAndCompact = computer::RabitQCorrectionAndCompact<false>;
-    constexpr static auto RabitQCorrectionAndCompactU32 = computer::RabitQCorrectionAndCompact<true>;
+    constexpr static auto RabitQCorrectionAndCompactU32 =
+        computer::RabitQCorrectionAndCompact<true>;
 
-    template<int NBlocks>
+    template <int NBlocks>
     static void ScanBlockMulti(
         const uint8_t* const* packed,
         const uint8_t* lut,

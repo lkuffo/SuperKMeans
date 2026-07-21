@@ -1,8 +1,8 @@
 #undef HAS_FFTW
 
-#include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <gtest/gtest.h>
 #include <limits>
 #include <random>
 #include <unordered_set>
@@ -24,7 +24,7 @@ using skm_u8 = SuperKMeans<Quantization::u8, DistanceFunction::l2>;
 
 } // namespace
 
-//  SQ8Quantizer unit tests 
+//  SQ8Quantizer unit tests
 
 class SQ8QuantizerTest : public ::testing::Test {
   protected:
@@ -36,7 +36,8 @@ class SQ8QuantizerTest : public ::testing::Test {
         std::mt19937 rng(42);
         std::normal_distribution<float> dist(0.0f, 1.0f);
         data.resize(n * d);
-        for (auto& v : data) v = dist(rng);
+        for (auto& v : data)
+            v = dist(rng);
     }
 };
 
@@ -103,9 +104,18 @@ TEST_F(SQ8QuantizerTest, FindNearestNeighbor_MatchesBruteForce) {
     std::vector<float> tmp_buf(X_BATCH_SIZE * Y_BATCH_SIZE);
 
     quantizer.FindNearestNeighbor(
-        queries, centroids, data.data() + n_centroids * d, data.data(),
-        n_queries, n_centroids, d,
-        query_norms, centroid_norms, knn.data(), distances.data(), tmp_buf.data()
+        queries,
+        centroids,
+        data.data() + n_centroids * d,
+        data.data(),
+        n_queries,
+        n_centroids,
+        d,
+        query_norms,
+        centroid_norms,
+        knn.data(),
+        distances.data(),
+        tmp_buf.data()
     );
 
     std::vector<float> decoded(n * d);
@@ -119,7 +129,10 @@ TEST_F(SQ8QuantizerTest, FindNearestNeighbor_MatchesBruteForce) {
                 float diff = decoded[(n_centroids + i) * d + k] - decoded[j * d + k];
                 dist += diff * diff;
             }
-            if (dist < best_dist) { best_dist = dist; best_idx = static_cast<uint32_t>(j); }
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_idx = static_cast<uint32_t>(j);
+            }
         }
         EXPECT_EQ(knn[i], best_idx) << "query " << i;
     }
@@ -130,7 +143,8 @@ TEST_F(SQ8QuantizerTest, Encode_ClampsOutOfRange) {
     quantizer.Fit(data.data(), n, d);
 
     std::vector<float> extreme(d);
-    for (size_t j = 0; j < d; ++j) extreme[j] = (j % 2 == 0) ? -1e6f : 1e6f;
+    for (size_t j = 0; j < d; ++j)
+        extreme[j] = (j % 2 == 0) ? -1e6f : 1e6f;
     std::vector<uint8_t> codes(d);
     quantizer.Encode(extreme.data(), codes.data(), 1, d);
     for (size_t j = 0; j < d; ++j) {
@@ -138,7 +152,7 @@ TEST_F(SQ8QuantizerTest, Encode_ClampsOutOfRange) {
     }
 }
 
-//  FinalizeCentroids unit test 
+//  FinalizeCentroids unit test
 
 TEST(SQ8FinalizeCentroidsTest, RecoversClusterMeans) {
     SQ8Quantizer quantizer;
@@ -147,13 +161,17 @@ TEST(SQ8FinalizeCentroidsTest, RecoversClusterMeans) {
     const size_t n_vectors = 6;
 
     std::vector<float> fit_data(100 * d);
-    for (size_t i = 0; i < fit_data.size(); ++i) fit_data[i] = static_cast<float>(i % 256) / 255.0f;
+    for (size_t i = 0; i < fit_data.size(); ++i)
+        fit_data[i] = static_cast<float>(i % 256) / 255.0f;
     quantizer.Fit(fit_data.data(), 100, d);
 
     std::vector<float> vectors(n_vectors * d);
-    for (size_t j = 0; j < 2 * d; ++j) vectors[j] = 0.5f;
-    for (size_t j = 2 * d; j < 5 * d; ++j) vectors[j] = 0.25f;
-    for (size_t j = 5 * d; j < 6 * d; ++j) vectors[j] = 0.75f;
+    for (size_t j = 0; j < 2 * d; ++j)
+        vectors[j] = 0.5f;
+    for (size_t j = 2 * d; j < 5 * d; ++j)
+        vectors[j] = 0.25f;
+    for (size_t j = 5 * d; j < 6 * d; ++j)
+        vectors[j] = 0.75f;
 
     std::vector<uint8_t> encoded(n_vectors * d);
     quantizer.Encode(vectors.data(), encoded.data(), n_vectors, d);
@@ -164,8 +182,14 @@ TEST(SQ8FinalizeCentroidsTest, RecoversClusterMeans) {
 
     quantizer.ResetCentroidAccumulators(n_clusters, d);
     quantizer.UpdateCentroids(
-        encoded.data(), assignments.data(), centroid_buf.data(), cluster_sizes.data(),
-        n_vectors, n_clusters, d, 1
+        encoded.data(),
+        assignments.data(),
+        centroid_buf.data(),
+        cluster_sizes.data(),
+        n_vectors,
+        n_clusters,
+        d,
+        1
     );
     quantizer.FinalizeCentroids(centroid_buf.data(), cluster_sizes.data(), n_clusters, d);
 

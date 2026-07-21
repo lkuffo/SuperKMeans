@@ -6,8 +6,8 @@
 #include <limits>
 #include <vector>
 
-#include <omp.h>
 #include <dnnl.hpp>
+#include <omp.h>
 
 #include "bench_utils.h"
 
@@ -67,7 +67,8 @@ int main(int argc, char** argv) {
     std::cout << "C(" << m << ", " << n << ") = A(" << m << ", " << d << ") * B(" << n << ", " << d
               << ")^T" << std::endl;
     std::cout << "Threads: " << omp_get_max_threads() << std::endl;
-    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS << std::endl;
+    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS
+              << std::endl;
     std::cout << std::endl;
 
     auto a = bench_utils::generate_random_u8(m, d, 42);

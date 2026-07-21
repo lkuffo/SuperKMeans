@@ -134,9 +134,7 @@ const std::vector<int> HNSW_EF_CONSTRUCTION_VALUES = {128, 200};
 const int HNSW_M = 16;
 
 // Target dimensionalities for PCA/JLT preprocessing (multiples of 64 up to 2048)
-const std::vector<size_t> TARGET_D_VALUES = {
-    32, 64, 96, 128, 192, 256, 320, 384, 512, 768, 1024
-};
+const std::vector<size_t> TARGET_D_VALUES = {32, 64, 96, 128, 192, 256, 320, 384, 512, 768, 1024};
 
 // Sampling fraction values for sampling experiment
 const std::vector<float> SAMPLING_FRACTION_VALUES = {
@@ -598,7 +596,8 @@ inline std::string build_recall_stats_json(
         size_t abs_idx = 0;
         for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] :
              results) {
-            if (!first_entry) ss << ",";
+            if (!first_entry)
+                ss << ",";
             first_entry = false;
 
             std::string suffix;
@@ -614,8 +613,7 @@ inline std::string build_recall_stats_json(
             ss << "\"recall@" << knn << "@" << suffix << "\":" << std::setprecision(6) << recall;
             ss << ",\"recall_std@" << knn << "@" << suffix << "\":" << std::setprecision(6)
                << std_recall;
-            ss << ",\"centroids_explored@" << knn << "@" << suffix << "\":"
-               << centroids_to_explore;
+            ss << ",\"centroids_explored@" << knn << "@" << suffix << "\":" << centroids_to_explore;
             ss << ",\"vectors_explored@" << knn << "@" << suffix << "\":" << std::setprecision(2)
                << avg_vectors;
         }
@@ -701,13 +699,16 @@ inline void write_results_to_csv_v2(
         !quantized_assign_results_knn_10.empty() || !quantized_assign_results_knn_100.empty();
 
     if (has_assign) {
-        quality_ss << "\"assign\":" << build_recall_stats_json(
-            assign_results_knn_10, assign_results_knn_100);
+        quality_ss << "\"assign\":"
+                   << build_recall_stats_json(assign_results_knn_10, assign_results_knn_100);
     }
     if (has_quantized) {
-        if (has_assign) quality_ss << ",";
-        quality_ss << "\"quantized_assign\":" << build_recall_stats_json(
-            quantized_assign_results_knn_10, quantized_assign_results_knn_100);
+        if (has_assign)
+            quality_ss << ",";
+        quality_ss << "\"quantized_assign\":"
+                   << build_recall_stats_json(
+                          quantized_assign_results_knn_10, quantized_assign_results_knn_100
+                      );
     }
     quality_ss << "}";
 
@@ -736,9 +737,10 @@ inline void write_results_to_csv_v2(
 
     // quantized_balance_stats (always write a valid JSON literal so
     // pandas' json.loads() doesn't choke on NaN/empty cells).
-    csv_file << "," << escape_csv_json(
-        quantized_balance_stats_json.empty() ? "{}" : quantized_balance_stats_json
-    );
+    csv_file << ","
+             << escape_csv_json(
+                    quantized_balance_stats_json.empty() ? "{}" : quantized_balance_stats_json
+                );
 
     // iteration_stats
     if (!iteration_stats_json.empty()) {
@@ -752,13 +754,13 @@ inline void write_results_to_csv_v2(
     config_json_ss << "{";
     bool first = true;
     for (const auto& [key, value] : config_dict) {
-        if (!first) config_json_ss << ",";
+        if (!first)
+            config_json_ss << ",";
         config_json_ss << "\"" << key << "\":" << value;
         first = false;
     }
     config_json_ss << "}";
-    csv_file << "," << escape_csv_json(config_json_ss.str())
-             << "," << run_label << "\n";
+    csv_file << "," << escape_csv_json(config_json_ss.str()) << "," << run_label << "\n";
 
     csv_file.close();
     std::cout << "Results written to: " << csv_path << std::endl;
@@ -830,7 +832,8 @@ inline void compute_and_store_topk_distances(
     size_t print_count = 3,
     uint32_t seed = 42
 ) {
-    using batch_computer = skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>;
+    using batch_computer =
+        skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>;
 
     sample_size = std::min(sample_size, n_vectors);
     k = std::min(k, n_centroids);
@@ -854,13 +857,15 @@ inline void compute_and_store_topk_distances(
     for (size_t i = 0; i < sample_size; ++i) {
         float s = 0.0f;
         const float* p = sampled.data() + i * d;
-        for (size_t j = 0; j < d; ++j) s += p[j] * p[j];
+        for (size_t j = 0; j < d; ++j)
+            s += p[j] * p[j];
         sample_norms[i] = s;
     }
     for (size_t i = 0; i < n_centroids; ++i) {
         float s = 0.0f;
         const float* p = centroids + i * d;
-        for (size_t j = 0; j < d; ++j) s += p[j] * p[j];
+        for (size_t j = 0; j < d; ++j)
+            s += p[j] * p[j];
         centroid_norms[i] = s;
     }
 
@@ -870,11 +875,16 @@ inline void compute_and_store_topk_distances(
     std::unique_ptr<float[]> tmp_buf(new float[skmeans::X_BATCH_SIZE * skmeans::Y_BATCH_SIZE]);
 
     batch_computer::FindKNearestNeighbors(
-        sampled.data(), centroids,
-        sample_size, n_centroids, d,
-        sample_norms.data(), centroid_norms.data(),
+        sampled.data(),
+        centroids,
+        sample_size,
+        n_centroids,
+        d,
+        sample_norms.data(),
+        centroid_norms.data(),
         k,
-        out_knn.data(), out_distances.data(),
+        out_knn.data(),
+        out_distances.data(),
         tmp_buf.get()
     );
 
@@ -882,10 +892,11 @@ inline void compute_and_store_topk_distances(
     for (size_t i = 0; i < std::min(print_count, sample_size); ++i) {
         std::cout << "Point " << indices[i] << " top-" << k << " centroid distances:";
         for (size_t t = 0; t < std::min<size_t>(k, 10); ++t) {
-            std::cout << " c" << out_knn[i * k + t] << "=" << std::fixed
-                      << std::setprecision(2) << out_distances[i * k + t];
+            std::cout << " c" << out_knn[i * k + t] << "=" << std::fixed << std::setprecision(2)
+                      << out_distances[i * k + t];
         }
-        if (k > 10) std::cout << " ...";
+        if (k > 10)
+            std::cout << " ...";
         std::cout << std::defaultfloat << std::endl;
     }
 
@@ -897,23 +908,26 @@ inline void compute_and_store_topk_distances(
     }
     json_file << std::setprecision(6) << "[\n";
     for (size_t i = 0; i < sample_size; ++i) {
-        if (i > 0) json_file << ",\n";
+        if (i > 0)
+            json_file << ",\n";
         json_file << "  {\"point_id\":" << indices[i] << ",\"centroid_ids\":[";
         for (size_t t = 0; t < k; ++t) {
-            if (t > 0) json_file << ",";
+            if (t > 0)
+                json_file << ",";
             json_file << out_knn[i * k + t];
         }
         json_file << "],\"distances\":[";
         for (size_t t = 0; t < k; ++t) {
-            if (t > 0) json_file << ",";
+            if (t > 0)
+                json_file << ",";
             json_file << out_distances[i * k + t];
         }
         json_file << "]}";
     }
     json_file << "\n]\n";
     json_file.close();
-    std::cout << "Top-" << k << " distances for " << sample_size << " points written to: "
-              << output_path << std::endl;
+    std::cout << "Top-" << k << " distances for " << sample_size
+              << " points written to: " << output_path << std::endl;
 }
 
 } // namespace bench_utils

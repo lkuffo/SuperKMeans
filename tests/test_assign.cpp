@@ -25,7 +25,11 @@ const std::vector<std::pair<skmeans::QuantizerType, const char*>> kQuantizers = 
 };
 
 void ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
-    skmeans::QuantizerType qt, size_t n, size_t d, size_t n_clusters, bool use_blas_only,
+    skmeans::QuantizerType qt,
+    size_t n,
+    size_t d,
+    size_t n_clusters,
+    bool use_blas_only,
     uint32_t iters = 10
 ) {
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
@@ -46,11 +50,12 @@ void ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
     size_t agree = 0;
     for (size_t i = 0; i < n; ++i) {
         ASSERT_LT(fast[i], n_clusters);
-        if (fast[i] == quantized[i]) agree++;
+        if (fast[i] == quantized[i])
+            agree++;
     }
     EXPECT_GT(static_cast<double>(agree) / n, 0.95);
 }
-}  // namespace
+} // namespace
 
 /**
  * @brief Test that each point is assigned to its actual nearest centroid
@@ -330,22 +335,26 @@ TEST_F(AssignTest, AllClustersNonEmpty) {
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallK_AgreesWithQuantizedAssign) {
     ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
-        skmeans::QuantizerType::rabitq, 5000, 128, 50, false);
+        skmeans::QuantizerType::rabitq, 5000, 128, 50, false
+    );
 }
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallDim_AgreesWithQuantizedAssign) {
     ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
-        skmeans::QuantizerType::rabitq, 5000, 64, 300, false);
+        skmeans::QuantizerType::rabitq, 5000, 64, 300, false
+    );
 }
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_BlasOnly_AgreesWithQuantizedAssign) {
     ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
-        skmeans::QuantizerType::rabitq, 5000, 128, 300, true);
+        skmeans::QuantizerType::rabitq, 5000, 128, 300, true
+    );
 }
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_SingleIteration_AgreesWithQuantizedAssign) {
     ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
-        skmeans::QuantizerType::rabitq, 5000, 128, 300, false, 1);
+        skmeans::QuantizerType::rabitq, 5000, 128, 300, false, 1
+    );
 }
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_Sampled_FallsBackToQuantizedAssign) {
@@ -396,7 +405,11 @@ TEST_F(AssignTest, AssignTrainingPoints_WrongVectorCount_Throws) {
 
 namespace {
 void ExpectQuantizedTrainAndAssignValid(
-    skmeans::QuantizerType qt, const std::vector<float>& data, size_t n, size_t d, size_t n_clusters
+    skmeans::QuantizerType qt,
+    const std::vector<float>& data,
+    size_t n,
+    size_t d,
+    size_t n_clusters
 ) {
     skmeans::SuperKMeansConfig config;
     config.iters = 10;
@@ -408,13 +421,15 @@ void ExpectQuantizedTrainAndAssignValid(
     auto centroids = kmeans.Train(data.data(), n);
 
     ASSERT_EQ(centroids.size(), n_clusters * d);
-    for (float v : centroids) ASSERT_TRUE(std::isfinite(v));
+    for (float v : centroids)
+        ASSERT_TRUE(std::isfinite(v));
 
     auto a = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     ASSERT_EQ(a.size(), n);
-    for (size_t i = 0; i < n; ++i) ASSERT_LT(a[i], n_clusters);
+    for (size_t i = 0; i < n; ++i)
+        ASSERT_LT(a[i], n_clusters);
 }
-}  // namespace
+} // namespace
 
 TEST_F(AssignTest, EdgeCase_Quantized_SingleCluster) {
     const size_t n = 500, d = 16, n_clusters = 1;
@@ -437,7 +452,8 @@ TEST_F(AssignTest, EdgeCase_Quantized_ClustersEqualPoints) {
 TEST_F(AssignTest, EdgeCase_Quantized_SinglePoint) {
     const size_t n = 1, d = 16, n_clusters = 1;
     std::vector<float> data(d);
-    for (size_t j = 0; j < d; ++j) data[j] = static_cast<float>(j) * 0.1f + 0.5f;
+    for (size_t j = 0; j < d; ++j)
+        data[j] = static_cast<float>(j) * 0.1f + 0.5f;
     for (const auto& [qt, name] : kQuantizers) {
         SCOPED_TRACE(name);
         ExpectQuantizedTrainAndAssignValid(qt, data, n, d, n_clusters);

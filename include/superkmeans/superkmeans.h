@@ -15,11 +15,11 @@
 #include "superkmeans/pdx/pdxearch.h"
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/profiler.h"
-#include "superkmeans/quantizers/quantizer.h"
 #include "superkmeans/quantizers/f32.h"
-#include "superkmeans/quantizers/sq8.h"
 #include "superkmeans/quantizers/lvq4.h"
+#include "superkmeans/quantizers/quantizer.h"
 #include "superkmeans/quantizers/rabitq.h"
+#include "superkmeans/quantizers/sq8.h"
 
 namespace skmeans {
 
@@ -60,7 +60,7 @@ struct SuperKMeansConfig {
     bool angular = false;           // Whether to use spherical k-means
     bool suppress_warnings = false; // Whether to suppress warnings
 
-    bool data_already_rotated = false; // Whether input data is already rotated (skip rotation)
+    bool data_already_rotated = false;     // Whether input data is already rotated (skip rotation)
     bool quantized_centroid_update = true; // Accumulate centroids in quantized domain (u8 only)
     bool full_precision_final_centroids = false; // Recompute final centroids from raw float data
     bool verbose_detail = false; // Print per-cluster movement details each iteration
@@ -70,13 +70,13 @@ struct SuperKMeansConfig {
  * @brief Statistics for a single iteration of SuperKMeans clustering.
  */
 struct SuperKMeansIterationStats {
-    size_t iteration = 0;   // Iteration number (1-indexed)
-    float objective = 0.0f; // Total clustering cost (WCSS)
-    float shift = 0.0f;     // Average squared centroid shift from previous iteration
-    size_t split = 0;       // Number of clusters that were split (empty cluster handling)
-    size_t movements = 0;           // Number of assignments that changed from previous iteration
-    size_t affected_clusters = 0;    // Number of clusters involved in movements
-    float recall = 0.0f;    // Recall@k value (0.0 to 1.0, only when queries provided)
+    size_t iteration = 0;         // Iteration number (1-indexed)
+    float objective = 0.0f;       // Total clustering cost (WCSS)
+    float shift = 0.0f;           // Average squared centroid shift from previous iteration
+    size_t split = 0;             // Number of clusters that were split (empty cluster handling)
+    size_t movements = 0;         // Number of assignments that changed from previous iteration
+    size_t affected_clusters = 0; // Number of clusters involved in movements
+    float recall = 0.0f;          // Recall@k value (0.0 to 1.0, only when queries provided)
     // Percentage of vectors not pruned (0.0 to 1.0, -1.0 if not applicable)
     float not_pruned_pct = -1.0f;
     // Number of dimensions used for partial distance computation (d')
@@ -86,17 +86,12 @@ struct SuperKMeansIterationStats {
 
     std::string to_json() const {
         std::ostringstream oss;
-        oss << "{\"iteration\":" << iteration
-            << ",\"objective\":" << std::setprecision(6) << objective
-            << ",\"shift\":" << std::setprecision(4) << shift
-            << ",\"split\":" << split
-            << ",\"movements\":" << movements
-            << ",\"affected_clusters\":" << affected_clusters
+        oss << "{\"iteration\":" << iteration << ",\"objective\":" << std::setprecision(6)
+            << objective << ",\"shift\":" << std::setprecision(4) << shift << ",\"split\":" << split
+            << ",\"movements\":" << movements << ",\"affected_clusters\":" << affected_clusters
             << ",\"recall\":" << std::setprecision(4) << recall
-            << ",\"not_pruned_pct\":" << not_pruned_pct
-            << ",\"partial_d\":" << partial_d
-            << ",\"is_gemm_only\":" << (is_gemm_only ? "true" : "false")
-            << "}";
+            << ",\"not_pruned_pct\":" << not_pruned_pct << ",\"partial_d\":" << partial_d
+            << ",\"is_gemm_only\":" << (is_gemm_only ? "true" : "false") << "}";
         return oss.str();
     }
 
@@ -104,7 +99,8 @@ struct SuperKMeansIterationStats {
         std::ostringstream oss;
         oss << "[";
         for (size_t i = 0; i < stats.size(); ++i) {
-            if (i > 0) oss << ",";
+            if (i > 0)
+                oss << ",";
             oss << stats[i].to_json();
         }
         oss << "]";
@@ -132,8 +128,21 @@ struct ClusterBalanceStats {
     std::vector<size_t> cluster_sizes; // All cluster sizes (for plotting distributions)
     // Percentiles: 5, 10, 20, 25, 30, 40, 50, 60, 70, 75, 80, 90, 95, 99, 99.9
     static constexpr std::array<float, 15> PERCENTILE_KEYS = {
-        5.0f, 10.0f, 20.0f, 25.0f, 30.0f, 40.0f, 50.0f, 60.0f,
-        70.0f, 75.0f, 80.0f, 90.0f, 95.0f, 99.0f, 99.9f
+        5.0f,
+        10.0f,
+        20.0f,
+        25.0f,
+        30.0f,
+        40.0f,
+        50.0f,
+        60.0f,
+        70.0f,
+        75.0f,
+        80.0f,
+        90.0f,
+        95.0f,
+        99.0f,
+        99.9f
     };
     std::array<float, 15> percentiles = {};
 
@@ -141,15 +150,14 @@ struct ClusterBalanceStats {
         std::ostringstream oss;
         oss << std::setprecision(4);
         oss << "{\"mean\":" << mean << ",\"geometric_mean\":" << geometric_mean
-            << ",\"stdev\":" << stdev << ",\"cv\":" << cv
-            << ",\"min\":" << min << ",\"max\":" << max
-            << ",\"n_empty\":" << n_empty
-            << ",\"skewness\":" << skewness << ",\"kurtosis\":" << kurtosis
-            << ",\"iqr\":" << iqr
+            << ",\"stdev\":" << stdev << ",\"cv\":" << cv << ",\"min\":" << min
+            << ",\"max\":" << max << ",\"n_empty\":" << n_empty << ",\"skewness\":" << skewness
+            << ",\"kurtosis\":" << kurtosis << ",\"iqr\":" << iqr
             << ",\"whisker_low\":" << whisker_low << ",\"whisker_high\":" << whisker_high
             << ",\"percentiles\":{";
         for (size_t i = 0; i < PERCENTILE_KEYS.size(); ++i) {
-            if (i > 0) oss << ",";
+            if (i > 0)
+                oss << ",";
             // Format key: "5" for integer percentiles, "99.9" for fractional
             if (PERCENTILE_KEYS[i] == std::floor(PERCENTILE_KEYS[i])) {
                 oss << "\"" << static_cast<int>(PERCENTILE_KEYS[i]) << "\":" << percentiles[i];
@@ -159,12 +167,14 @@ struct ClusterBalanceStats {
         }
         oss << "},\"outliers\":[";
         for (size_t i = 0; i < outliers.size(); ++i) {
-            if (i > 0) oss << ",";
+            if (i > 0)
+                oss << ",";
             oss << outliers[i];
         }
         oss << "],\"cluster_sizes\":[";
         for (size_t i = 0; i < cluster_sizes.size(); ++i) {
-            if (i > 0) oss << ",";
+            if (i > 0)
+                oss << ",";
             oss << cluster_sizes[i];
         }
         oss << "]}";
@@ -174,17 +184,14 @@ struct ClusterBalanceStats {
     void print() const {
         std::cout << "Cluster size stats: "
                   << "mean=" << mean << ", gmean=" << geometric_mean << ", std=" << stdev
-                  << ", CV=" << cv << ", min=" << min << ", max=" << max
-                  << ", empty=" << n_empty
+                  << ", CV=" << cv << ", min=" << min << ", max=" << max << ", empty=" << n_empty
                   << ", skew=" << std::fixed << std::setprecision(3) << skewness
-                  << ", kurt=" << kurtosis << std::defaultfloat
-                  << "\n  IQR=" << iqr
+                  << ", kurt=" << kurtosis << std::defaultfloat << "\n  IQR=" << iqr
                   << ", whiskers=[" << whisker_low << ", " << whisker_high << "]"
-                  << ", outliers=" << outliers.size()
-                  << "\n  P5=" << percentiles[0] << " P25=" << percentiles[3]
-                  << " P50=" << percentiles[6] << " P75=" << percentiles[9]
-                  << " P95=" << percentiles[12] << " P99=" << percentiles[13]
-                  << std::endl;
+                  << ", outliers=" << outliers.size() << "\n  P5=" << percentiles[0]
+                  << " P25=" << percentiles[3] << " P50=" << percentiles[6]
+                  << " P75=" << percentiles[9] << " P95=" << percentiles[12]
+                  << " P99=" << percentiles[13] << std::endl;
     }
 };
 
@@ -230,8 +237,8 @@ class SuperKMeans {
         }
         if (dimensionality > SKM_MAX_DIMS) {
             throw std::invalid_argument(
-                "dimensionality exceeds SKM_MAX_DIMS (" + std::to_string(SKM_MAX_DIMS) +
-                "), got " + std::to_string(dimensionality)
+                "dimensionality exceeds SKM_MAX_DIMS (" + std::to_string(SKM_MAX_DIMS) + "), got " +
+                std::to_string(dimensionality)
             );
         }
         n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
@@ -394,12 +401,13 @@ class SuperKMeans {
         // Recall tracking uses batch_computer which is only available for f32
         if constexpr (q == Quantization::f32) {
             if (n_queries) {
-                centroids_to_explore =
-                    std::max<size_t>(static_cast<size_t>(n_clusters * config.ann_explore_fraction), 1);
+                centroids_to_explore = std::max<size_t>(
+                    static_cast<size_t>(n_clusters * config.ann_explore_fraction), 1
+                );
                 if (config.verbose) {
                     std::cout << "Centroids to explore: " << centroids_to_explore << " ("
-                            << config.ann_explore_fraction * 100.0f << "% of " << n_clusters << ")"
-                            << std::endl;
+                              << config.ann_explore_fraction * 100.0f << "% of " << n_clusters
+                              << ")" << std::endl;
                 }
                 {
                     SKM_PROFILE_SCOPE("allocator");
@@ -481,9 +489,14 @@ class SuperKMeans {
             if (config.quantized_centroid_update && config.full_precision_final_centroids) {
                 ResetCentroids(n_clusters);
                 F32Quantizer().UpdateCentroids(
-                    data_to_cluster, assignments.get(),
-                    horizontal_centroids.get(), cluster_sizes.get(),
-                    n_samples, n_clusters, d, n_threads
+                    data_to_cluster,
+                    assignments.get(),
+                    horizontal_centroids.get(),
+                    cluster_sizes.get(),
+                    n_samples,
+                    n_clusters,
+                    d,
+                    n_threads
                 );
                 F32Quantizer().FinalizeCentroids(
                     horizontal_centroids.get(), cluster_sizes.get(), n_clusters, d
@@ -632,7 +645,8 @@ class SuperKMeans {
      * Leverages the assignments from training for a faster
      * assignment than brute force Assign().
      *
-     * TODO(@lkuffo, high): Signature is misleading, as vectors are centroids incoming in params are not used
+     * TODO(@lkuffo, high): Signature is misleading, as vectors are centroids incoming in params are
+     * not used
      *
      * @param vectors The training data matrix (row-major, n_vectors x d)
      * @param centroids The centroids matrix (row-major, n_centroids x d)
@@ -659,15 +673,15 @@ class SuperKMeans {
         }
 
         if constexpr (q != Quantization::f32) {
-            if (config.sampling_fraction == 1.0f && quantizer->SupportsPruning()
-                && !config.use_blas_only
-                && d >= DIMENSION_THRESHOLD_FOR_PRUNING
-                && n_clusters > N_CLUSTERS_THRESHOLD_FOR_PRUNING
-                && config.iters > 1) {
+            if (config.sampling_fraction == 1.0f && quantizer->SupportsPruning() &&
+                !config.use_blas_only && d >= DIMENSION_THRESHOLD_FOR_PRUNING &&
+                n_clusters > N_CLUSTERS_THRESHOLD_FOR_PRUNING && config.iters > 1) {
                 std::vector<uint32_t> result_assignments(
-                    assignments.get(), assignments.get() + n_vectors);
-                std::vector<distance_t> result_distances(n_vectors,
-                    std::numeric_limits<distance_t>::max());
+                    assignments.get(), assignments.get() + n_vectors
+                );
+                std::vector<distance_t> result_distances(
+                    n_vectors, std::numeric_limits<distance_t>::max()
+                );
                 std::vector<size_t> not_pruned_counts(n_vectors, 0);
 
                 quantizer->CacheCentroidPartialNorms(
@@ -686,11 +700,18 @@ class SuperKMeans {
                 }
 
                 quantizer->FindNearestNeighborWithPruning(
-                    quantized_data.get(), quantized_centroids.get(),
-                    vectors, horizontal_centroids.get(),
-                    n_vectors, n_centroids, d,
-                    result_assignments.data(), result_distances.data(),
-                    pdx_wrapper, partial_d, not_pruned_counts.data()
+                    quantized_data.get(),
+                    quantized_centroids.get(),
+                    vectors,
+                    horizontal_centroids.get(),
+                    n_vectors,
+                    n_centroids,
+                    d,
+                    result_assignments.data(),
+                    result_distances.data(),
+                    pdx_wrapper,
+                    partial_d,
+                    not_pruned_counts.data()
                 );
 
                 return result_assignments;
@@ -706,11 +727,17 @@ class SuperKMeans {
                 quantizer->ComputeNorms(quantized_data.get(), n_vectors, d, v_norms.get());
                 quantizer->ComputeNorms(quantized_centroids.get(), n_centroids, d, c_norms.get());
                 quantizer->FindNearestNeighbor(
-                    quantized_data.get(), quantized_centroids.get(),
-                    vectors, horizontal_centroids.get(),
-                    n_vectors, n_centroids, d,
-                    v_norms.get(), c_norms.get(),
-                    result_assignments.data(), result_distances.get(),
+                    quantized_data.get(),
+                    quantized_centroids.get(),
+                    vectors,
+                    horizontal_centroids.get(),
+                    n_vectors,
+                    n_centroids,
+                    d,
+                    v_norms.get(),
+                    c_norms.get(),
+                    result_assignments.data(),
+                    result_distances.get(),
                     tmp_distances_buffer.get()
                 );
                 return result_assignments;
@@ -725,13 +752,13 @@ class SuperKMeans {
         }
 
         if constexpr (q == Quantization::f32) {
-            if (config.use_blas_only ||
-                d < DIMENSION_THRESHOLD_FOR_PRUNING ||
+            if (config.use_blas_only || d < DIMENSION_THRESHOLD_FOR_PRUNING ||
                 n_clusters <= N_CLUSTERS_THRESHOLD_FOR_PRUNING) {
                 if (!config.suppress_warnings) {
-                    std::cout << "WARNING: AssignTrainingPoints cannot use pruning, falling back to "
-                                 "brute force Assign"
-                              << std::endl;
+                    std::cout
+                        << "WARNING: AssignTrainingPoints cannot use pruning, falling back to "
+                           "brute force Assign"
+                        << std::endl;
                 }
                 return Assign(vectors, centroids, n_vectors, n_centroids);
             }
@@ -764,11 +791,18 @@ class SuperKMeans {
             if (config.sampling_fraction == 1.0f) {
                 quantizer->CacheDataPartialNorms(data_p, n_vectors, d, partial_d);
                 quantizer->FindNearestNeighborWithPruning(
-                    data_p, horizontal_centroids.get(),
-                    data_p, horizontal_centroids.get(),
-                    n_vectors, n_clusters, d,
-                    assignments.get(), distances.get(),
-                    pdx_centroids, partial_d, not_pruned_counts.get()
+                    data_p,
+                    horizontal_centroids.get(),
+                    data_p,
+                    horizontal_centroids.get(),
+                    n_vectors,
+                    n_clusters,
+                    d,
+                    assignments.get(),
+                    distances.get(),
+                    pdx_centroids,
+                    partial_d,
+                    not_pruned_counts.get()
                 );
                 memcpy(result_assignments.data(), assignments.get(), n_vectors * sizeof(uint32_t));
                 return result_assignments;
@@ -788,11 +822,18 @@ class SuperKMeans {
 
                 quantizer->CacheDataPartialNorms(data_p, n_vectors, d, partial_d);
                 quantizer->FindNearestNeighborWithPruning(
-                    data_p, horizontal_centroids.get(),
-                    data_p, horizontal_centroids.get(),
-                    n_vectors, n_clusters, d,
-                    result_assignments.data(), distances.get(),
-                    pdx_centroids, partial_d, not_pruned_counts.get()
+                    data_p,
+                    horizontal_centroids.get(),
+                    data_p,
+                    horizontal_centroids.get(),
+                    n_vectors,
+                    n_clusters,
+                    d,
+                    result_assignments.data(),
+                    distances.get(),
+                    pdx_centroids,
+                    partial_d,
+                    not_pruned_counts.get()
                 );
                 return result_assignments;
             } else {
@@ -835,11 +876,18 @@ class SuperKMeans {
 
                 quantizer->CacheDataPartialNorms(data_p, n_vectors, d, partial_d);
                 quantizer->FindNearestNeighborWithPruning(
-                    data_p, horizontal_centroids.get(),
-                    data_p, horizontal_centroids.get(),
-                    n_vectors, n_clusters, d,
-                    result_assignments.data(), distances.get(),
-                    pdx_centroids, partial_d, not_pruned_counts.get()
+                    data_p,
+                    horizontal_centroids.get(),
+                    data_p,
+                    horizontal_centroids.get(),
+                    n_vectors,
+                    n_clusters,
+                    d,
+                    result_assignments.data(),
+                    distances.get(),
+                    pdx_centroids,
+                    partial_d,
+                    not_pruned_counts.get()
                 );
                 return result_assignments;
             }
@@ -914,8 +962,8 @@ class SuperKMeans {
         if (stats.stdev > 0.0f) {
             double m3 = 0.0, m4 = 0.0;
             for (size_t size : cluster_sizes) {
-                double z = (static_cast<double>(size) - static_cast<double>(stats.mean))
-                           / static_cast<double>(stats.stdev);
+                double z = (static_cast<double>(size) - static_cast<double>(stats.mean)) /
+                           static_cast<double>(stats.stdev);
                 double z2 = z * z;
                 m3 += z2 * z;
                 m4 += z2 * z2;
@@ -1031,13 +1079,11 @@ class SuperKMeans {
         std::fill(cluster_sizes.get(), cluster_sizes.get() + n_clusters, 0);
     }
 
-
-
     /**
      * @brief Runs a single K-Means iteration with either GEMM-only or GEMM+PRUNING strategy.
      *
      *
-     * @tparam GEMM_ONLY If true, uses full GEMM 
+     * @tparam GEMM_ONLY If true, uses full GEMM
      *                   If false, uses GEMM+PRUNING (with TunePartialD).
      *
      * @param data_to_cluster Training data (rotated, row-major)
@@ -1071,8 +1117,7 @@ class SuperKMeans {
             // Snapshot assignments before the new assignment pass (for movement counting)
             if (prev_assignments_buf) {
                 std::memcpy(
-                    prev_assignments_buf.get(), assignments.get(),
-                    n_samples * sizeof(uint32_t)
+                    prev_assignments_buf.get(), assignments.get(), n_samples * sizeof(uint32_t)
                 );
             }
         }
@@ -1080,15 +1125,20 @@ class SuperKMeans {
         if constexpr (GEMM_ONLY) {
             // Encode centroids for this iteration (for f32 this is a memcpy)
             quantizer->Encode(prev_centroids.get(), quantized_centroids.get(), n_clusters, d);
-            quantizer->ComputeNorms(
-                quantized_centroids.get(), n_clusters, d, centroid_norms.get()
-            );
+            quantizer->ComputeNorms(quantized_centroids.get(), n_clusters, d, centroid_norms.get());
             quantizer->FindNearestNeighbor(
-                encoded_data_p, quantized_centroids.get(),
-                data_to_cluster, prev_centroids.get(),
-                n_samples, n_clusters, d,
-                data_norms.get(), centroid_norms.get(),
-                assignments.get(), distances.get(), tmp_distances_buffer.get()
+                encoded_data_p,
+                quantized_centroids.get(),
+                data_to_cluster,
+                prev_centroids.get(),
+                n_samples,
+                n_clusters,
+                d,
+                data_norms.get(),
+                centroid_norms.get(),
+                assignments.get(),
+                distances.get(),
+                tmp_distances_buffer.get()
             );
             ResetCentroids(n_clusters);
             quantizer->ResetCentroidAccumulators(n_clusters, d);
@@ -1100,11 +1150,18 @@ class SuperKMeans {
                 quantized_centroids.get(), n_clusters, d, partial_d
             );
             quantizer->FindNearestNeighborWithPruning(
-                encoded_data_p, quantized_centroids.get(),
-                data_to_cluster, prev_centroids.get(),
-                n_samples, n_clusters, d,
-                assignments.get(), distances.get(),
-                centroids_pdx_wrapper, partial_d, not_pruned_counts
+                encoded_data_p,
+                quantized_centroids.get(),
+                data_to_cluster,
+                prev_centroids.get(),
+                n_samples,
+                n_clusters,
+                d,
+                assignments.get(),
+                distances.get(),
+                centroids_pdx_wrapper,
+                partial_d,
+                not_pruned_counts
             );
             ResetCentroids(n_clusters);
             quantizer->ResetCentroidAccumulators(n_clusters, d);
@@ -1121,15 +1178,25 @@ class SuperKMeans {
 
         if (config.quantized_centroid_update) {
             quantizer->UpdateCentroids(
-                encoded_data_p, assignments.get(),
-                horizontal_centroids.get(), cluster_sizes.get(),
-                n_samples, n_clusters, d, n_threads
+                encoded_data_p,
+                assignments.get(),
+                horizontal_centroids.get(),
+                cluster_sizes.get(),
+                n_samples,
+                n_clusters,
+                d,
+                n_threads
             );
         } else {
             F32Quantizer().UpdateCentroids(
-                data_to_cluster, assignments.get(),
-                horizontal_centroids.get(), cluster_sizes.get(),
-                n_samples, n_clusters, d, n_threads
+                data_to_cluster,
+                assignments.get(),
+                horizontal_centroids.get(),
+                cluster_sizes.get(),
+                n_samples,
+                n_clusters,
+                d,
+                n_threads
             );
         }
 
@@ -1176,8 +1243,8 @@ class SuperKMeans {
             std::cout << "Iteration " << iter_idx + 1 << "/" << config.iters
                       << " | Objective: " << cost << " | Objective improvement: "
                       << (iter_idx > 0 ? 1 - (cost / prev_cost) : 0.0f) << " | Shift: " << shift
-                      << " | Split: " << n_split
-                      << " | Movements: " << movements << " (" << affected_clusters << " clusters)"
+                      << " | Split: " << n_split << " | Movements: " << movements << " ("
+                      << affected_clusters << " clusters)"
                       << " | Recall: " << recall;
             if constexpr (GEMM_ONLY) {
                 std::cout << " [BLAS-only]";
@@ -1208,8 +1275,7 @@ class SuperKMeans {
         n_split = 0;
         std::mt19937 rng(config.seed);
         auto horizontal_centroids_p = horizontal_centroids.get();
-        const float split_denom =
-            static_cast<float>(std::max(size_t{1}, n_samples - n_clusters));
+        const float split_denom = static_cast<float>(std::max(size_t{1}, n_samples - n_clusters));
         for (size_t ci = 0; ci < n_clusters; ci++) {
             if (cluster_sizes[ci] == 0) {
                 size_t cj;
@@ -1269,7 +1335,8 @@ class SuperKMeans {
         }
         {
             SKM_PROFILE_SCOPE("consolidate/normalize");
-            if (config.angular) PostprocessCentroids(n_clusters);
+            if (config.angular)
+                PostprocessCentroids(n_clusters);
         }
         if (quantizer->SupportsPruning()) {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
@@ -1286,7 +1353,8 @@ class SuperKMeans {
                     PDXLayout<q, alpha>::template PDXify<false>(
                         quantized_centroids.get(),
                         pdxified_quantized_centroids.get(),
-                        n_clusters, PDXDim(d)
+                        n_clusters,
+                        PDXDim(d)
                     );
                     QuantizedCentroidsToAuxiliaryHorizontal(n_clusters);
                 }
@@ -1377,22 +1445,26 @@ class SuperKMeans {
         std::iota(ids.begin(), ids.end(), 0);
 
         // Top givers
-        std::partial_sort(ids.begin(), ids.begin() + k, ids.end(),
-            [&](size_t a, size_t b) { return gave[a] > gave[b]; });
+        std::partial_sort(ids.begin(), ids.begin() + k, ids.end(), [&](size_t a, size_t b) {
+            return gave[a] > gave[b];
+        });
         std::cout << "  Top givers:    ";
         for (size_t i = 0; i < k && gave[ids[i]] > 0; ++i) {
-            if (i > 0) std::cout << ", ";
+            if (i > 0)
+                std::cout << ", ";
             std::cout << "c" << ids[i] << ":-" << gave[ids[i]];
         }
         std::cout << "\n";
 
         // Top receivers
         std::iota(ids.begin(), ids.end(), 0);
-        std::partial_sort(ids.begin(), ids.begin() + k, ids.end(),
-            [&](size_t a, size_t b) { return received[a] > received[b]; });
+        std::partial_sort(ids.begin(), ids.begin() + k, ids.end(), [&](size_t a, size_t b) {
+            return received[a] > received[b];
+        });
         std::cout << "  Top receivers: ";
         for (size_t i = 0; i < k && received[ids[i]] > 0; ++i) {
-            if (i > 0) std::cout << ", ";
+            if (i > 0)
+                std::cout << ", ";
             std::cout << "c" << ids[i] << ":+" << received[ids[i]];
         }
         std::cout << "\n";

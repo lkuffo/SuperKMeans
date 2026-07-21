@@ -29,11 +29,17 @@ double RunXnnpackGemm(
 ) {
     xnn_operator_t op = nullptr;
     xnn_create_fully_connected_nc_f32(
-        d, n, d, n,
-        b, nullptr,
+        d,
+        n,
+        d,
+        n,
+        b,
+        nullptr,
         -std::numeric_limits<float>::infinity(),
         std::numeric_limits<float>::infinity(),
-        0, nullptr, &op
+        0,
+        nullptr,
+        &op
     );
 
     xnn_reshape_fully_connected_nc_f32(op, m, tp);
@@ -73,7 +79,8 @@ int main(int argc, char** argv) {
     std::cout << "C(" << m << ", " << n << ") = A(" << m << ", " << d << ") * B(" << n << ", " << d
               << ")^T" << std::endl;
     std::cout << "Threads: " << pthreadpool_get_threads_count(tp) << std::endl;
-    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS << std::endl;
+    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS
+              << std::endl;
     std::cout << std::endl;
 
     auto a = bench_utils::generate_random_f32(m, d, 42);

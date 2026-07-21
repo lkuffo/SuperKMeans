@@ -253,11 +253,12 @@ class Profiler {
         std::string json = "{";
         bool first = true;
         for (const auto& [name, data] : timers_) {
-            if (!first) json += ", ";
+            if (!first)
+                json += ", ";
             first = false;
             double ms = data.accum_time_ns / 1e6;
-            json += "\"" + name + "\": {\"time_ms\": " + std::to_string(ms)
-                  + ", \"calls\": " + std::to_string(data.call_count) + "}";
+            json += "\"" + name + "\": {\"time_ms\": " + std::to_string(ms) +
+                    ", \"calls\": " + std::to_string(data.call_count) + "}";
         }
         json += "}";
         return json;

@@ -1,8 +1,8 @@
 #undef HAS_FFTW
 
-#include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <gtest/gtest.h>
 #include <limits>
 #include <random>
 #include <unordered_set>
@@ -25,9 +25,11 @@ using skm_u8 = SuperKMeans<Quantization::u8, DistanceFunction::l2>;
 std::vector<float> ColumnMean(const std::vector<float>& data, size_t n, size_t d) {
     std::vector<double> acc(d, 0.0);
     for (size_t i = 0; i < n; ++i)
-        for (size_t j = 0; j < d; ++j) acc[j] += data[i * d + j];
+        for (size_t j = 0; j < d; ++j)
+            acc[j] += data[i * d + j];
     std::vector<float> mean(d);
-    for (size_t j = 0; j < d; ++j) mean[j] = static_cast<float>(acc[j] / static_cast<double>(n));
+    for (size_t j = 0; j < d; ++j)
+        mean[j] = static_cast<float>(acc[j] / static_cast<double>(n));
     return mean;
 }
 
@@ -42,18 +44,22 @@ struct SeparatedSet {
 
 SeparatedSet MakeSeparated(size_t d, size_t n_c, size_t per, uint32_t seed) {
     SeparatedSet s;
-    s.d = d; s.n_c = n_c; s.n_q = n_c * per;
+    s.d = d;
+    s.n_c = n_c;
+    s.n_q = n_c * per;
     std::mt19937 rng(seed);
     std::normal_distribution<float> cdist(0.0f, 20.0f);
     std::normal_distribution<float> noise(0.0f, 0.3f);
     s.centroids.resize(n_c * d);
-    for (auto& v : s.centroids) v = cdist(rng);
+    for (auto& v : s.centroids)
+        v = cdist(rng);
     s.queries.resize(s.n_q * d);
     s.true_nn.resize(s.n_q);
     for (size_t i = 0; i < s.n_q; ++i) {
         uint32_t c = static_cast<uint32_t>(i % n_c);
         s.true_nn[i] = c;
-        for (size_t j = 0; j < d; ++j) s.queries[i * d + j] = s.centroids[c * d + j] + noise(rng);
+        for (size_t j = 0; j < d; ++j)
+            s.queries[i * d + j] = s.centroids[c * d + j] + noise(rng);
     }
     return s;
 }
@@ -69,11 +75,23 @@ double NearestNeighborRecall(size_t d, size_t n_c, size_t per, uint32_t seed) {
     std::vector<uint32_t> knn(s.n_q);
     std::vector<float> dist(s.n_q);
     q.FindNearestNeighbor(
-        codes.data(), nullptr, nullptr, s.centroids.data(),
-        s.n_q, s.n_c, d, nullptr, nullptr, knn.data(), dist.data(), nullptr
+        codes.data(),
+        nullptr,
+        nullptr,
+        s.centroids.data(),
+        s.n_q,
+        s.n_c,
+        d,
+        nullptr,
+        nullptr,
+        knn.data(),
+        dist.data(),
+        nullptr
     );
     size_t hits = 0;
-    for (size_t i = 0; i < s.n_q; ++i) if (knn[i] == s.true_nn[i]) hits++;
+    for (size_t i = 0; i < s.n_q; ++i)
+        if (knn[i] == s.true_nn[i])
+            hits++;
     return static_cast<double>(hits) / static_cast<double>(s.n_q);
 }
 
@@ -91,7 +109,8 @@ class RaBitQQuantizerTest : public ::testing::Test {
         std::mt19937 rng(42);
         std::normal_distribution<float> dist(0.0f, 1.0f);
         data.resize(n * d);
-        for (auto& v : data) v = dist(rng);
+        for (auto& v : data)
+            v = dist(rng);
     }
 };
 
@@ -128,9 +147,10 @@ TEST_F(RaBitQQuantizerTest, ComputeNorms_MatchDistanceToCentroid) {
             double diff = static_cast<double>(data[i * d + j]) - mean[j];
             expected += diff * diff;
         }
-        EXPECT_NEAR(norms[i], static_cast<float>(expected),
-                    static_cast<float>(expected) * 0.05f + 1e-1f)
-            << "vector " << i;
+        EXPECT_NEAR(
+            norms[i], static_cast<float>(expected), static_cast<float>(expected) * 0.05f + 1e-1f
+        ) << "vector "
+          << i;
     }
 }
 
@@ -153,7 +173,8 @@ TEST_F(RaBitQQuantizerTest, Decode_FinitePreservesDirection) {
             dot += (static_cast<double>(data[i * d + j]) - mean[j]) *
                    (static_cast<double>(v) - mean[j]);
         }
-        if (dot > 0.0) positive++;
+        if (dot > 0.0)
+            positive++;
     }
     EXPECT_GT(static_cast<double>(positive) / n, 0.9);
 }

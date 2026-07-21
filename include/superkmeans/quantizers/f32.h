@@ -47,9 +47,7 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
         }
     }
 
-    void ComputeNorms(
-        const float* data, size_t n, size_t d, float* out_norms
-    ) const override {
+    void ComputeNorms(const float* data, size_t n, size_t d, float* out_norms) const override {
         assert(fitted);
         Eigen::Map<const MatrixR> e_data(data, n, d);
         Eigen::Map<VectorR> e_norms(out_norms, n);
@@ -76,9 +74,8 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
         );
     }
 
-    void CacheDataPartialNorms(
-        const quantized_t* data, size_t n, size_t d, uint32_t partial_d
-    ) override {
+    void CacheDataPartialNorms(const quantized_t* data, size_t n, size_t d, uint32_t partial_d)
+        override {
         cached_data_partial_norms.resize(n);
         Eigen::Map<const MatrixR> e_data(data, n, d);
         Eigen::Map<VectorR> e_norms(cached_data_partial_norms.data(), n);
@@ -86,7 +83,10 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
     }
 
     void CacheCentroidPartialNorms(
-        const quantized_t* centroids, size_t n, size_t d, uint32_t partial_d
+        const quantized_t* centroids,
+        size_t n,
+        size_t d,
+        uint32_t partial_d
     ) override {
         cached_centroid_partial_norms.resize(n);
         Eigen::Map<const MatrixR> e_data(centroids, n, d);
@@ -111,7 +111,8 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
         assert(fitted);
         assert(!cached_data_partial_norms.empty() && "CacheDataPartialNorms must be called first");
         assert(
-            !cached_centroid_partial_norms.empty() && "CacheCentroidPartialNorms must be called first"
+            !cached_centroid_partial_norms.empty() &&
+            "CacheCentroidPartialNorms must be called first"
         );
 
         batch_computer::FindNearestNeighborWithPruning(
@@ -136,7 +137,9 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
         const uint32_t* assignments,
         float* centroid_accumulators,
         uint32_t* cluster_sizes,
-        size_t n, size_t n_clusters, size_t d,
+        size_t n,
+        size_t n_clusters,
+        size_t d,
         uint32_t n_threads
     ) const override {
         SKM_PROFILE_SCOPE("F32::UpdateCentroids");

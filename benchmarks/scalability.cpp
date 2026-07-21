@@ -100,7 +100,8 @@ static void RunHierarchical(
             config.quantizer_type = skmeans::QuantizerType::lvq4;
     }
     config.angular = is_angular;
-    if (is_angular) std::cout << "Using spherical k-means" << std::endl;
+    if (is_angular)
+        std::cout << "Using spherical k-means" << std::endl;
     config.iters_mesoclustering = 3;
     config.iters_fineclustering = 5;
     config.iters_refinement = 0;
@@ -116,10 +117,9 @@ static void RunHierarchical(
 
     std::cout << "Training completed in " << construction_time_ms << " ms" << std::endl;
 
-
-    //auto assignments = kmeans.Assign(data, centroids.data(), n, n_clusters);
+    // auto assignments = kmeans.Assign(data, centroids.data(), n, n_clusters);
     std::vector<uint32_t> assignments(n);
-    if (quantizer_name == "f32"){
+    if (quantizer_name == "f32") {
         assignments = kmeans.Assign(data, centroids.data(), n, n_clusters);
     }
 
@@ -134,8 +134,10 @@ static void RunHierarchical(
         skmeans::Profiler::Get().Reset();
     }
 
-    const double wcss_assign = SKM_f32::ComputeWCSS(data, centroids.data(), assignments.data(), n, d);
-    std::cout << "WCSS (Assign): " << std::fixed << std::setprecision(2) << wcss_assign << std::endl;
+    const double wcss_assign =
+        SKM_f32::ComputeWCSS(data, centroids.data(), assignments.data(), n, d);
+    std::cout << "WCSS (Assign): " << std::fixed << std::setprecision(2) << wcss_assign
+              << std::endl;
     double wcss_q_assign = -1.0;
     if (!q_assignments.empty()) {
         wcss_q_assign = SKM_f32::ComputeWCSS(data, centroids.data(), q_assignments.data(), n, d);
@@ -147,7 +149,8 @@ static void RunHierarchical(
     balance_stats.print();
     std::string q_balance_stats_json;
     if (!q_assignments.empty()) {
-        auto q_balance_stats = SKM_f32::GetClustersBalanceStats(q_assignments.data(), n, n_clusters);
+        auto q_balance_stats =
+            SKM_f32::GetClustersBalanceStats(q_assignments.data(), n, n_clusters);
         q_balance_stats.print();
         q_balance_stats_json = q_balance_stats.to_json();
     }
@@ -155,17 +158,21 @@ static void RunHierarchical(
     bench_utils::recall_results_t assign_r10, assign_r100, q_assign_r10, q_assign_r100;
     if (has_gt) {
         assign_r10 = bench_utils::compute_recall(
-            gt_map, assignments, queries, centroids.data(), n_queries, n_clusters, d, 10);
+            gt_map, assignments, queries, centroids.data(), n_queries, n_clusters, d, 10
+        );
         assign_r100 = bench_utils::compute_recall(
-            gt_map, assignments, queries, centroids.data(), n_queries, n_clusters, d, 100);
+            gt_map, assignments, queries, centroids.data(), n_queries, n_clusters, d, 100
+        );
         std::cout << "  [Assign()]" << std::endl;
         bench_utils::print_recall_results(assign_r10, 10);
         bench_utils::print_recall_results(assign_r100, 100);
         if (!q_assignments.empty()) {
             q_assign_r10 = bench_utils::compute_recall(
-                gt_map, q_assignments, queries, centroids.data(), n_queries, n_clusters, d, 10);
+                gt_map, q_assignments, queries, centroids.data(), n_queries, n_clusters, d, 10
+            );
             q_assign_r100 = bench_utils::compute_recall(
-                gt_map, q_assignments, queries, centroids.data(), n_queries, n_clusters, d, 100);
+                gt_map, q_assignments, queries, centroids.data(), n_queries, n_clusters, d, 100
+            );
             std::cout << "  [QuantizedAssign()]" << std::endl;
             bench_utils::print_recall_results(q_assign_r10, 10);
             bench_utils::print_recall_results(q_assign_r100, 100);
@@ -187,16 +194,22 @@ static void RunHierarchical(
         "hsk / " + quantizer_name + (use_blas_only ? " / blas-only" : " / pruning");
 
     bench_utils::write_results_to_csv_v2(
-        experiment_name, algorithm, dataset,
-        n_iters, /*actual_iterations=*/0,
+        experiment_name,
+        algorithm,
+        dataset,
+        n_iters,
+        /*actual_iterations=*/0,
         static_cast<int>(d),
-        n, static_cast<int>(n_clusters),
+        n,
+        static_cast<int>(n_clusters),
         construction_time_ms,
         static_cast<int>(THREADS),
         wcss_assign,
         config_dict,
-        assign_r10, assign_r100,
-        q_assign_r10, q_assign_r100,
+        assign_r10,
+        assign_r100,
+        q_assign_r10,
+        q_assign_r100,
         balance_stats.to_json(),
         q_balance_stats_json,
         /*iteration_stats_json=*/"",
@@ -227,25 +240,33 @@ int main(int argc, char* argv[]) {
     queries.reserve(n_queries * d);
     {
         std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
-        if (!f) { std::cerr << "Failed to open data file\n"; return 1; }
+        if (!f) {
+            std::cerr << "Failed to open data file\n";
+            return 1;
+        }
         f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
         f.close();
     }
     {
         std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
-        if (!f) { std::cerr << "Failed to open query file\n"; return 1; }
+        if (!f) {
+            std::cerr << "Failed to open query file\n";
+            return 1;
+        }
         f.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
         f.close();
     }
 
-    const bool is_angular = std::find(
-        bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
-    ) != bench_utils::ANGULAR_DATASETS.end();
+    const bool is_angular =
+        std::find(
+            bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
+        ) != bench_utils::ANGULAR_DATASETS.end();
 
     const std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
     const bool has_gt = std::ifstream(gt_filename).good();
     std::unordered_map<int, std::vector<int>> gt_map;
-    if (has_gt) gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+    if (has_gt)
+        gt_map = bench_utils::parse_ground_truth_json(gt_filename);
 
     for (bool use_blas_only : {true, false}) {
         for (const std::string& quantizer : SCALABILITY_QUANTIZERS) {
@@ -256,13 +277,31 @@ int main(int argc, char* argv[]) {
                 }
                 if (quantizer == "f32") {
                     RunHierarchical<skmeans::Quantization::f32>(
-                        dataset, quantizer, n, d, data.data(), queries.data(),
-                        k, use_blas_only, is_angular, has_gt, gt_map
+                        dataset,
+                        quantizer,
+                        n,
+                        d,
+                        data.data(),
+                        queries.data(),
+                        k,
+                        use_blas_only,
+                        is_angular,
+                        has_gt,
+                        gt_map
                     );
                 } else {
                     RunHierarchical<skmeans::Quantization::u8>(
-                        dataset, quantizer, n, d, data.data(), queries.data(),
-                        k, use_blas_only, is_angular, has_gt, gt_map
+                        dataset,
+                        quantizer,
+                        n,
+                        d,
+                        data.data(),
+                        queries.data(),
+                        k,
+                        use_blas_only,
+                        is_angular,
+                        has_gt,
+                        gt_map
                     );
                 }
             }

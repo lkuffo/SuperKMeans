@@ -8,8 +8,8 @@
 #include <omp.h>
 #include <vector>
 
-#include <numkong/numkong.h>
 #include "ruy/ruy.h"
+#include <numkong/numkong.h>
 
 namespace skmeans {
 
@@ -37,7 +37,8 @@ inline void U8Gemm(
     if (use_numkong) {
         if (pack_b) {
             const size_t pack_size = nk_dots_packed_size_u8(n, k);
-            if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
+            if (pack_size > packed_buf.size())
+                packed_buf.resize(pack_size);
             nk_dots_pack_u8(b, n, k, b_stride, packed_buf.data());
         }
 
@@ -56,8 +57,11 @@ inline void U8Gemm(
                     a + start * a_stride,
                     packed_buf.data(),
                     out + start * n,
-                    count, n, k,
-                    a_stride, c_stride
+                    count,
+                    n,
+                    k,
+                    a_stride,
+                    c_stride
                 );
             }
         }
@@ -69,7 +73,8 @@ inline void U8Gemm(
         const size_t row_start = t * m / g_n_threads;
         const size_t row_end = (t + 1) * m / g_n_threads;
         const size_t local_rows = row_end - row_start;
-        if (local_rows == 0) continue;
+        if (local_rows == 0)
+            continue;
 
         thread_local ruy::Context ctx;
         ctx.set_max_num_threads(1);
@@ -125,7 +130,8 @@ inline void U4Gemm(
 
     if (pack_b) {
         const size_t pack_size = nk_dots_packed_size_u4(n, k);
-        if (pack_size > packed_buf.size()) packed_buf.resize(pack_size);
+        if (pack_size > packed_buf.size())
+            packed_buf.resize(pack_size);
         nk_dots_pack_u4(b_u4, n, k, b_stride, packed_buf.data());
     }
 
@@ -144,8 +150,11 @@ inline void U4Gemm(
                 a_u4 + start * a_stride,
                 packed_buf.data(),
                 out + start * n,
-                count, n, k,
-                a_stride, c_stride
+                count,
+                n,
+                k,
+                a_stride,
+                c_stride
             );
         }
     }

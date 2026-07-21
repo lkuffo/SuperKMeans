@@ -12,11 +12,7 @@
 #include "superkmeans/hierarchical_superkmeans.h"
 
 template <skmeans::Quantization Q>
-void RunBenchmark(
-    const std::string& dataset,
-    const std::string& quantizer_name,
-    bool blas_only
-) {
+void RunBenchmark(const std::string& dataset, const std::string& quantizer_name, bool blas_only) {
     using HSKM = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>;
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
@@ -44,12 +40,18 @@ void RunBenchmark(
 
     {
         std::ifstream f(filename, std::ios::binary);
-        if (!f) { std::cerr << "Failed to open " << filename << std::endl; return; }
+        if (!f) {
+            std::cerr << "Failed to open " << filename << std::endl;
+            return;
+        }
         f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     }
     {
         std::ifstream f(filename_queries, std::ios::binary);
-        if (!f) { std::cerr << "Failed to open " << filename_queries << std::endl; return; }
+        if (!f) {
+            std::cerr << "Failed to open " << filename_queries << std::endl;
+            return;
+        }
         f.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
     }
 
@@ -104,14 +106,13 @@ void RunBenchmark(
     auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     auto q_assignments = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
 
-    double wcss_assign = HSKM::ComputeWCSS(
-        data.data(), centroids.data(), assignments.data(), n, d
-    );
-    double wcss_q_assign = HSKM::ComputeWCSS(
-        data.data(), centroids.data(), q_assignments.data(), n, d
-    );
-    std::cout << "WCSS (f32, Assign):          " << std::fixed << std::setprecision(2) << wcss_assign << std::endl;
-    std::cout << "WCSS (f32, QuantizedAssign): " << std::fixed << std::setprecision(2) << wcss_q_assign << std::endl;
+    double wcss_assign = HSKM::ComputeWCSS(data.data(), centroids.data(), assignments.data(), n, d);
+    double wcss_q_assign =
+        HSKM::ComputeWCSS(data.data(), centroids.data(), q_assignments.data(), n, d);
+    std::cout << "WCSS (f32, Assign):          " << std::fixed << std::setprecision(2)
+              << wcss_assign << std::endl;
+    std::cout << "WCSS (f32, QuantizedAssign): " << std::fixed << std::setprecision(2)
+              << wcss_q_assign << std::endl;
 
     std::cout << "\n--- Assign() cluster balance ---" << std::endl;
     HSKM::GetClustersBalanceStats(assignments.data(), n, n_clusters).print();
@@ -131,20 +132,46 @@ void RunBenchmark(
                   << " from ground truth)" << std::endl;
 
         std::cout << "\n  [Assign()]" << std::endl;
-        bench_utils::print_recall_results(bench_utils::compute_recall(
-            gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
-        ), 10);
-        bench_utils::print_recall_results(bench_utils::compute_recall(
-            gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
-        ), 100);
+        bench_utils::print_recall_results(
+            bench_utils::compute_recall(
+                gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
+            ),
+            10
+        );
+        bench_utils::print_recall_results(
+            bench_utils::compute_recall(
+                gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
+            ),
+            100
+        );
 
         std::cout << "\n  [QuantizedAssign()]" << std::endl;
-        bench_utils::print_recall_results(bench_utils::compute_recall(
-            gt_map, q_assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
-        ), 10);
-        bench_utils::print_recall_results(bench_utils::compute_recall(
-            gt_map, q_assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
-        ), 100);
+        bench_utils::print_recall_results(
+            bench_utils::compute_recall(
+                gt_map,
+                q_assignments,
+                queries.data(),
+                centroids.data(),
+                n_queries,
+                n_clusters,
+                d,
+                10
+            ),
+            10
+        );
+        bench_utils::print_recall_results(
+            bench_utils::compute_recall(
+                gt_map,
+                q_assignments,
+                queries.data(),
+                centroids.data(),
+                n_queries,
+                n_clusters,
+                d,
+                100
+            ),
+            100
+        );
     } else {
         if (!gt_file.good())
             std::cout << "\nGround truth file not found: " << gt_filename << std::endl;
@@ -155,8 +182,7 @@ void RunBenchmark(
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0]
-                  << " <dataset> <sq8|lvq4|rabitq> [pruning]\n";
+        std::cerr << "Usage: " << argv[0] << " <dataset> <sq8|lvq4|rabitq> [pruning]\n";
         return 1;
     }
 
@@ -164,13 +190,13 @@ int main(int argc, char* argv[]) {
     const std::string quantizer = argv[2];
 
     bool blas_only = true;
-    if (argc > 3) blas_only = std::string(argv[3]) != "pruning";
+    if (argc > 3)
+        blas_only = std::string(argv[3]) != "pruning";
 
     if (quantizer == "sq8" || quantizer == "lvq4" || quantizer == "rabitq") {
         RunBenchmark<skmeans::Quantization::u8>(dataset, quantizer, blas_only);
     } else {
-        std::cerr << "Invalid quantizer: " << quantizer
-                  << " (expected: sq8, lvq4, rabitq)\n";
+        std::cerr << "Invalid quantizer: " << quantizer << " (expected: sq8, lvq4, rabitq)\n";
         return 1;
     }
 

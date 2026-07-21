@@ -1,11 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
-#include <algorithm>
 #include <limits>
-#include <vector>
 #include <omp.h>
+#include <vector>
 
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
@@ -416,7 +416,6 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
             }
         }
     }
-
 };
 
 } // namespace skmeans

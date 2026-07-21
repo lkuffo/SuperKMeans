@@ -104,10 +104,9 @@ int main(int argc, char* argv[]) {
         config.angular = true;
     }
 
-    auto kmeans =
-        skmeans::SuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>(
+        n_clusters, d, config
+    );
     bench_utils::TicToc timer;
     timer.Tic();
     std::vector<float> centroids = kmeans.Train(data.data(), n);
@@ -126,14 +125,13 @@ int main(int argc, char* argv[]) {
     auto q_assignments = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
 
     using SKM = skmeans::SuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>;
-    double wcss_assign = SKM::ComputeWCSS(
-        data.data(), centroids.data(), assignments.data(), n, d
-    );
-    double wcss_q_assign = SKM::ComputeWCSS(
-        data.data(), centroids.data(), q_assignments.data(), n, d
-    );
-    std::cout << "WCSS (f32, Assign):          " << std::fixed << std::setprecision(2) << wcss_assign << std::endl;
-    std::cout << "WCSS (f32, QuantizedAssign): " << std::fixed << std::setprecision(2) << wcss_q_assign << std::endl;
+    double wcss_assign = SKM::ComputeWCSS(data.data(), centroids.data(), assignments.data(), n, d);
+    double wcss_q_assign =
+        SKM::ComputeWCSS(data.data(), centroids.data(), q_assignments.data(), n, d);
+    std::cout << "WCSS (f32, Assign):          " << std::fixed << std::setprecision(2)
+              << wcss_assign << std::endl;
+    std::cout << "WCSS (f32, QuantizedAssign): " << std::fixed << std::setprecision(2)
+              << wcss_q_assign << std::endl;
 
     std::cout << "\n--- Assign() cluster balance ---" << std::endl;
     auto balance_stats =

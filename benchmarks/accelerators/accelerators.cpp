@@ -14,8 +14,8 @@
 
 #include "bench_utils.h"
 #include "superkmeans/common.h"
-#include "superkmeans/superkmeans.h"
 #include "superkmeans/hierarchical_superkmeans.h"
+#include "superkmeans/superkmeans.h"
 
 #include <Eigen/Dense>
 #include <faiss/VectorTransform.h>
@@ -148,19 +148,18 @@ void RunPipeline(
 
     const bool has_quantizer = (quantizer_name != "f32");
     const bool is_raw = (dim_reduction == "raw");
-    const std::string experiment_name =
-        "accelerators_" + dim_reduction + "_" + quantizer_name;
+    const std::string experiment_name = "accelerators_" + dim_reduction + "_" + quantizer_name;
     const std::string algorithm = "superkmeans";
 
     std::cout << "=== Accelerators Benchmark ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")" << std::endl;
-    std::cout << "Dim reduction: " << dim_reduction
-              << ", Quantizer: " << quantizer_name << std::endl;
+    std::cout << "Dim reduction: " << dim_reduction << ", Quantizer: " << quantizer_name
+              << std::endl;
     std::cout << "quantized_centroid_update=" << quantized_centroid_update
               << " full_precision_final_centroids=" << full_precision_final_centroids
               << " use_blas_only=" << use_blas_only << std::endl;
-    std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters
-              << " threads=" << THREADS << std::endl;
+    std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters << " threads=" << THREADS
+              << std::endl;
 
     // ── Load data and queries ──
     std::vector<float> data(n * d);
@@ -168,20 +167,26 @@ void RunPipeline(
 
     {
         std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
-        if (!f) { std::cerr << "Failed to open data file\n"; return; }
+        if (!f) {
+            std::cerr << "Failed to open data file\n";
+            return;
+        }
         f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     }
     {
         std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
-        if (!f) { std::cerr << "Failed to open query file\n"; return; }
+        if (!f) {
+            std::cerr << "Failed to open query file\n";
+            return;
+        }
         f.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
     }
 
     // ── Angular detection ──
-    bool is_angular = std::find(
-        bench_utils::ANGULAR_DATASETS.begin(),
-        bench_utils::ANGULAR_DATASETS.end(), dataset
-    ) != bench_utils::ANGULAR_DATASETS.end();
+    bool is_angular =
+        std::find(
+            bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
+        ) != bench_utils::ANGULAR_DATASETS.end();
 
     // ── Ground truth ──
     std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
@@ -197,62 +202,55 @@ void RunPipeline(
         target_d_list = {d};
     } else {
         for (size_t td : bench_utils::TARGET_D_VALUES) {
-            if (td < d) target_d_list.push_back(td);
+            if (td < d)
+                target_d_list.push_back(td);
         }
         if (target_d_list.empty()) {
-            std::cerr << "No valid TARGET_D values for d=" << d
-                      << " (min is 32, d must be > 32)\n";
+            std::cerr << "No valid TARGET_D values for d=" << d << " (min is 32, d must be > 32)\n";
             return;
         }
     }
 
     // ── Lambda: compute recall, WCSS, balance, and write CSV row ──
-    auto write_row = [&](
-        size_t target_d,
-        double construction_time_ms,
-        double preprocessing_time_ms,
-        int actual_iterations,
-        const std::vector<skmeans::SuperKMeansIterationStats>& iter_stats,
-        const std::vector<uint32_t>& assignments,
-        const std::vector<uint32_t>& q_assignments,
-        const float* full_d_centroids,
-        const std::string& unproject_str,
-        const skmeans::SuperKMeansConfig& cfg,
-        const std::string& profiler_train_json,
-        const std::string& profiler_assign_json,
-        const std::string& profiler_q_assign_json,
-        const float* eval_data,
-        const float* eval_queries,
-        size_t eval_d
-    ) {
+    auto write_row = [&](size_t target_d,
+                         double construction_time_ms,
+                         double preprocessing_time_ms,
+                         int actual_iterations,
+                         const std::vector<skmeans::SuperKMeansIterationStats>& iter_stats,
+                         const std::vector<uint32_t>& assignments,
+                         const std::vector<uint32_t>& q_assignments,
+                         const float* full_d_centroids,
+                         const std::string& unproject_str,
+                         const skmeans::SuperKMeansConfig& cfg,
+                         const std::string& profiler_train_json,
+                         const std::string& profiler_assign_json,
+                         const std::string& profiler_q_assign_json,
+                         const float* eval_data,
+                         const float* eval_queries,
+                         size_t eval_d) {
         // Compute WCSS in the eval space (full-d for rows 1/2, projected-d for row 3)
-        double wcss_assign = SKM_f32::ComputeWCSS(
-            eval_data, full_d_centroids, assignments.data(), n, eval_d
-        );
-        std::cout << "WCSS (Assign): " << std::fixed << std::setprecision(2)
-                  << wcss_assign << std::endl;
+        double wcss_assign =
+            SKM_f32::ComputeWCSS(eval_data, full_d_centroids, assignments.data(), n, eval_d);
+        std::cout << "WCSS (Assign): " << std::fixed << std::setprecision(2) << wcss_assign
+                  << std::endl;
 
         double wcss_q_assign = -1.0;
         if (!q_assignments.empty()) {
-            wcss_q_assign = SKM_f32::ComputeWCSS(
-                eval_data, full_d_centroids, q_assignments.data(), n, eval_d
-            );
+            wcss_q_assign =
+                SKM_f32::ComputeWCSS(eval_data, full_d_centroids, q_assignments.data(), n, eval_d);
             std::cout << "WCSS (QuantizedAssign): " << std::fixed << std::setprecision(2)
                       << wcss_q_assign << std::endl;
         }
 
         // Balance stats (from Assign)
-        auto balance_stats = SKM_f32::GetClustersBalanceStats(
-            assignments.data(), n, n_clusters
-        );
+        auto balance_stats = SKM_f32::GetClustersBalanceStats(assignments.data(), n, n_clusters);
         balance_stats.print();
 
         // Balance stats (from QuantizedAssign), if available
         std::string q_balance_stats_json;
         if (!q_assignments.empty()) {
-            auto q_balance_stats = SKM_f32::GetClustersBalanceStats(
-                q_assignments.data(), n, n_clusters
-            );
+            auto q_balance_stats =
+                SKM_f32::GetClustersBalanceStats(q_assignments.data(), n, n_clusters);
             q_balance_stats.print();
             q_balance_stats_json = q_balance_stats.to_json();
         }
@@ -267,12 +265,24 @@ void RunPipeline(
 
         if (has_gt) {
             assign_r10 = bench_utils::compute_recall(
-                gt_map, assignments, eval_queries, full_d_centroids,
-                n_queries, n_clusters, eval_d, 10
+                gt_map,
+                assignments,
+                eval_queries,
+                full_d_centroids,
+                n_queries,
+                n_clusters,
+                eval_d,
+                10
             );
             assign_r100 = bench_utils::compute_recall(
-                gt_map, assignments, eval_queries, full_d_centroids,
-                n_queries, n_clusters, eval_d, 100
+                gt_map,
+                assignments,
+                eval_queries,
+                full_d_centroids,
+                n_queries,
+                n_clusters,
+                eval_d,
+                100
             );
             std::cout << "  [Assign()]" << std::endl;
             bench_utils::print_recall_results(assign_r10, 10);
@@ -280,12 +290,24 @@ void RunPipeline(
 
             if (!q_assignments.empty()) {
                 q_assign_r10 = bench_utils::compute_recall(
-                    gt_map, q_assignments, eval_queries, full_d_centroids,
-                    n_queries, n_clusters, eval_d, 10
+                    gt_map,
+                    q_assignments,
+                    eval_queries,
+                    full_d_centroids,
+                    n_queries,
+                    n_clusters,
+                    eval_d,
+                    10
                 );
                 q_assign_r100 = bench_utils::compute_recall(
-                    gt_map, q_assignments, eval_queries, full_d_centroids,
-                    n_queries, n_clusters, eval_d, 100
+                    gt_map,
+                    q_assignments,
+                    eval_queries,
+                    full_d_centroids,
+                    n_queries,
+                    n_clusters,
+                    eval_d,
+                    100
                 );
                 std::cout << "  [QuantizedAssign()]" << std::endl;
                 bench_utils::print_recall_results(q_assign_r10, 10);
@@ -327,21 +349,26 @@ void RunPipeline(
                 update_label = " / no-quant-update";
             }
             std::string path_label = cfg.use_blas_only ? " / blas-only" : " / pruning";
-            run_label = dim_label + " / " + quant_label
-                       + update_label + path_label;
+            run_label = dim_label + " / " + quant_label + update_label + path_label;
         }
 
         bench_utils::write_results_to_csv_v2(
-            experiment_name, algorithm, dataset,
-            n_iters, actual_iterations,
+            experiment_name,
+            algorithm,
+            dataset,
+            n_iters,
+            actual_iterations,
             static_cast<int>(target_d),
-            n, static_cast<int>(n_clusters),
+            n,
+            static_cast<int>(n_clusters),
             construction_time_ms,
             static_cast<int>(THREADS),
             wcss_assign,
             config_dict,
-            assign_r10, assign_r100,
-            q_assign_r10, q_assign_r100,
+            assign_r10,
+            assign_r100,
+            q_assign_r10,
+            q_assign_r100,
             balance_stats.to_json(),
             q_balance_stats_json,
             iter_stats_json,
@@ -379,8 +406,7 @@ void RunPipeline(
             pca_holder->apply_noalloc(n, data.data(), projected_data.data());
             working_data = projected_data.data();
         } else if (dim_reduction == "jlt") {
-            std::cout << "Generating JLT matrix (" << target_d << " x " << d
-                      << ")..." << std::endl;
+            std::cout << "Generating JLT matrix (" << target_d << " x " << d << ")..." << std::endl;
             jl_matrix = GenerateJLProjectionMatrix(d, target_d, 42);
 
             projected_data.resize(n * target_d);
@@ -389,20 +415,19 @@ void RunPipeline(
             proj_mat.noalias() = data_mat * jl_matrix.transpose();
             working_data = projected_data.data();
         } else if (dim_reduction == "mat") {
-            std::cout << "Truncating to first " << target_d
-                      << " dimensions (matryoshka)..." << std::endl;
+            std::cout << "Truncating to first " << target_d << " dimensions (matryoshka)..."
+                      << std::endl;
             projected_data.resize(n * target_d);
             for (size_t i = 0; i < n; ++i) {
-                std::copy_n(data.data() + i * d, target_d,
-                            projected_data.data() + i * target_d);
+                std::copy_n(data.data() + i * d, target_d, projected_data.data() + i * target_d);
             }
             working_data = projected_data.data();
         }
 
         preprocess_timer.Toc();
         if (!is_raw) {
-            std::cout << "Preprocessing completed in "
-                      << preprocess_timer.GetMilliseconds() << " ms" << std::endl;
+            std::cout << "Preprocessing completed in " << preprocess_timer.GetMilliseconds()
+                      << " ms" << std::endl;
         }
 
         // ── Phase 2: Configure and Train ──
@@ -459,29 +484,36 @@ void RunPipeline(
         if (is_raw) {
             // ── RAW: single row ──
             std::cout << "\n--- Final Assignments (raw) ---" << std::endl;
-            auto assignments = kmeans.Assign(
-                data.data(), working_centroids.data(), n, n_clusters
-            );
+            auto assignments = kmeans.Assign(data.data(), working_centroids.data(), n, n_clusters);
             std::string profiler_assign_json = skmeans::Profiler::Get().ToJson();
             skmeans::Profiler::Get().Reset();
 
             std::vector<uint32_t> q_assignments;
             std::string profiler_q_assign_json;
             if (has_quantizer) {
-                q_assignments = kmeans.QuantizedAssign(
-                    data.data(), working_centroids.data(), n, n_clusters
-                );
+                q_assignments =
+                    kmeans.QuantizedAssign(data.data(), working_centroids.data(), n, n_clusters);
                 profiler_q_assign_json = skmeans::Profiler::Get().ToJson();
                 skmeans::Profiler::Get().Reset();
             }
 
             write_row(
-                target_d, construction_time_ms, 0.0, actual_iterations,
+                target_d,
+                construction_time_ms,
+                0.0,
+                actual_iterations,
                 kmeans.iteration_stats,
-                assignments, q_assignments,
-                working_centroids.data(), "none", config,
-                profiler_train_json, profiler_assign_json, profiler_q_assign_json,
-                data.data(), queries.data(), d
+                assignments,
+                q_assignments,
+                working_centroids.data(),
+                "none",
+                config,
+                profiler_train_json,
+                profiler_assign_json,
+                profiler_q_assign_json,
+                data.data(),
+                queries.data(),
+                d
             );
 
         } else {
@@ -504,9 +536,8 @@ void RunPipeline(
                     full_c.noalias() = proj_c * jl_matrix;
                 }
 
-                auto assignments_unproj = kmeans_fulld.Assign(
-                    data.data(), full_d_centroids.data(), n, n_clusters
-                );
+                auto assignments_unproj =
+                    kmeans_fulld.Assign(data.data(), full_d_centroids.data(), n, n_clusters);
                 std::string profiler_assign_json_u = skmeans::Profiler::Get().ToJson();
                 skmeans::Profiler::Get().Reset();
 
@@ -521,8 +552,9 @@ void RunPipeline(
                     refit_cfg.use_blas_only = true;
                     refit_cfg.verbose = false;
                     refit_cfg.quantizer_type = config.quantizer_type;
-                    refit_cfg.data_already_rotated = true; // skip rotation so quantizer fits unrotated data
-                    refit_cfg.sampling_fraction = 1.0f;    // use all data for quantizer fitting
+                    refit_cfg.data_already_rotated =
+                        true; // skip rotation so quantizer fits unrotated data
+                    refit_cfg.sampling_fraction = 1.0f; // use all data for quantizer fitting
 
                     auto kmeans_refit = SKM(n_clusters, d, refit_cfg);
                     kmeans_refit.Train(data.data(), n);
@@ -535,13 +567,22 @@ void RunPipeline(
                 }
 
                 write_row(
-                    target_d, construction_time_ms, preprocess_timer.GetMilliseconds(),
+                    target_d,
+                    construction_time_ms,
+                    preprocess_timer.GetMilliseconds(),
                     actual_iterations,
                     kmeans.iteration_stats,
-                    assignments_unproj, q_assignments_unproj,
-                    full_d_centroids.data(), "true", config,
-                    profiler_train_json, profiler_assign_json_u, profiler_q_assign_json_u,
-                    data.data(), queries.data(), d
+                    assignments_unproj,
+                    q_assignments_unproj,
+                    full_d_centroids.data(),
+                    "true",
+                    config,
+                    profiler_train_json,
+                    profiler_assign_json_u,
+                    profiler_q_assign_json_u,
+                    data.data(),
+                    queries.data(),
+                    d
                 );
             }
 
@@ -549,9 +590,8 @@ void RunPipeline(
             std::cout << "\n--- UNPROJECT=false ---" << std::endl;
 
             // Assign in projected space to get cluster membership
-            auto projected_assignments = kmeans.Assign(
-                projected_data.data(), working_centroids.data(), n, n_clusters
-            );
+            auto projected_assignments =
+                kmeans.Assign(projected_data.data(), working_centroids.data(), n, n_clusters);
 
             // Recompute full-d centroids from original vectors
             // This is a hidden design decision we must mention: it depends
@@ -559,16 +599,15 @@ void RunPipeline(
             // We assume here we materialize the centroids in full-d
             std::vector<float> recomputed_centroids(n_clusters * d);
             // That why we must average again in full-d using the projected assignments
-            // We only do the averaging: O(N), no argmin search here since we keep the same centroids as Train
+            // We only do the averaging: O(N), no argmin search here since we keep the same
+            // centroids as Train
             RecomputeFullDCentroids(
-                data.data(), projected_assignments,
-                recomputed_centroids.data(), n, d, n_clusters
+                data.data(), projected_assignments, recomputed_centroids.data(), n, d, n_clusters
             );
 
             // Re-assign in full-d with recomputed centroids
-            auto assignments_nounproj = kmeans_fulld.Assign(
-                data.data(), recomputed_centroids.data(), n, n_clusters
-            );
+            auto assignments_nounproj =
+                kmeans_fulld.Assign(data.data(), recomputed_centroids.data(), n, n_clusters);
             std::string profiler_assign_json_n = skmeans::Profiler::Get().ToJson();
             skmeans::Profiler::Get().Reset();
 
@@ -585,13 +624,22 @@ void RunPipeline(
             }
 
             write_row(
-                target_d, construction_time_ms, preprocess_timer.GetMilliseconds(),
+                target_d,
+                construction_time_ms,
+                preprocess_timer.GetMilliseconds(),
                 actual_iterations,
                 kmeans.iteration_stats,
-                assignments_nounproj, q_assignments,
-                recomputed_centroids.data(), "false", config,
-                profiler_train_json, profiler_assign_json_n, profiler_q_assign_json_n,
-                data.data(), queries.data(), d
+                assignments_nounproj,
+                q_assignments,
+                recomputed_centroids.data(),
+                "false",
+                config,
+                profiler_train_json,
+                profiler_assign_json_n,
+                profiler_q_assign_json_n,
+                data.data(),
+                queries.data(),
+                d
             );
 
             // --- Row 3: UNPROJECT=projected (keep centroids in reduced-d space) ---
@@ -600,26 +648,24 @@ void RunPipeline(
             // Project queries into the target_d space (same transform as data).
             std::vector<float> projected_queries(n_queries * target_d);
             if (dim_reduction == "pca") {
-                pca_holder->apply_noalloc(
-                    n_queries, queries.data(), projected_queries.data()
-                );
+                pca_holder->apply_noalloc(n_queries, queries.data(), projected_queries.data());
             } else if (dim_reduction == "jlt") {
                 Eigen::Map<const MatrixR> qm(queries.data(), n_queries, d);
                 Eigen::Map<MatrixR> pqm(projected_queries.data(), n_queries, target_d);
                 pqm.noalias() = qm * jl_matrix.transpose();
             } else { // mat
                 for (size_t i = 0; i < n_queries; ++i) {
-                    std::copy_n(queries.data() + i * d, target_d,
-                                projected_queries.data() + i * target_d);
+                    std::copy_n(
+                        queries.data() + i * d, target_d, projected_queries.data() + i * target_d
+                    );
                 }
             }
 
             // Re-run Assign in projected space for a clean profiler bucket
             // (the projected_assignments from UNPROJECT=false shared its profile
             // with the subsequent full-d Assign).
-            auto assignments_proj = kmeans.Assign(
-                projected_data.data(), working_centroids.data(), n, n_clusters
-            );
+            auto assignments_proj =
+                kmeans.Assign(projected_data.data(), working_centroids.data(), n, n_clusters);
             std::string profiler_assign_json_p = skmeans::Profiler::Get().ToJson();
             skmeans::Profiler::Get().Reset();
 
@@ -634,13 +680,22 @@ void RunPipeline(
             }
 
             write_row(
-                target_d, construction_time_ms, preprocess_timer.GetMilliseconds(),
+                target_d,
+                construction_time_ms,
+                preprocess_timer.GetMilliseconds(),
                 actual_iterations,
                 kmeans.iteration_stats,
-                assignments_proj, q_assignments_proj,
-                working_centroids.data(), "projected", config,
-                profiler_train_json, profiler_assign_json_p, profiler_q_assign_json_p,
-                projected_data.data(), projected_queries.data(), target_d
+                assignments_proj,
+                q_assignments_proj,
+                working_centroids.data(),
+                "projected",
+                config,
+                profiler_train_json,
+                profiler_assign_json_p,
+                profiler_q_assign_json_p,
+                projected_data.data(),
+                projected_queries.data(),
+                target_d
             );
         }
     }
@@ -685,32 +740,38 @@ void RunHierarchicalPipeline(
 
     std::cout << "=== Hierarchical Accelerators Benchmark ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")" << std::endl;
-    std::cout << "Quantizer: " << quantizer_name
-              << " use_blas_only=" << use_blas_only << std::endl;
+    std::cout << "Quantizer: " << quantizer_name << " use_blas_only=" << use_blas_only << std::endl;
     std::cout << "n_clusters=" << n_clusters << " threads=" << THREADS << std::endl;
 
     std::vector<float> data(n * d);
     std::vector<float> queries(n_queries * d);
     {
         std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
-        if (!f) { std::cerr << "Failed to open data file\n"; return; }
+        if (!f) {
+            std::cerr << "Failed to open data file\n";
+            return;
+        }
         f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     }
     {
         std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
-        if (!f) { std::cerr << "Failed to open query file\n"; return; }
+        if (!f) {
+            std::cerr << "Failed to open query file\n";
+            return;
+        }
         f.read(reinterpret_cast<char*>(queries.data()), n_queries * d * sizeof(float));
     }
 
-    bool is_angular = std::find(
-        bench_utils::ANGULAR_DATASETS.begin(),
-        bench_utils::ANGULAR_DATASETS.end(), dataset
-    ) != bench_utils::ANGULAR_DATASETS.end();
+    bool is_angular =
+        std::find(
+            bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
+        ) != bench_utils::ANGULAR_DATASETS.end();
 
     std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
     bool has_gt = std::ifstream(gt_filename).good();
     std::unordered_map<int, std::vector<int>> gt_map;
-    if (has_gt) gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+    if (has_gt)
+        gt_map = bench_utils::parse_ground_truth_json(gt_filename);
 
     skmeans::HierarchicalSuperKMeansConfig config;
     config.iters = n_iters;
@@ -732,7 +793,8 @@ void RunHierarchicalPipeline(
             config.quantizer_type = skmeans::QuantizerType::lvq4;
     }
     config.angular = is_angular;
-    if (is_angular) std::cout << "Using spherical k-means" << std::endl;
+    if (is_angular)
+        std::cout << "Using spherical k-means" << std::endl;
     // Hierarchical-specific (defaults taken from ad_hoc_hierarchical_superkmeans*.cpp)
     config.iters_mesoclustering = 3;
     config.iters_fineclustering = 5;
@@ -749,8 +811,8 @@ void RunHierarchicalPipeline(
 
     std::cout << "Training completed in " << construction_time_ms << " ms" << std::endl;
     std::cout << "Iteration config: meso=" << config.iters_mesoclustering
-              << ", fine=" << config.iters_fineclustering
-              << ", refine=" << config.iters_refinement << "\n";
+              << ", fine=" << config.iters_fineclustering << ", refine=" << config.iters_refinement
+              << "\n";
 
     // ── Final assignments ──
     auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
@@ -766,29 +828,24 @@ void RunHierarchicalPipeline(
         skmeans::Profiler::Get().Reset();
     }
 
-    double wcss_assign = SKM_f32::ComputeWCSS(
-        data.data(), centroids.data(), assignments.data(), n, d
-    );
-    std::cout << "WCSS (Assign): " << std::fixed << std::setprecision(2)
-              << wcss_assign << std::endl;
+    double wcss_assign =
+        SKM_f32::ComputeWCSS(data.data(), centroids.data(), assignments.data(), n, d);
+    std::cout << "WCSS (Assign): " << std::fixed << std::setprecision(2) << wcss_assign
+              << std::endl;
     double wcss_q_assign = -1.0;
     if (!q_assignments.empty()) {
-        wcss_q_assign = SKM_f32::ComputeWCSS(
-            data.data(), centroids.data(), q_assignments.data(), n, d
-        );
+        wcss_q_assign =
+            SKM_f32::ComputeWCSS(data.data(), centroids.data(), q_assignments.data(), n, d);
         std::cout << "WCSS (QuantizedAssign): " << std::fixed << std::setprecision(2)
                   << wcss_q_assign << std::endl;
     }
 
-    auto balance_stats = SKM_f32::GetClustersBalanceStats(
-        assignments.data(), n, n_clusters
-    );
+    auto balance_stats = SKM_f32::GetClustersBalanceStats(assignments.data(), n, n_clusters);
     balance_stats.print();
     std::string q_balance_stats_json;
     if (!q_assignments.empty()) {
-        auto q_balance_stats = SKM_f32::GetClustersBalanceStats(
-            q_assignments.data(), n, n_clusters
-        );
+        auto q_balance_stats =
+            SKM_f32::GetClustersBalanceStats(q_assignments.data(), n, n_clusters);
         q_balance_stats.print();
         q_balance_stats_json = q_balance_stats.to_json();
     }
@@ -796,24 +853,34 @@ void RunHierarchicalPipeline(
     bench_utils::recall_results_t assign_r10, assign_r100, q_assign_r10, q_assign_r100;
     if (has_gt) {
         assign_r10 = bench_utils::compute_recall(
-            gt_map, assignments, queries.data(), centroids.data(),
-            n_queries, n_clusters, d, 10
+            gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
         );
         assign_r100 = bench_utils::compute_recall(
-            gt_map, assignments, queries.data(), centroids.data(),
-            n_queries, n_clusters, d, 100
+            gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
         );
         std::cout << "  [Assign()]" << std::endl;
         bench_utils::print_recall_results(assign_r10, 10);
         bench_utils::print_recall_results(assign_r100, 100);
         if (!q_assignments.empty()) {
             q_assign_r10 = bench_utils::compute_recall(
-                gt_map, q_assignments, queries.data(), centroids.data(),
-                n_queries, n_clusters, d, 10
+                gt_map,
+                q_assignments,
+                queries.data(),
+                centroids.data(),
+                n_queries,
+                n_clusters,
+                d,
+                10
             );
             q_assign_r100 = bench_utils::compute_recall(
-                gt_map, q_assignments, queries.data(), centroids.data(),
-                n_queries, n_clusters, d, 100
+                gt_map,
+                q_assignments,
+                queries.data(),
+                centroids.data(),
+                n_queries,
+                n_clusters,
+                d,
+                100
             );
             std::cout << "  [QuantizedAssign()]" << std::endl;
             bench_utils::print_recall_results(q_assign_r10, 10);
@@ -842,20 +909,26 @@ void RunHierarchicalPipeline(
         config_dict["profiler_quantized_assign"] = profiler_q_assign_json;
     }
 
-    std::string run_label = "raw / " + quantizer_name + " / hsk"
-                            + (use_blas_only ? " / blas-only" : " / pruning");
+    std::string run_label =
+        "raw / " + quantizer_name + " / hsk" + (use_blas_only ? " / blas-only" : " / pruning");
 
     bench_utils::write_results_to_csv_v2(
-        experiment_name, algorithm, dataset,
-        n_iters, /*actual_iterations=*/0,
+        experiment_name,
+        algorithm,
+        dataset,
+        n_iters,
+        /*actual_iterations=*/0,
         static_cast<int>(d),
-        n, static_cast<int>(n_clusters),
+        n,
+        static_cast<int>(n_clusters),
         construction_time_ms,
         static_cast<int>(THREADS),
         wcss_assign,
         config_dict,
-        assign_r10, assign_r100,
-        q_assign_r10, q_assign_r100,
+        assign_r10,
+        assign_r100,
+        q_assign_r10,
+        q_assign_r100,
         balance_stats.to_json(),
         q_balance_stats_json,
         /*iteration_stats_json=*/"",
@@ -873,8 +946,7 @@ int main(int argc, char* argv[]) {
                   << " <dataset> <pca|jlt|mat|raw|hsk> <f32|sq8|rabitq|lvq4>"
                   << " <quantized_centroid_update=true|false>"
                   << " <full_precision_final_centroids=true|false>"
-                  << " <use_blas_only=true|false>"
-                  << std::endl;
+                  << " <use_blas_only=true|false>" << std::endl;
         return 1;
     }
 
@@ -887,8 +959,8 @@ int main(int argc, char* argv[]) {
 
     // Validate dim_reduction (also accept "hsk" as a sentinel for the
     // hierarchical pipeline — raw input, no projection).
-    if (dim_reduction != "raw" && dim_reduction != "pca" && dim_reduction != "jlt"
-        && dim_reduction != "mat" && dim_reduction != "hsk") {
+    if (dim_reduction != "raw" && dim_reduction != "pca" && dim_reduction != "jlt" &&
+        dim_reduction != "mat" && dim_reduction != "hsk") {
         std::cerr << "Invalid dim_reduction: " << dim_reduction
                   << " (expected: raw, pca, jlt, mat, hsk)\n";
         return 1;
@@ -896,13 +968,9 @@ int main(int argc, char* argv[]) {
 
     if (dim_reduction == "hsk") {
         if (quantizer == "f32") {
-            RunHierarchicalPipeline<skmeans::Quantization::f32>(
-                dataset, quantizer, use_blas_only
-            );
+            RunHierarchicalPipeline<skmeans::Quantization::f32>(dataset, quantizer, use_blas_only);
         } else if (quantizer == "sq8" || quantizer == "rabitq" || quantizer == "lvq4") {
-            RunHierarchicalPipeline<skmeans::Quantization::u8>(
-                dataset, quantizer, use_blas_only
-            );
+            RunHierarchicalPipeline<skmeans::Quantization::u8>(dataset, quantizer, use_blas_only);
         } else {
             std::cerr << "Invalid quantizer: " << quantizer
                       << " (expected: f32, sq8, rabitq, lvq4)\n";
@@ -914,17 +982,24 @@ int main(int argc, char* argv[]) {
     // Validate quantizer and dispatch to correct template instantiation
     if (quantizer == "f32") {
         RunPipeline<skmeans::Quantization::f32>(
-            dataset, dim_reduction, quantizer,
-            quantized_centroid_update, full_precision_final_centroids, use_blas_only
+            dataset,
+            dim_reduction,
+            quantizer,
+            quantized_centroid_update,
+            full_precision_final_centroids,
+            use_blas_only
         );
     } else if (quantizer == "sq8" || quantizer == "rabitq" || quantizer == "lvq4") {
         RunPipeline<skmeans::Quantization::u8>(
-            dataset, dim_reduction, quantizer,
-            quantized_centroid_update, full_precision_final_centroids, use_blas_only
+            dataset,
+            dim_reduction,
+            quantizer,
+            quantized_centroid_update,
+            full_precision_final_centroids,
+            use_blas_only
         );
     } else {
-        std::cerr << "Invalid quantizer: " << quantizer
-                  << " (expected: f32, sq8, rabitq, lvq4)\n";
+        std::cerr << "Invalid quantizer: " << quantizer << " (expected: f32, sq8, rabitq, lvq4)\n";
         return 1;
     }
 

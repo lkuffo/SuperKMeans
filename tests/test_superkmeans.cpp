@@ -420,7 +420,7 @@ std::vector<uint32_t> AssignmentsFromClusterSizes(const std::vector<size_t>& siz
     }
     return assignments;
 }
-}  // namespace
+} // namespace
 
 TEST_F(SuperKMeansTest, ClusterBalanceStats_MatchesHandComputed_Moments) {
     const std::vector<size_t> sizes = {0, 5, 5, 5, 5};
@@ -453,13 +453,13 @@ TEST_F(SuperKMeansTest, ClusterBalanceStats_MatchesHandComputed_Percentiles) {
     EXPECT_EQ(s.min, 0u);
     EXPECT_EQ(s.max, 100u);
     EXPECT_EQ(s.n_empty, 1u);
-    EXPECT_NEAR(s.percentiles[0], 5.0f, 1e-4f);    // P5
-    EXPECT_NEAR(s.percentiles[1], 10.0f, 1e-4f);   // P10
-    EXPECT_NEAR(s.percentiles[3], 25.0f, 1e-4f);   // P25
-    EXPECT_NEAR(s.percentiles[6], 50.0f, 1e-4f);   // P50
-    EXPECT_NEAR(s.percentiles[9], 75.0f, 1e-4f);   // P75
-    EXPECT_NEAR(s.percentiles[11], 90.0f, 1e-4f);  // P90
-    EXPECT_NEAR(s.percentiles[13], 99.0f, 1e-3f);  // P99
+    EXPECT_NEAR(s.percentiles[0], 5.0f, 1e-4f);   // P5
+    EXPECT_NEAR(s.percentiles[1], 10.0f, 1e-4f);  // P10
+    EXPECT_NEAR(s.percentiles[3], 25.0f, 1e-4f);  // P25
+    EXPECT_NEAR(s.percentiles[6], 50.0f, 1e-4f);  // P50
+    EXPECT_NEAR(s.percentiles[9], 75.0f, 1e-4f);  // P75
+    EXPECT_NEAR(s.percentiles[11], 90.0f, 1e-4f); // P90
+    EXPECT_NEAR(s.percentiles[13], 99.0f, 1e-3f); // P99
     EXPECT_NEAR(s.iqr, 50.0f, 1e-4f);
     EXPECT_NEAR(s.whisker_low, 0.0f, 1e-5f);
     EXPECT_NEAR(s.whisker_high, 100.0f, 1e-4f);
@@ -511,11 +511,13 @@ TEST_F(SuperKMeansTest, EdgeCase_SingleCluster) {
     auto centroids = kmeans.Train(data.data(), n);
 
     ASSERT_EQ(centroids.size(), n_clusters * d);
-    for (float v : centroids) EXPECT_TRUE(std::isfinite(v));
+    for (float v : centroids)
+        EXPECT_TRUE(std::isfinite(v));
 
     auto a = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     ASSERT_EQ(a.size(), n);
-    for (size_t i = 0; i < n; ++i) EXPECT_EQ(a[i], 0u);
+    for (size_t i = 0; i < n; ++i)
+        EXPECT_EQ(a[i], 0u);
 }
 
 TEST_F(SuperKMeansTest, EdgeCase_ClustersEqualPoints) {
@@ -531,17 +533,20 @@ TEST_F(SuperKMeansTest, EdgeCase_ClustersEqualPoints) {
     auto centroids = kmeans.Train(data.data(), n);
 
     ASSERT_EQ(centroids.size(), n_clusters * d);
-    for (float v : centroids) EXPECT_TRUE(std::isfinite(v));
+    for (float v : centroids)
+        EXPECT_TRUE(std::isfinite(v));
 
     auto a = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     ASSERT_EQ(a.size(), n);
-    for (size_t i = 0; i < n; ++i) EXPECT_LT(a[i], n_clusters);
+    for (size_t i = 0; i < n; ++i)
+        EXPECT_LT(a[i], n_clusters);
 }
 
 TEST_F(SuperKMeansTest, EdgeCase_SinglePoint) {
     const size_t n = 1, d = 16, n_clusters = 1;
     std::vector<float> data(d);
-    for (size_t j = 0; j < d; ++j) data[j] = static_cast<float>(j) * 0.1f + 0.5f;
+    for (size_t j = 0; j < d; ++j)
+        data[j] = static_cast<float>(j) * 0.1f + 0.5f;
 
     skmeans::SuperKMeansConfig config;
     config.iters = 10;
@@ -552,7 +557,8 @@ TEST_F(SuperKMeansTest, EdgeCase_SinglePoint) {
     auto centroids = kmeans.Train(data.data(), n);
 
     ASSERT_EQ(centroids.size(), n_clusters * d);
-    for (float v : centroids) EXPECT_TRUE(std::isfinite(v));
+    for (float v : centroids)
+        EXPECT_TRUE(std::isfinite(v));
 
     auto a = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     ASSERT_EQ(a.size(), n);

@@ -2,10 +2,10 @@
 
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
+#include "superkmeans/distance_computers/gemms.h"
 #include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/profiler.h"
 #include "superkmeans/quantizers/quantizer.h"
-#include "superkmeans/distance_computers/gemms.h"
 
 #include <algorithm>
 #include <cassert>
@@ -21,9 +21,7 @@
 
 namespace skmeans {
 
-inline void AccumulateNibbles(
-    const uint8_t* code, size_t nbytes, uint32_t& sum, uint32_t& sum_sq
-) {
+inline void AccumulateNibbles(const uint8_t* code, size_t nbytes, uint32_t& sum, uint32_t& sum_sq) {
     for (size_t b = 0; b < nbytes; ++b) {
         uint8_t lo = code[b] & 0x0F;
         uint8_t hi = code[b] >> 4;
@@ -83,8 +81,11 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     }
 
     static void UnpackU4x2ToU8(
-        const quantized_t* src, uint8_t* dst,
-        size_t n_rows, size_t k, size_t row_stride
+        const quantized_t* src,
+        uint8_t* dst,
+        size_t n_rows,
+        size_t k,
+        size_t row_stride
     ) {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t row = 0; row < n_rows; ++row) {
@@ -111,21 +112,31 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                 SKM_PROFILE_SCOPE("search/unpack");
                 if (a_changed) {
                     const size_t a_u8_size = m * k;
-                    if (decoded_a_buf.size() < a_u8_size) decoded_a_buf.resize(a_u8_size);
+                    if (decoded_a_buf.size() < a_u8_size)
+                        decoded_a_buf.resize(a_u8_size);
                     UnpackU4x2ToU8(a, decoded_a_buf.data(), m, k, a_stride);
                 }
                 if (b_changed) {
                     const size_t b_u8_size = n * k;
-                    if (decoded_b_buf.size() < b_u8_size) decoded_b_buf.resize(b_u8_size);
+                    if (decoded_b_buf.size() < b_u8_size)
+                        decoded_b_buf.resize(b_u8_size);
                     UnpackU4x2ToU8(b, decoded_b_buf.data(), n, k, b_stride);
                 }
             }
 
             const bool use_numkong = !IS_ARM && (has_amx || k > THIN_MATRIX_THRESHOLD);
             U8Gemm(
-                decoded_a_buf.data(), decoded_b_buf.data(), out,
-                m, n, k, k, k,
-                use_numkong, packed_buf_, b_changed
+                decoded_a_buf.data(),
+                decoded_b_buf.data(),
+                out,
+                m,
+                n,
+                k,
+                k,
+                k,
+                use_numkong,
+                packed_buf_,
+                b_changed
             );
             return;
         }
@@ -154,9 +165,8 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-    void ComputeNorms(
-        const quantized_t* data, size_t n, size_t d, float* out_norms
-    ) const override {
+    void ComputeNorms(const quantized_t* data, size_t n, size_t d, float* out_norms)
+        const override {
         SKM_PROFILE_SCOPE("LVQ4::ComputeNorms");
         assert(fitted_ && d == d_);
 
@@ -169,9 +179,8 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 
             uint32_t sum_c = 0, sum_c_sq = 0;
             AccumulateNibbles(code, nibble_bytes_, sum_c, sum_c_sq);
-            out_norms[i] = s * s * static_cast<float>(sum_c_sq)
-                         + 2.0f * s * b * static_cast<float>(sum_c)
-                         + static_cast<float>(d) * b * b;
+            out_norms[i] = s * s * static_cast<float>(sum_c_sq) +
+                           2.0f * s * b * static_cast<float>(sum_c) + static_cast<float>(d) * b * b;
         }
     }
 
@@ -210,14 +219,21 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                 const bool b_changed = true;
 
                 MatrixMultiplication(
-                    x + i * code_size_, y + j * code_size_,
+                    x + i * code_size_,
+                    y + j * code_size_,
                     dots_buf_.data(),
-                    batch_n_x, batch_n_y, d, code_size_, code_size_,
-                    a_changed, b_changed
+                    batch_n_x,
+                    batch_n_y,
+                    d,
+                    code_size_,
+                    code_size_,
+                    a_changed,
+                    b_changed
                 );
 
                 // Apply LVQ4 distance formula and find nearest per row
-                using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+                using MatrixR =
+                    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
                 Eigen::Map<MatrixR> dists_matrix(tmp_buf, batch_n_x, batch_n_y);
 #pragma omp parallel for num_threads(g_n_threads)
                 for (size_t r = 0; r < batch_n_x; ++r) {
@@ -234,10 +250,10 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                     SKM_VECTORIZE_LOOP
                     for (size_t c = 0; c < batch_n_y; ++c) {
                         const size_t j_idx = j + c;
-                        dists_row[c] = norm_x_i + cf.norm_y_full[j_idx]
-                                     - two_si * cf.scales[j_idx] * static_cast<float>(dots_row[c])
-                                     - two_A_x_i * cf.biases[j_idx]
-                                     - two_bi * cf.sj_sum_cy_full[j_idx];
+                        dists_row[c] = norm_x_i + cf.norm_y_full[j_idx] -
+                                       two_si * cf.scales[j_idx] * static_cast<float>(dots_row[c]) -
+                                       two_A_x_i * cf.biases[j_idx] -
+                                       two_bi * cf.sj_sum_cy_full[j_idx];
                     }
 
                     uint32_t knn_idx;
@@ -251,19 +267,16 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-    void CacheDataPartialNorms(
-        const quantized_t* data, size_t n, size_t /*d*/, uint32_t partial_d
-    ) override {
+    void CacheDataPartialNorms(const quantized_t* data, size_t n, size_t /*d*/, uint32_t partial_d)
+        override {
         ComputeDataPartialNorms(data, n, partial_d);
     }
 
-    void ComputeDataPartialNorms(
-        const quantized_t* data, size_t n, uint32_t partial_d
-    ) const {
+    void ComputeDataPartialNorms(const quantized_t* data, size_t n, uint32_t partial_d) const {
         SKM_PROFILE_SCOPE("LVQ4::CacheDataPartialNorms");
         const uint8_t* codes = reinterpret_cast<const uint8_t*>(data);
         const size_t front_bytes = partial_d / 2;
-        const size_t mid_bytes = d_ / 8;  // d/4, in packed bytes
+        const size_t mid_bytes = d_ / 8; // d/4, in packed bytes
         const float front_d_f = static_cast<float>(front_bytes * 2);
         const float mid_d_f = static_cast<float>(mid_bytes * 2);
 
@@ -295,7 +308,8 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                 cached_A_x_front_[i] = si * sf + front_d_f * bi;
                 AccumulateNibbles(code + min_fb, max_fb - min_fb, sum, sum_sq);
                 cached_sum_cx_sq_mid_[i] = sum_sq;
-                sf = static_cast<float>(sum); sqf = static_cast<float>(sum_sq);
+                sf = static_cast<float>(sum);
+                sqf = static_cast<float>(sum_sq);
                 cached_norm_x_mid_[i] = si * si * sqf + 2.0f * bi * si * sf + mid_d_f * bi * bi;
                 cached_A_x_mid_[i] = si * sf + mid_d_f * bi;
             } else {
@@ -305,7 +319,8 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                 cached_A_x_mid_[i] = si * sf + mid_d_f * bi;
                 AccumulateNibbles(code + min_fb, max_fb - min_fb, sum, sum_sq);
                 cached_sum_cx_sq_front_[i] = sum_sq;
-                sf = static_cast<float>(sum); sqf = static_cast<float>(sum_sq);
+                sf = static_cast<float>(sum);
+                sqf = static_cast<float>(sum_sq);
                 cached_norm_x_front_[i] = si * si * sqf + 2.0f * bi * si * sf + front_d_f * bi * bi;
                 cached_A_x_front_[i] = si * sf + front_d_f * bi;
             }
@@ -313,7 +328,10 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     }
 
     void CacheCentroidPartialNorms(
-        const quantized_t* /*centroids*/, size_t /*n*/, size_t /*d*/, uint32_t /*partial_d*/
+        const quantized_t* /*centroids*/,
+        size_t /*n*/,
+        size_t /*d*/,
+        uint32_t /*partial_d*/
     ) override {
         // No-op: centroid partials computed in ExtractCentroidFactors.
     }
@@ -347,7 +365,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         // Pruning geometry
         const size_t front_bytes = partial_d / 2;
         const size_t front_d = front_bytes * 2;
-        const size_t mid_bytes = d / 8;  // d/4, in packed bytes
+        const size_t mid_bytes = d / 8; // d/4, in packed bytes
         const size_t mid_d = mid_bytes * 2;
         const bool use_mid = (front_bytes < mid_bytes) && (mid_bytes < nibble_bytes_);
 
@@ -370,10 +388,16 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                     const bool a_changed = (j == 0);
                     const bool b_changed = true;
                     MatrixMultiplication(
-                        x + i * code_size_, y + j * code_size_,
+                        x + i * code_size_,
+                        y + j * code_size_,
                         dots_buf_.data(),
-                        batch_n_x, batch_n_y, partial_d, code_size_, code_size_,
-                        a_changed, b_changed
+                        batch_n_x,
+                        batch_n_y,
+                        partial_d,
+                        code_size_,
+                        code_size_,
+                        a_changed,
+                        b_changed
                     );
                 }
 
@@ -407,13 +431,18 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                             const uint32_t prev_j = out_knn[i_idx];
                             best_idx = prev_j;
                             best_dist = ComputeFullDistance(
-                                x_code, y_codes + prev_j * code_size_,
-                                si, bi,
+                                x_code,
+                                y_codes + prev_j * code_size_,
+                                si,
+                                bi,
                                 cached_sum_cx_sq_[i_idx],
-                                norm_x_full_i, cached_A_x_full_[i_idx],
-                                cf.scales[prev_j], cf.biases[prev_j],
+                                norm_x_full_i,
+                                cached_A_x_full_[i_idx],
+                                cf.scales[prev_j],
+                                cf.biases[prev_j],
                                 cf.sum_cy_sq[prev_j],
-                                cf.norm_y_full[prev_j], cf.sj_sum_cy_full[prev_j]
+                                cf.norm_y_full[prev_j],
+                                cf.sj_sum_cy_full[prev_j]
                             );
                             out_not_pruned_counts[i_idx] = 0;
                         } else {
@@ -428,18 +457,22 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                         SKM_VECTORIZE_LOOP
                         for (size_t c = 0; c < batch_n_y; ++c) {
                             const size_t j_idx = j + c;
-                            partial_dists[c] = norm_x_front_i + cf.norm_y_front[j_idx]
-                                - two_si * cf.scales[j_idx] * static_cast<float>(dots_row[c])
-                                - two_A_x_front_i * cf.biases[j_idx]
-                                - two_bi * cf.sj_sum_cy_front_f[j_idx];
+                            partial_dists[c] =
+                                norm_x_front_i + cf.norm_y_front[j_idx] -
+                                two_si * cf.scales[j_idx] * static_cast<float>(dots_row[c]) -
+                                two_A_x_front_i * cf.biases[j_idx] -
+                                two_bi * cf.sj_sum_cy_front_f[j_idx];
                         }
 
                         // Compact survivor indices via SIMD
                         size_t n_survivors = 0;
                         const float front_threshold = best_dist * ad_ratio_front;
                         f32_utils::InitPositionsArray(
-                            batch_n_y, n_survivors, survivor_positions,
-                            front_threshold, partial_dists
+                            batch_n_y,
+                            n_survivors,
+                            survivor_positions,
+                            front_threshold,
+                            partial_dists
                         );
                         out_not_pruned_counts[i_idx] += n_survivors;
 
@@ -465,14 +498,13 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                                 const uint8_t* y_code = y_codes + j_idx * code_size_;
 
                                 uint32_t gap_l2_int = u4_computer::Horizontal(
-                                    (const nk_u4x2_t*)(x_code + front_bytes),
-                                    (const nk_u4x2_t*)(y_code + front_bytes),
+                                    (const nk_u4x2_t*) (x_code + front_bytes),
+                                    (const nk_u4x2_t*) (y_code + front_bytes),
                                     mid_bytes - front_bytes
                                 );
                                 uint32_t sum_cy_sq_gap =
                                     cf.sum_cy_sq_mid[j_idx] - cf.sum_cy_sq_front[j_idx];
-                                uint32_t gap_dot =
-                                    (sum_cx_sq_gap + sum_cy_sq_gap - gap_l2_int) / 2;
+                                uint32_t gap_dot = (sum_cx_sq_gap + sum_cy_sq_gap - gap_l2_int) / 2;
                                 mid_dots[s] = dots_row[c] + gap_dot;
                             }
 
@@ -480,19 +512,22 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                             SKM_VECTORIZE_LOOP
                             for (size_t s = 0; s < n_survivors; ++s) {
                                 const size_t j_idx = j + survivor_positions[s];
-                                partial_dists[s] = norm_x_mid_i + cf.norm_y_mid[j_idx]
-                                    - two_si * cf.scales[j_idx]
-                                        * static_cast<float>(mid_dots[s])
-                                    - two_A_x_mid_i * cf.biases[j_idx]
-                                    - two_bi * cf.sj_sum_cy_mid_f[j_idx];
+                                partial_dists[s] =
+                                    norm_x_mid_i + cf.norm_y_mid[j_idx] -
+                                    two_si * cf.scales[j_idx] * static_cast<float>(mid_dots[s]) -
+                                    two_A_x_mid_i * cf.biases[j_idx] -
+                                    two_bi * cf.sj_sum_cy_mid_f[j_idx];
                             }
 
                             // Phase 3c: compact mid survivors
                             size_t n_mid_survivors = 0;
                             const float mid_threshold = best_dist * ad_ratio_mid;
                             f32_utils::InitPositionsArray(
-                                n_survivors, n_mid_survivors, mid_survivor_positions,
-                                mid_threshold, partial_dists
+                                n_survivors,
+                                n_mid_survivors,
+                                mid_survivor_positions,
+                                mid_threshold,
+                                partial_dists
                             );
 
                             rest_positions = mid_survivor_positions;
@@ -508,34 +543,29 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 
                         for (size_t rs = 0; rs < n_rest; ++rs) {
                             const size_t s = rest_positions[rs];
-                            const size_t c = use_mid
-                                ? survivor_positions[s] : s;
+                            const size_t c = use_mid ? survivor_positions[s] : s;
                             const size_t j_idx = j + c;
                             const float sj = cf.scales[j_idx];
                             const float bj = cf.biases[j_idx];
                             const uint8_t* y_code = y_codes + j_idx * code_size_;
 
-                            uint32_t dot_accumulated = use_mid
-                                ? rest_dots[s] : dots_row[c];
+                            uint32_t dot_accumulated = use_mid ? rest_dots[s] : dots_row[c];
 
                             uint32_t rest_l2_int = u4_computer::Horizontal(
-                                (const nk_u4x2_t*)(x_code + rest_start_byte),
-                                (const nk_u4x2_t*)(y_code + rest_start_byte),
+                                (const nk_u4x2_t*) (x_code + rest_start_byte),
+                                (const nk_u4x2_t*) (y_code + rest_start_byte),
                                 nibble_bytes_ - rest_start_byte
                             );
-                            uint32_t sum_cy_sq_at_start = use_mid
-                                ? cf.sum_cy_sq_mid[j_idx]
-                                : cf.sum_cy_sq_front[j_idx];
-                            uint32_t sum_cy_sq_rest =
-                                cf.sum_cy_sq[j_idx] - sum_cy_sq_at_start;
+                            uint32_t sum_cy_sq_at_start =
+                                use_mid ? cf.sum_cy_sq_mid[j_idx] : cf.sum_cy_sq_front[j_idx];
+                            uint32_t sum_cy_sq_rest = cf.sum_cy_sq[j_idx] - sum_cy_sq_at_start;
                             uint32_t rest_dot =
                                 (sum_cx_sq_rest_i + sum_cy_sq_rest - rest_l2_int) / 2;
                             uint32_t full_dot = dot_accumulated + rest_dot;
 
-                            float full_l2 = norm_x_full_i + cf.norm_y_full[j_idx]
-                                - two_si * sj * static_cast<float>(full_dot)
-                                - two_A_x_full_i * bj
-                                - two_bi * cf.sj_sum_cy_full[j_idx];
+                            float full_l2 = norm_x_full_i + cf.norm_y_full[j_idx] -
+                                            two_si * sj * static_cast<float>(full_dot) -
+                                            two_A_x_full_i * bj - two_bi * cf.sj_sum_cy_full[j_idx];
 
                             if (full_l2 < best_dist) {
                                 best_dist = full_l2;
@@ -550,7 +580,6 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
             }
         }
     }
-
 
     size_t CodeSize(size_t d) const override { return d / 2 + 8; }
     bool IsFitted() const override { return fitted_; }
@@ -571,7 +600,9 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         const uint32_t* assignments,
         float* centroid_accumulators,
         uint32_t* cluster_sizes,
-        size_t n, size_t n_clusters, size_t d,
+        size_t n,
+        size_t n_clusters,
+        size_t d,
         uint32_t n_threads
     ) const override {
         SKM_PROFILE_SCOPE("LVQ4::UpdateCentroids");
@@ -587,8 +618,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
                 uint32_t ci = assignments[i];
                 if (ci >= c0 && ci < c1) {
                     LVQ4Codec::DecodeOne(
-                        encoded_data + i * code_size_, decode_buf.get(),
-                        d, nibble_bytes_
+                        encoded_data + i * code_size_, decode_buf.get(), d, nibble_bytes_
                     );
                     cluster_sizes[ci] += 1;
                     float* acc = centroid_accumulators + ci * d;
@@ -601,11 +631,10 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         }
     }
 
-
   private:
     size_t d_ = 0;
-    size_t nibble_bytes_ = 0;      // d/2
-    size_t code_size_ = 0;         // d/2 + 8
+    size_t nibble_bytes_ = 0; // d/2
+    size_t code_size_ = 0;    // d/2 + 8
     bool fitted_ = false;
     bool has_amx = false;
 
@@ -645,7 +674,8 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     };
 
     void EnsureCodeFactorsCache(const uint8_t* x_codes, size_t n_x) const {
-        if (cached_x_ptr_ == x_codes && cached_n_x_ == n_x) return;
+        if (cached_x_ptr_ == x_codes && cached_n_x_ == n_x)
+            return;
         SKM_PROFILE_SCOPE("LVQ4::EnsureCodeFactorsCache");
 
         cached_scales_.resize(n_x);
@@ -680,8 +710,10 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     }
 
     void ExtractCentroidFactors(
-        const uint8_t* y_codes, size_t n_y,
-        size_t front_d, size_t mid_d,
+        const uint8_t* y_codes,
+        size_t n_y,
+        size_t front_d,
+        size_t mid_d,
         CentroidFactors& cf
     ) const {
         SKM_PROFILE_SCOPE("LVQ4::ExtractCentroidFactors");
@@ -761,25 +793,24 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
     float ComputeFullDistance(
         const uint8_t* x_code,
         const uint8_t* y_code,
-        float si, float bi,
+        float si,
+        float bi,
         uint32_t sum_cx_sq,
-        float norm_x_full, float A_x_full,
-        float sj, float bj,
+        float norm_x_full,
+        float A_x_full,
+        float sj,
+        float bj,
         uint32_t sum_cy_sq,
-        float norm_y_full, float sj_sum_cy_full
+        float norm_y_full,
+        float sj_sum_cy_full
     ) const {
         uint32_t l2_int = u4_computer::Horizontal(
-            (const nk_u4x2_t*)x_code,
-            (const nk_u4x2_t*)y_code,
-            nibble_bytes_
+            (const nk_u4x2_t*) x_code, (const nk_u4x2_t*) y_code, nibble_bytes_
         );
         uint32_t int_dot = (sum_cx_sq + sum_cy_sq - l2_int) / 2;
-        return norm_x_full + norm_y_full
-             - 2.0f * si * sj * static_cast<float>(int_dot)
-             - 2.0f * A_x_full * bj
-             - 2.0f * bi * sj_sum_cy_full;
+        return norm_x_full + norm_y_full - 2.0f * si * sj * static_cast<float>(int_dot) -
+               2.0f * A_x_full * bj - 2.0f * bi * sj_sum_cy_full;
     }
-
 };
 
 } // namespace skmeans

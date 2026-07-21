@@ -13,14 +13,17 @@
 namespace skmeans {
 
 inline float ComputeADSamplingRatio(
-    size_t visited_dimensions, size_t num_dimensions, float epsilon0
+    size_t visited_dimensions,
+    size_t num_dimensions,
+    float epsilon0
 ) {
-    if (visited_dimensions == 0 || visited_dimensions >= num_dimensions) return 1.0f;
+    if (visited_dimensions == 0 || visited_dimensions >= num_dimensions)
+        return 1.0f;
     const double eps0 = static_cast<double>(epsilon0);
-    const double ratio =
-        static_cast<double>(visited_dimensions) / static_cast<double>(num_dimensions) *
-        (1.0 + eps0 / std::sqrt(static_cast<double>(visited_dimensions))) *
-        (1.0 + eps0 / std::sqrt(static_cast<double>(visited_dimensions)));
+    const double ratio = static_cast<double>(visited_dimensions) /
+                         static_cast<double>(num_dimensions) *
+                         (1.0 + eps0 / std::sqrt(static_cast<double>(visited_dimensions))) *
+                         (1.0 + eps0 / std::sqrt(static_cast<double>(visited_dimensions)));
     return static_cast<float>(ratio);
 }
 

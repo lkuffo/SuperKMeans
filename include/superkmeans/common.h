@@ -1,9 +1,9 @@
 #pragma once
 
 #include <cinttypes>
+#include <cpuinfo.h>
 #include <cstdint>
 #include <cstdio>
-#include <cpuinfo.h>
 
 extern "C" {
 int sgemm_(

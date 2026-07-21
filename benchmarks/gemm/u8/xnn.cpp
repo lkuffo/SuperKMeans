@@ -39,7 +39,8 @@ int main(int argc, char** argv) {
     std::cout << "C(" << m << ", " << n << ") = A(" << m << ", " << d << ") * B(" << n << ", " << d
               << ")^T" << std::endl;
     std::cout << "Threads: " << pthreadpool_get_threads_count(tp) << std::endl;
-    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS << std::endl;
+    std::cout << "Warmup runs: " << WARMUP_RUNS << ", Measured runs: " << MEASURED_RUNS
+              << std::endl;
     std::cout << std::endl;
 
     auto a = bench_utils::generate_random_i8(m, d, 42);
@@ -51,11 +52,18 @@ int main(int argc, char** argv) {
     // Create operator once (includes weight packing — not timed)
     xnn_operator_t op = nullptr;
     xnn_create_fully_connected_nc_qd8_f32_qc8w(
-        d, n, d, n,
-        kernel_scale.data(), b.data(), nullptr,
+        d,
+        n,
+        d,
+        n,
+        kernel_scale.data(),
+        b.data(),
+        nullptr,
         -std::numeric_limits<float>::infinity(),
         std::numeric_limits<float>::infinity(),
-        0, nullptr, &op
+        0,
+        nullptr,
+        &op
     );
 
     // Reshape once (m is fixed across runs)
