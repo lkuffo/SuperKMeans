@@ -87,11 +87,12 @@ DATASET_PARAMS = {
     "cohere": (10_000_000, 1024),
     "cohere50m": (50_000_000, 1024),
     "openai5m": (5_000_000, 1536),
+    "jina": (1_374_067, 768),
 }
 
 # Datasets that should use angular/spherical k-means
 ANGULAR_DATASETS = [
-    "yandex", "glove200", "glove100", "glove50", "llama", "yi", "contriever"
+    "yandex", "jina", "glove200", "glove100", "glove50", "llama", "yi", "contriever"
 ]
 
 # Mapping from dataset identifier to HDF5 filename (without .hdf5 extension)
@@ -110,6 +111,7 @@ DATASET_HDF5_NAMES = {
     "gist": "gist-960-euclidean",
     "contriever": "contriever-768",
     "wiki": "simplewiki-openai-3072-normalized",
+    "jina": "codesearchnet-jina-768-cosine",
 }
 
 # Standard exploration fractions for recall computation

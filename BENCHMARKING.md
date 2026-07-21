@@ -62,6 +62,7 @@ python setup_data.py [--data-dir <data_dir>] <dataset>
 | ------------ | ----------------------------------- | ------------- | ------------ | --------- | ---- | ----------- |
 | `arxiv`      | `instructorxl-arxiv-768`            | Text          | InstructorXL | 2,253,000 | 768  | 6.92        |
 | `openai`     | `openai-1536-angular`               | Text          | OpenAI       | 999,000   | 1536 | 6.14        |
+| `jina`       | `codesearchnet-jina-768-cosine`     | Code          | Jina         | 1,374,067 | 768  | 4.22        |
 | `wiki`       | `simplewiki-openai-3072-normalized` | Text          | OpenAI       | 260,372   | 3072 | 3.20        |
 | `mxbai`      | `agnews-mxbai-1024-euclidean`       | Text          | MXBAI        | 769,382   | 1024 | 3.15        |
 | `contriever` | `contriever-768`                    | Text          | Contriever   | 999,000   | 768  | 3.07        |

@@ -91,13 +91,14 @@ const std::unordered_map<std::string, std::pair<size_t, size_t>> DATASET_PARAMS 
     {"gist", {1000000, 960}},
     {"openai", {999000, 1536}},
     {"arxiv", {2253000, 768}},
+    {"jina", {1374067, 768}},
     {"cohere", {10000000, 1024}},
     {"cohere50m", {50000000, 1024}},
     {"openai5m", {5000000, 1536}},
 };
 
 const std::vector<std::string> ANGULAR_DATASETS =
-    {"yandex", "glove200", "glove100", "glove50", "llama"};
+    {"yandex", "jina", "glove200", "glove100", "glove50", "llama"};
 
 // Standard exploration fractions for recall computation
 const std::vector<float> EXPLORE_FRACTIONS = {0.001f,  0.002f,  0.003f,  0.004f,  0.005f,  0.006f,
