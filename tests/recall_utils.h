@@ -177,4 +177,48 @@ inline float HierarchicalClusteringRecall(
     );
 }
 
+struct AssignMethodRecall {
+    float assign_training_points;
+    float quantized_assign;
+};
+
+// Train once, then measure IVF recall of the training points under two assignment
+// methods: AssignTrainingPoints (reuses trained state) vs QuantizedAssign (standalone
+// re-encode). Used to check both yield comparable end-to-end recall.
+template <skmeans::Quantization Q>
+inline AssignMethodRecall ClusteringRecallAssignMethods(
+    skmeans::QuantizerType qt, const std::string& data_path, size_t n_clusters, size_t d
+) {
+    auto data = LoadTestDataSubdim(data_path, RECALL_N, RECALL_D, d);
+    auto gt = BuildGroundTruthNN(data.data(), RECALL_N, d, RECALL_N_QUERIES, RECALL_KNN);
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = RECALL_ITERS;
+    config.verbose = false;
+    config.seed = RECALL_SEED;
+    config.early_termination = false;
+    config.sampling_fraction = 1.0f;
+    config.max_points_per_cluster = 99999;
+    config.n_threads = 1;
+    config.quantizer_type = qt;
+    config.use_blas_only = false;
+
+    auto kmeans = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), RECALL_N);
+
+    auto atp = kmeans.AssignTrainingPoints(data.data(), centroids.data(), RECALL_N, n_clusters);
+    auto qa = kmeans.QuantizedAssign(data.data(), centroids.data(), RECALL_N, n_clusters);
+
+    return {
+        RecallAtFraction(
+            gt, atp, data.data(), centroids.data(), RECALL_N_QUERIES, n_clusters, d,
+            RECALL_KNN, RECALL_FRAC
+        ),
+        RecallAtFraction(
+            gt, qa, data.data(), centroids.data(), RECALL_N_QUERIES, n_clusters, d,
+            RECALL_KNN, RECALL_FRAC
+        ),
+    };
+}
+
 } // namespace skm_test

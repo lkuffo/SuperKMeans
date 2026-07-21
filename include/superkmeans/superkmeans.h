@@ -310,7 +310,7 @@ class SuperKMeans {
         }
         // SQ quantizers manage their own uint32 accumulator buffers internally
         std::unique_ptr<size_t[]> not_pruned_counts(new size_t[n_samples]);
-        EnsureTmpDistances();
+        EnsureTmpDistancesBuffer();
         // PDX vertical_d setup (partial_d is set after quantizer is created)
         vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(PDXDim(d)).vertical_d;
         partial_horizontal_centroids.reset(new centroid_value_t[n_clusters * vertical_d]);
@@ -334,19 +334,7 @@ class SuperKMeans {
         );
 
         // Create quantizer for all q types
-        if constexpr (q == Quantization::f32) {
-            quantizer = std::make_unique<F32Quantizer>();
-        } else {
-            if (config.quantizer_type == QuantizerType::sq8) {
-                quantizer = std::make_unique<SQ8Quantizer>();
-            } else if (config.quantizer_type == QuantizerType::lvq4) {
-                quantizer = std::make_unique<LVQ4Quantizer>();
-            } else if (config.quantizer_type == QuantizerType::rabitq) {
-                quantizer = std::make_unique<RaBitQQuantizer>();
-            } else {
-                throw std::invalid_argument("Unsupported quantizer type for non-f32 quantization");
-            }
-        }
+        quantizer = CreateQuantizer();
         quantizer->Fit(data_to_cluster, n_samples, d);
         code_size = quantizer->CodeSize(d);
 
@@ -533,7 +521,7 @@ class SuperKMeans {
     ) {
         SKM_PROFILE_SCOPE("assign");
         using f32_batch_computer = BatchComputer<alpha, Quantization::f32>;
-        EnsureTmpDistances();
+        EnsureTmpDistancesBuffer();
 
         std::vector<uint32_t> result_assignments(n_vectors);
         std::vector<float> result_distances(n_vectors);
@@ -566,13 +554,12 @@ class SuperKMeans {
     }
 
     /**
-     * @brief Quantized assignment using the quantizer fitted during training.
+     * @brief Quantized assignment that fits a fresh quantizer on the input.
      *
-     * Encodes the input float vectors and centroids to quantized form using
-     * the quantizer from Train(), then performs nearest-neighbor assignment
-     * entirely in quantized space.
-     *
-     * Requires that Train() has been called first (quantizer must be fitted).
+     * Standalone like Assign(): fits a new quantizer on the input vectors,
+     * encodes vectors and centroids, and performs nearest-neighbor assignment
+     * entirely in quantized space. Does not reuse or mutate trained state.
+     * Rotation is only applied for RaBitQ.
      *
      * @param vectors The data matrix (row-major, n_vectors x d, float)
      * @param centroids The centroids matrix (row-major, n_centroids x d, float)
@@ -587,24 +574,17 @@ class SuperKMeans {
         const size_t n_centroids
     ) {
         SKM_PROFILE_SCOPE("quantized_assign");
-        if (!quantizer || !quantizer->IsFitted()) {
-            throw std::runtime_error(
-                "QuantizedAssign requires a fitted quantizer (call Train() first)"
-            );
-        }
-        EnsureTmpDistances();
+        EnsureTmpDistancesBuffer();
 
-        std::vector<uint32_t> result_assignments(n_vectors);
-        std::unique_ptr<distance_t[]> result_distances(new distance_t[n_vectors]);
+        auto local_quantizer = CreateQuantizer();
 
-        // Rotate input data to match the domain the quantizer was fitted on 
-        // We cannot just simply retrain the quantizer on the new data because
-        // some quantization schemes may need rotation
         const float* encode_vectors = vectors;
         const float* encode_centroids = centroids;
         std::unique_ptr<float[]> rotated_vectors_buf;
         std::unique_ptr<float[]> rotated_centroids_buf;
-        if (!config.data_already_rotated) {
+        const bool rotate =
+            !config.data_already_rotated && config.quantizer_type == QuantizerType::rabitq;
+        if (rotate) {
             rotated_vectors_buf.reset(new float[n_vectors * d]);
             rotated_centroids_buf.reset(new float[n_centroids * d]);
             RotateOrCopy(vectors, rotated_vectors_buf.get(), n_vectors, true);
@@ -613,18 +593,21 @@ class SuperKMeans {
             encode_centroids = rotated_centroids_buf.get();
         }
 
-        const size_t cs = quantizer->CodeSize(d);
+        local_quantizer->Fit(encode_vectors, n_vectors, d);
+
+        const size_t cs = local_quantizer->CodeSize(d);
         std::unique_ptr<vector_value_t[]> q_vectors(new vector_value_t[n_vectors * cs]);
         std::unique_ptr<vector_value_t[]> q_centroids(new vector_value_t[n_centroids * cs]);
-        quantizer->Encode(encode_vectors, q_vectors.get(), n_vectors, d);
-        quantizer->Encode(encode_centroids, q_centroids.get(), n_centroids, d);
-        quantizer->InvalidateCaches();
+        local_quantizer->Encode(encode_vectors, q_vectors.get(), n_vectors, d);
+        local_quantizer->Encode(encode_centroids, q_centroids.get(), n_centroids, d);
 
+        std::vector<uint32_t> result_assignments(n_vectors);
+        std::unique_ptr<distance_t[]> result_distances(new distance_t[n_vectors]);
         std::unique_ptr<float[]> v_norms(new float[n_vectors]);
         std::unique_ptr<float[]> c_norms(new float[n_centroids]);
-        quantizer->ComputeNorms(q_vectors.get(), n_vectors, d, v_norms.get());
-        quantizer->ComputeNorms(q_centroids.get(), n_centroids, d, c_norms.get());
-        quantizer->FindNearestNeighbor(
+        local_quantizer->ComputeNorms(q_vectors.get(), n_vectors, d, v_norms.get());
+        local_quantizer->ComputeNorms(q_centroids.get(), n_centroids, d, c_norms.get());
+        local_quantizer->FindNearestNeighbor(
             q_vectors.get(),
             q_centroids.get(),
             encode_vectors,
@@ -714,7 +697,7 @@ class SuperKMeans {
             }
 
             if (config.sampling_fraction == 1.0f) {
-                EnsureTmpDistances();
+                EnsureTmpDistancesBuffer();
                 quantizer->InvalidateCaches();
                 std::vector<uint32_t> result_assignments(n_vectors);
                 std::unique_ptr<distance_t[]> result_distances(new distance_t[n_vectors]);
@@ -1590,9 +1573,24 @@ class SuperKMeans {
         e_norms.noalias() = e_data.rowwise().squaredNorm();
     }
 
-    void EnsureTmpDistances() {
+    void EnsureTmpDistancesBuffer() {
         if (!tmp_distances_buffer) {
             tmp_distances_buffer.reset(new distance_t[X_BATCH_SIZE * Y_BATCH_SIZE]);
+        }
+    }
+
+    std::unique_ptr<IQuantizer<q>> CreateQuantizer() const {
+        if constexpr (q == Quantization::f32) {
+            return std::make_unique<F32Quantizer>();
+        } else {
+            if (config.quantizer_type == QuantizerType::sq8) {
+                return std::make_unique<SQ8Quantizer>();
+            } else if (config.quantizer_type == QuantizerType::lvq4) {
+                return std::make_unique<LVQ4Quantizer>();
+            } else if (config.quantizer_type == QuantizerType::rabitq) {
+                return std::make_unique<RaBitQQuantizer>();
+            }
+            throw std::invalid_argument("Unsupported quantizer type for non-f32 quantization");
         }
     }
 

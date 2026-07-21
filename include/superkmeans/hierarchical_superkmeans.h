@@ -131,7 +131,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             this->data_norms.reset(new float[this->n_samples]);
             this->centroid_norms.reset(new float[this->n_clusters]);
         }
-        this->EnsureTmpDistances();
+        this->EnsureTmpDistancesBuffer();
         this->vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->PDXDim(this->d)).vertical_d;
         this->partial_horizontal_centroids.reset(
             new centroid_value_t[this->n_clusters * this->vertical_d]

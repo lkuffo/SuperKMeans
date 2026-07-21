@@ -314,7 +314,21 @@ TEST_P(QuantizedIntegrationTest, SLOW_PruningRecallCloseToNoPruning) {
         << "pruned=" << pruned << " unpruned=" << unpruned;
 }
 
+TEST_P(QuantizedIntegrationTest, SLOW_AssignTrainingPointsRecallMatchesQuantizedAssign) {
+    const std::string path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
+    auto r = skm_test::ClusteringRecallAssignMethods<Quantization::u8>(
+        GetParam().type, path, 300, 1024
+    );
+    EXPECT_GT(r.assign_training_points, 0.0f);
+    EXPECT_GT(r.quantized_assign, 0.0f);
+    EXPECT_NEAR(r.assign_training_points, r.quantized_assign, skm_test::RECALL_PRUNE_TOL)
+        << "atp=" << r.assign_training_points << " qa=" << r.quantized_assign;
+}
+
 TEST_P(QuantizedIntegrationTest, SLOW_AssignTrainingPointsReuseMatchesQuantizedAssign) {
+    if (GetParam().type != QuantizerType::rabitq) {
+        GTEST_SKIP() << "reuse and QuantizedAssign only share a quantization domain for rabitq";
+    }
     const size_t n = 5000, d = 128, n_clusters = 300;
     auto data = skm_test::LoadTestDataSubdim(
         CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d

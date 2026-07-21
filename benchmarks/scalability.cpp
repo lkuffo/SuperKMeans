@@ -247,7 +247,7 @@ int main(int argc, char* argv[]) {
     std::unordered_map<int, std::vector<int>> gt_map;
     if (has_gt) gt_map = bench_utils::parse_ground_truth_json(gt_filename);
 
-    for (bool use_blas_only : {false}) {
+    for (bool use_blas_only : {true, false}) {
         for (const std::string& quantizer : SCALABILITY_QUANTIZERS) {
             for (size_t k : SCALABILITY_K_VALUES) {
                 if (k > n) {

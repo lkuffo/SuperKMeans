@@ -329,31 +329,23 @@ TEST_F(AssignTest, AllClustersNonEmpty) {
 }
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallK_AgreesWithQuantizedAssign) {
-    for (const auto& [qt, name] : kQuantizers) {
-        SCOPED_TRACE(name);
-        ExpectAssignTrainingPointsAgreesWithQuantizedAssign(qt, 5000, 128, 50, false);
-    }
+    ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
+        skmeans::QuantizerType::rabitq, 5000, 128, 50, false);
 }
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_SmallDim_AgreesWithQuantizedAssign) {
-    for (const auto& [qt, name] : kQuantizers) {
-        SCOPED_TRACE(name);
-        ExpectAssignTrainingPointsAgreesWithQuantizedAssign(qt, 5000, 64, 300, false);
-    }
+    ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
+        skmeans::QuantizerType::rabitq, 5000, 64, 300, false);
 }
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_BlasOnly_AgreesWithQuantizedAssign) {
-    for (const auto& [qt, name] : kQuantizers) {
-        SCOPED_TRACE(name);
-        ExpectAssignTrainingPointsAgreesWithQuantizedAssign(qt, 5000, 128, 300, true);
-    }
+    ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
+        skmeans::QuantizerType::rabitq, 5000, 128, 300, true);
 }
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_SingleIteration_AgreesWithQuantizedAssign) {
-    for (const auto& [qt, name] : kQuantizers) {
-        SCOPED_TRACE(name);
-        ExpectAssignTrainingPointsAgreesWithQuantizedAssign(qt, 5000, 128, 300, false, 1);
-    }
+    ExpectAssignTrainingPointsAgreesWithQuantizedAssign(
+        skmeans::QuantizerType::rabitq, 5000, 128, 300, false, 1);
 }
 
 TEST_F(AssignTest, QuantizedAssignTrainingPoints_Sampled_FallsBackToQuantizedAssign) {

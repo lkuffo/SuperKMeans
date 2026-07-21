@@ -676,8 +676,10 @@ TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignPathsValid) {
             }
             EXPECT_GE(static_cast<double>(agree_quant_exact) / n, 0.90)
                 << "quantized vs exact agreement too low";
-            EXPECT_GE(static_cast<double>(agree_reuse_quant) / n, 0.90)
-                << "reuse vs quantized agreement too low";
+            if (qt == skmeans::QuantizerType::rabitq) {
+                EXPECT_GE(static_cast<double>(agree_reuse_quant) / n, 0.90)
+                    << "reuse vs quantized agreement too low";
+            }
         }
     }
 }

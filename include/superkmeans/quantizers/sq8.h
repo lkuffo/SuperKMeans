@@ -390,7 +390,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         const float inv_quantization_scale = params.inv_quantization_scale;
 
 #pragma omp parallel for num_threads(g_n_threads)
-        // TODO(@lkuffo, low): large clusters overflow the uint32 accumulator and lose float precision here
+        // TODO(@lkuffo, low): large clusters may overflow the uint32 accumulator
         for (size_t i = 0; i < n_clusters; ++i) {
             if (cluster_sizes[i] == 0) continue;
             const uint32_t* acc = centroid_accumulators.data() + i * d;
