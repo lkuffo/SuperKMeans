@@ -83,7 +83,6 @@ int main(int argc, char* argv[]) {
     skmeans::SuperKMeansConfig config;
     config.iters = n_iters;
     config.verbose = true;
-    config.verbose_detail = true;
     config.n_threads = THREADS;
     config.unrotate_centroids = true;
     config.early_termination = false;

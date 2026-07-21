@@ -440,8 +440,6 @@ TEST_F(SuperKMeansTest, ClusterBalanceStats_MatchesHandComputed_Moments) {
     EXPECT_NEAR(s.percentiles[6], 5.0f, 1e-5f);
     EXPECT_NEAR(s.whisker_low, 5.0f, 1e-5f);
     EXPECT_NEAR(s.whisker_high, 5.0f, 1e-5f);
-    ASSERT_EQ(s.outliers.size(), 1u);
-    EXPECT_EQ(s.outliers[0], 0u);
 }
 
 TEST_F(SuperKMeansTest, ClusterBalanceStats_MatchesHandComputed_Percentiles) {
@@ -463,7 +461,6 @@ TEST_F(SuperKMeansTest, ClusterBalanceStats_MatchesHandComputed_Percentiles) {
     EXPECT_NEAR(s.iqr, 50.0f, 1e-4f);
     EXPECT_NEAR(s.whisker_low, 0.0f, 1e-5f);
     EXPECT_NEAR(s.whisker_high, 100.0f, 1e-4f);
-    EXPECT_EQ(s.outliers.size(), 0u);
 }
 
 TEST_F(SuperKMeansTest, DegenerateData_AllIdenticalPoints_NoCrash) {

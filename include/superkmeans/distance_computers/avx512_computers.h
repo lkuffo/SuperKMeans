@@ -296,11 +296,12 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::b8> {
             size_t chunk = i / 16;
             size_t byte_in_chunk = i % 16;
             for (int bp = 0; bp < qb; ++bp) {
-                result +=
-                    static_cast<uint32_t>(__builtin_popcount(
-                        data[i] & planes_interleaved[chunk * qb * 16 + bp * 16 + byte_in_chunk]
-                    ))
-                    << bp;
+                result += static_cast<uint32_t>(__builtin_popcount(
+                              data[i] &
+                              planes_interleaved
+                                  [chunk * qb * 16 + static_cast<size_t>(bp) * 16 + byte_in_chunk]
+                          ))
+                          << bp;
             }
         }
         return result;

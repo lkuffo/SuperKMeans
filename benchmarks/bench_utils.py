@@ -285,7 +285,7 @@ def write_results_to_csv(
         config_dict: Dictionary with algorithm-specific configuration (will be serialized to JSON)
         results_knn_10: Results for KNN=10
         results_knn_100: Results for KNN=100
-        balance_stats_json: JSON string with cluster balance statistics (including cluster_sizes)
+        balance_stats_json: JSON string with cluster balance statistics
     """
     arch = os.environ.get('SKM_ARCH', 'default')
     benchmarks_dir = Path(__file__).parent

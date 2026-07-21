@@ -155,8 +155,9 @@ class ScalarComputer<DistanceFunction::l2, Quantization::b8> {
             for (int w = 0; w < 2; ++w) {
                 uint64_t x = d64[w];
                 for (int bp = 0; bp < qb; ++bp) {
-                    const uint64_t* p64 =
-                        reinterpret_cast<const uint64_t*>(planes_interleaved + i * qb + bp * 16);
+                    const uint64_t* p64 = reinterpret_cast<const uint64_t*>(
+                        planes_interleaved + i * qb + static_cast<size_t>(bp) * 16
+                    );
                     result += static_cast<uint32_t>(__builtin_popcountll(x & p64[w])) << bp;
                 }
             }
@@ -168,7 +169,9 @@ class ScalarComputer<DistanceFunction::l2, Quantization::b8> {
             for (int bp = 0; bp < qb; ++bp) {
                 result +=
                     static_cast<uint32_t>(__builtin_popcount(
-                        data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
+                        data[i] &
+                        planes_interleaved
+                            [chunk_idx * qb * 16 + static_cast<size_t>(bp) * 16 + byte_in_chunk]
                     ))
                     << bp;
             }

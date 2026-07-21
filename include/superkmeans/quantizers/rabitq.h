@@ -817,7 +817,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
             return;
         SKM_PROFILE_SCOPE("RQ::EnsurePartialNormsCache");
 
-        const size_t front_d = (partial_d / 8) * 8;
+        const size_t front_d = (static_cast<size_t>(partial_d) / 8) * 8;
         const size_t mid_d = (d / 32) * 8; // d/4, byte-aligned
         cached_or_c_l2sqr_front_.resize(n_x);
         cached_or_c_l2sqr_mid_.resize(n_x);
@@ -990,7 +990,8 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 size_t byte_in_chunk = local_byte % 16;
                 for (int b = 0; b < qb_; ++b) {
                     if ((quantized[dim] >> b) & 1)
-                        cent_base[chunk * qb_ * 16 + b * 16 + byte_in_chunk] |= bit;
+                        cent_base[chunk * qb_ * 16 + static_cast<size_t>(b) * 16 + byte_in_chunk] |=
+                            bit;
                 }
             }
 
@@ -1004,7 +1005,8 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
                 size_t byte_in_chunk = local_byte % 16;
                 for (int b = 0; b < qb_; ++b) {
                     if ((quantized[dim] >> b) & 1)
-                        rest_base[chunk * qb_ * 16 + b * 16 + byte_in_chunk] |= bit;
+                        rest_base[chunk * qb_ * 16 + static_cast<size_t>(b) * 16 + byte_in_chunk] |=
+                            bit;
                 }
             }
         }

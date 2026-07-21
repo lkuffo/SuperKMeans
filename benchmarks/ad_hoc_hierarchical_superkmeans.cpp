@@ -72,7 +72,6 @@ int main(int argc, char* argv[]) {
     // Base SuperKMeans config parameters
     config.iters = 10;
     config.verbose = true;
-    config.verbose_detail = true;
     config.n_threads = THREADS;
     config.objective_k = 100;
     config.ann_explore_fraction = 0.01f;

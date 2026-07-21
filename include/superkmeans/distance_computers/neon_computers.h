@@ -200,7 +200,7 @@ class SIMDComputer<DistanceFunction::l2, Quantization::b8> {
             uint8x16_t x = vld1q_u8(data + i);
             const uint8_t* chunk = planes_interleaved + i * qb;
             for (int bp = 0; bp < qb; ++bp) {
-                uint8x16_t p = vld1q_u8(chunk + bp * 16);
+                uint8x16_t p = vld1q_u8(chunk + static_cast<size_t>(bp) * 16);
                 uint8x16_t cnt = vcntq_u8(vandq_u8(x, p));
                 uint64x2_t popcnt64 = vpaddlq_u32(vpaddlq_u16(vpaddlq_u8(cnt)));
                 acc = vaddq_u64(acc, vshlq_u64(popcnt64, vdupq_n_s64(bp)));
@@ -213,7 +213,9 @@ class SIMDComputer<DistanceFunction::l2, Quantization::b8> {
             for (int bp = 0; bp < qb; ++bp) {
                 result +=
                     static_cast<uint32_t>(__builtin_popcount(
-                        data[i] & planes_interleaved[chunk_idx * qb * 16 + bp * 16 + byte_in_chunk]
+                        data[i] &
+                        planes_interleaved
+                            [chunk_idx * qb * 16 + static_cast<size_t>(bp) * 16 + byte_in_chunk]
                     ))
                     << bp;
             }

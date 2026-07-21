@@ -57,7 +57,6 @@ void RunBenchmark(const std::string& dataset, const std::string& quantizer_name,
 
     skmeans::HierarchicalSuperKMeansConfig config;
     config.verbose = true;
-    config.verbose_detail = true;
     config.n_threads = THREADS;
     config.unrotate_centroids = true;
     config.early_termination = false;

@@ -752,6 +752,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
 
             uint32_t sum = 0, sum_sq = 0;
             AccumulateNibbles(code_j, min_fb, sum, sum_sq);
+            // NOLINTNEXTLINE(bugprone-branch-clone)
             if (fb <= mb) {
                 cf.sum_cy_front[j] = sum;
                 cf.sum_cy_sq_front[j] = sum_sq;
