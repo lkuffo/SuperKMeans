@@ -141,7 +141,7 @@ void RunPipeline(
     const size_t n = it->second.first;
     const size_t d = it->second.second;
     const size_t n_queries = bench_utils::N_QUERIES;
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = bench_utils::GetDefaultNClusters(n);
     const int n_iters = bench_utils::MAX_ITERS;
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
@@ -166,7 +166,7 @@ void RunPipeline(
     std::vector<float> queries(n_queries * d);
 
     {
-        std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
+        std::ifstream f(bench_utils::GetDataPath(dataset), std::ios::binary);
         if (!f) {
             std::cerr << "Failed to open data file\n";
             return;
@@ -174,7 +174,7 @@ void RunPipeline(
         f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     }
     {
-        std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
+        std::ifstream f(bench_utils::GetQueryPath(dataset), std::ios::binary);
         if (!f) {
             std::cerr << "Failed to open query file\n";
             return;
@@ -189,11 +189,11 @@ void RunPipeline(
         ) != bench_utils::ANGULAR_DATASETS.end();
 
     // ── Ground truth ──
-    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
     bool has_gt = std::ifstream(gt_filename).good();
     std::unordered_map<int, std::vector<int>> gt_map;
     if (has_gt) {
-        gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+        gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
     }
 
     // ── Determine target_d values to iterate ──
@@ -252,19 +252,19 @@ void RunPipeline(
             auto q_balance_stats =
                 SKM_f32::GetClustersBalanceStats(q_assignments.data(), n, n_clusters);
             q_balance_stats.print();
-            q_balance_stats_json = q_balance_stats.to_json();
+            q_balance_stats_json = q_balance_stats.ToJson();
         }
 
         // Iteration stats JSON
         std::string iter_stats_json =
-            skmeans::SuperKMeansIterationStats::vector_to_json(iter_stats);
+            skmeans::SuperKMeansIterationStats::VectorToJson(iter_stats);
 
         // Recall computation
         bench_utils::recall_results_t assign_r10, assign_r100;
         bench_utils::recall_results_t q_assign_r10, q_assign_r100;
 
         if (has_gt) {
-            assign_r10 = bench_utils::compute_recall(
+            assign_r10 = bench_utils::ComputeRecall(
                 gt_map,
                 assignments,
                 eval_queries,
@@ -274,7 +274,7 @@ void RunPipeline(
                 eval_d,
                 10
             );
-            assign_r100 = bench_utils::compute_recall(
+            assign_r100 = bench_utils::ComputeRecall(
                 gt_map,
                 assignments,
                 eval_queries,
@@ -285,11 +285,11 @@ void RunPipeline(
                 100
             );
             std::cout << "  [Assign()]" << std::endl;
-            bench_utils::print_recall_results(assign_r10, 10);
-            bench_utils::print_recall_results(assign_r100, 100);
+            bench_utils::PrintRecallResults(assign_r10, 10);
+            bench_utils::PrintRecallResults(assign_r100, 100);
 
             if (!q_assignments.empty()) {
-                q_assign_r10 = bench_utils::compute_recall(
+                q_assign_r10 = bench_utils::ComputeRecall(
                     gt_map,
                     q_assignments,
                     eval_queries,
@@ -299,7 +299,7 @@ void RunPipeline(
                     eval_d,
                     10
                 );
-                q_assign_r100 = bench_utils::compute_recall(
+                q_assign_r100 = bench_utils::ComputeRecall(
                     gt_map,
                     q_assignments,
                     eval_queries,
@@ -310,8 +310,8 @@ void RunPipeline(
                     100
                 );
                 std::cout << "  [QuantizedAssign()]" << std::endl;
-                bench_utils::print_recall_results(q_assign_r10, 10);
-                bench_utils::print_recall_results(q_assign_r100, 100);
+                bench_utils::PrintRecallResults(q_assign_r10, 10);
+                bench_utils::PrintRecallResults(q_assign_r100, 100);
             }
         }
 
@@ -352,7 +352,7 @@ void RunPipeline(
             run_label = dim_label + " / " + quant_label + update_label + path_label;
         }
 
-        bench_utils::write_results_to_csv_v2(
+        bench_utils::WriteResultsToCsvV2(
             experiment_name,
             algorithm,
             dataset,
@@ -369,7 +369,7 @@ void RunPipeline(
             assign_r100,
             q_assign_r10,
             q_assign_r100,
-            balance_stats.to_json(),
+            balance_stats.ToJson(),
             q_balance_stats_json,
             iter_stats_json,
             run_label
@@ -728,7 +728,7 @@ void RunHierarchicalPipeline(
     const size_t n = it->second.first;
     const size_t d = it->second.second;
     const size_t n_queries = bench_utils::N_QUERIES;
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = bench_utils::GetDefaultNClusters(n);
     const int n_iters = bench_utils::MAX_ITERS; // base SKM iters (per refinement pass)
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
@@ -745,7 +745,7 @@ void RunHierarchicalPipeline(
     std::vector<float> data(n * d);
     std::vector<float> queries(n_queries * d);
     {
-        std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
+        std::ifstream f(bench_utils::GetDataPath(dataset), std::ios::binary);
         if (!f) {
             std::cerr << "Failed to open data file\n";
             return;
@@ -753,7 +753,7 @@ void RunHierarchicalPipeline(
         f.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     }
     {
-        std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
+        std::ifstream f(bench_utils::GetQueryPath(dataset), std::ios::binary);
         if (!f) {
             std::cerr << "Failed to open query file\n";
             return;
@@ -766,11 +766,11 @@ void RunHierarchicalPipeline(
             bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
         ) != bench_utils::ANGULAR_DATASETS.end();
 
-    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
     bool has_gt = std::ifstream(gt_filename).good();
     std::unordered_map<int, std::vector<int>> gt_map;
     if (has_gt)
-        gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+        gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
 
     skmeans::HierarchicalSuperKMeansConfig config;
     config.iters = n_iters;
@@ -845,22 +845,22 @@ void RunHierarchicalPipeline(
         auto q_balance_stats =
             SKM_f32::GetClustersBalanceStats(q_assignments.data(), n, n_clusters);
         q_balance_stats.print();
-        q_balance_stats_json = q_balance_stats.to_json();
+        q_balance_stats_json = q_balance_stats.ToJson();
     }
 
     bench_utils::recall_results_t assign_r10, assign_r100, q_assign_r10, q_assign_r100;
     if (has_gt) {
-        assign_r10 = bench_utils::compute_recall(
+        assign_r10 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
         );
-        assign_r100 = bench_utils::compute_recall(
+        assign_r100 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
         );
         std::cout << "  [Assign()]" << std::endl;
-        bench_utils::print_recall_results(assign_r10, 10);
-        bench_utils::print_recall_results(assign_r100, 100);
+        bench_utils::PrintRecallResults(assign_r10, 10);
+        bench_utils::PrintRecallResults(assign_r100, 100);
         if (!q_assignments.empty()) {
-            q_assign_r10 = bench_utils::compute_recall(
+            q_assign_r10 = bench_utils::ComputeRecall(
                 gt_map,
                 q_assignments,
                 queries.data(),
@@ -870,7 +870,7 @@ void RunHierarchicalPipeline(
                 d,
                 10
             );
-            q_assign_r100 = bench_utils::compute_recall(
+            q_assign_r100 = bench_utils::ComputeRecall(
                 gt_map,
                 q_assignments,
                 queries.data(),
@@ -881,8 +881,8 @@ void RunHierarchicalPipeline(
                 100
             );
             std::cout << "  [QuantizedAssign()]" << std::endl;
-            bench_utils::print_recall_results(q_assign_r10, 10);
-            bench_utils::print_recall_results(q_assign_r100, 100);
+            bench_utils::PrintRecallResults(q_assign_r10, 10);
+            bench_utils::PrintRecallResults(q_assign_r100, 100);
         }
     }
 
@@ -910,7 +910,7 @@ void RunHierarchicalPipeline(
     std::string run_label =
         "raw / " + quantizer_name + " / hsk" + (use_blas_only ? " / blas-only" : " / pruning");
 
-    bench_utils::write_results_to_csv_v2(
+    bench_utils::WriteResultsToCsvV2(
         experiment_name,
         algorithm,
         dataset,
@@ -927,7 +927,7 @@ void RunHierarchicalPipeline(
         assign_r100,
         q_assign_r10,
         q_assign_r100,
-        balance_stats.to_json(),
+        balance_stats.ToJson(),
         q_balance_stats_json,
         /*iteration_stats_json=*/"",
         run_label

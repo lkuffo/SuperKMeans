@@ -151,30 +151,30 @@ static void RunHierarchical(
         auto q_balance_stats =
             SKM_f32::GetClustersBalanceStats(q_assignments.data(), n, n_clusters);
         q_balance_stats.print();
-        q_balance_stats_json = q_balance_stats.to_json();
+        q_balance_stats_json = q_balance_stats.ToJson();
     }
 
     bench_utils::recall_results_t assign_r10, assign_r100, q_assign_r10, q_assign_r100;
     if (has_gt) {
-        assign_r10 = bench_utils::compute_recall(
+        assign_r10 = bench_utils::ComputeRecall(
             gt_map, assignments, queries, centroids.data(), n_queries, n_clusters, d, 10
         );
-        assign_r100 = bench_utils::compute_recall(
+        assign_r100 = bench_utils::ComputeRecall(
             gt_map, assignments, queries, centroids.data(), n_queries, n_clusters, d, 100
         );
         std::cout << "  [Assign()]" << std::endl;
-        bench_utils::print_recall_results(assign_r10, 10);
-        bench_utils::print_recall_results(assign_r100, 100);
+        bench_utils::PrintRecallResults(assign_r10, 10);
+        bench_utils::PrintRecallResults(assign_r100, 100);
         if (!q_assignments.empty()) {
-            q_assign_r10 = bench_utils::compute_recall(
+            q_assign_r10 = bench_utils::ComputeRecall(
                 gt_map, q_assignments, queries, centroids.data(), n_queries, n_clusters, d, 10
             );
-            q_assign_r100 = bench_utils::compute_recall(
+            q_assign_r100 = bench_utils::ComputeRecall(
                 gt_map, q_assignments, queries, centroids.data(), n_queries, n_clusters, d, 100
             );
             std::cout << "  [QuantizedAssign()]" << std::endl;
-            bench_utils::print_recall_results(q_assign_r10, 10);
-            bench_utils::print_recall_results(q_assign_r100, 100);
+            bench_utils::PrintRecallResults(q_assign_r10, 10);
+            bench_utils::PrintRecallResults(q_assign_r100, 100);
         }
     }
 
@@ -192,7 +192,7 @@ static void RunHierarchical(
     const std::string run_label =
         "hsk / " + quantizer_name + (use_blas_only ? " / blas-only" : " / pruning");
 
-    bench_utils::write_results_to_csv_v2(
+    bench_utils::WriteResultsToCsvV2(
         experiment_name,
         algorithm,
         dataset,
@@ -209,7 +209,7 @@ static void RunHierarchical(
         assign_r100,
         q_assign_r10,
         q_assign_r100,
-        balance_stats.to_json(),
+        balance_stats.ToJson(),
         q_balance_stats_json,
         /*iteration_stats_json=*/"",
         run_label
@@ -238,7 +238,7 @@ int main(int argc, char* argv[]) {
     data.reserve(n * d);
     queries.reserve(n_queries * d);
     {
-        std::ifstream f(bench_utils::get_data_path(dataset), std::ios::binary);
+        std::ifstream f(bench_utils::GetDataPath(dataset), std::ios::binary);
         if (!f) {
             std::cerr << "Failed to open data file\n";
             return 1;
@@ -247,7 +247,7 @@ int main(int argc, char* argv[]) {
         f.close();
     }
     {
-        std::ifstream f(bench_utils::get_query_path(dataset), std::ios::binary);
+        std::ifstream f(bench_utils::GetQueryPath(dataset), std::ios::binary);
         if (!f) {
             std::cerr << "Failed to open query file\n";
             return 1;
@@ -261,11 +261,11 @@ int main(int argc, char* argv[]) {
             bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset
         ) != bench_utils::ANGULAR_DATASETS.end();
 
-    const std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    const std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
     const bool has_gt = std::ifstream(gt_filename).good();
     std::unordered_map<int, std::vector<int>> gt_map;
     if (has_gt)
-        gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+        gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
 
     for (bool use_blas_only : {true, false}) {
         for (const std::string& quantizer : SCALABILITY_QUANTIZERS) {

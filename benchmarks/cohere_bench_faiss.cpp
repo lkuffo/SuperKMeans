@@ -93,14 +93,14 @@ int main() {
     std::cout << "Total (train + add): " << (train_time_ms + add_time_ms) << " ms" << std::endl;
 
     // Compute recall if ground truth exists
-    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
     std::ifstream gt_file(gt_filename);
     if (gt_file.good()) {
         gt_file.close();
         std::cout << "\n--- Computing Recall ---" << std::endl;
         std::cout << "Ground truth file: " << gt_filename << std::endl;
 
-        auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+        auto gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
 
@@ -110,15 +110,15 @@ int main() {
         const float* centroids = quantizer.get_xb();
         quantizer.search(n, data.data(), 1, distances_to_centroids.data(), assignments.data());
 
-        auto results_knn_10 = bench_utils::compute_recall(
+        auto results_knn_10 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids, n_queries, n_clusters, d, 10
         );
-        bench_utils::print_recall_results(results_knn_10, 10);
+        bench_utils::PrintRecallResults(results_knn_10, 10);
 
-        auto results_knn_100 = bench_utils::compute_recall(
+        auto results_knn_100 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids, n_queries, n_clusters, d, 100
         );
-        bench_utils::print_recall_results(results_knn_100, 100);
+        bench_utils::PrintRecallResults(results_knn_100, 100);
 
         std::unordered_map<std::string, std::string> config_map;
         config_map["niter"] = std::to_string(index.cp.niter);
@@ -129,7 +129,7 @@ int main() {
         config_map["training_time"] = std::to_string(train_time_ms);
         config_map["assignment_time"] = std::to_string(add_time_ms);
 
-        bench_utils::write_results_to_csv(
+        bench_utils::WriteResultsToCsv(
             experiment_name,
             algorithm,
             dataset,

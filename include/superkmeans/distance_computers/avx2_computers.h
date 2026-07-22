@@ -255,40 +255,12 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
         const data_t* SKM_RESTRICT vector2,
         size_t num_bytes
     ) {
+        // clang-format off
         const __m256i lookup = _mm256_setr_epi8(
-            0,
-            1,
-            1,
-            2,
-            1,
-            2,
-            2,
-            3,
-            1,
-            2,
-            2,
-            3,
-            2,
-            3,
-            3,
-            4,
-            0,
-            1,
-            1,
-            2,
-            1,
-            2,
-            2,
-            3,
-            1,
-            2,
-            2,
-            3,
-            2,
-            3,
-            3,
-            4
+            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
+            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4
         );
+        // clang-format on
         const __m256i nibble_mask = _mm256_set1_epi8(0x0F);
         __m256i acc = _mm256_setzero_si256();
         size_t i = 0;
@@ -321,40 +293,12 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
         size_t num_bytes,
         int qb
     ) {
+        // clang-format off
         const __m256i lookup = _mm256_setr_epi8(
-            0,
-            1,
-            1,
-            2,
-            1,
-            2,
-            2,
-            3,
-            1,
-            2,
-            2,
-            3,
-            2,
-            3,
-            3,
-            4,
-            0,
-            1,
-            1,
-            2,
-            1,
-            2,
-            2,
-            3,
-            1,
-            2,
-            2,
-            3,
-            2,
-            3,
-            3,
-            4
+            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
+            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4
         );
+        // clang-format on
         const __m256i nibble_mask = _mm256_set1_epi8(0x0F);
         const __m256i zero = _mm256_setzero_si256();
         __m256i acc = zero;
@@ -634,40 +578,6 @@ class SIMDUtilsComputer<skmeans::Quantization::u4> {
 class SIMDFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
-
-    /**
-     * @brief AVX2-accelerated compaction of surviving positions.
-     *
-     * Survives where partial_l2[k] <= best_dist[k] * adsampling_ratio.
-     */
-    static void RabitQCompactSurvivors(
-        size_t n_vectors,
-        size_t& n_survivors,
-        uint32_t* survivor_positions,
-        const float* partial_l2,
-        const float* threshold
-    ) {
-        n_survivors = 0;
-        size_t k = 0;
-        constexpr size_t k_simd_width = 8;
-        const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
-        for (; k < n_vectors_simd; k += k_simd_width) {
-            __m256 thresh = _mm256_loadu_ps(threshold + k);
-            __m256 dists = _mm256_loadu_ps(partial_l2 + k);
-            __m256 cmp = _mm256_cmp_ps(dists, thresh, _CMP_LE_OQ);
-            int mask = _mm256_movemask_ps(cmp);
-            if (SKM_UNLIKELY(mask)) {
-                for (int i = 0; i < 8; ++i) {
-                    survivor_positions[n_survivors] = static_cast<uint32_t>(k + i);
-                    n_survivors += (mask >> i) & 1;
-                }
-            }
-        }
-        for (; k < n_vectors; ++k) {
-            survivor_positions[n_survivors] = static_cast<uint32_t>(k);
-            n_survivors += partial_l2[k] <= threshold[k];
-        }
-    }
 
     /**
      * @brief AVX2-accelerated RaBitQ partial L2 for a 32-point block.

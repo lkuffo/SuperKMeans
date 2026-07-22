@@ -11,7 +11,7 @@
 namespace skmeans {
 
 // Equivalent of vdotq_u32(acc, a, a) for squared accumulation.
-static inline uint32x4_t squared_dot_accumulate(uint32x4_t acc, uint8x16_t a) {
+static inline uint32x4_t SquaredDotAccumulate(uint32x4_t acc, uint8x16_t a) {
 #ifdef __ARM_FEATURE_DOTPROD
     return vdotq_u32(acc, a, a);
 #else
@@ -51,7 +51,7 @@ class SIMDComputer<DistanceFunction::l2, Quantization::u8> {
             uint8x16_t a_vec = vld1q_u8(vector1 + i);
             uint8x16_t b_vec = vld1q_u8(vector2 + i);
             uint8x16_t d_vec = vabdq_u8(a_vec, b_vec);
-            sum_vec = squared_dot_accumulate(sum_vec, d_vec);
+            sum_vec = SquaredDotAccumulate(sum_vec, d_vec);
         }
         distance_t distance = vaddvq_u32(sum_vec);
         for (; i < num_dimensions; ++i) {
@@ -142,8 +142,8 @@ class SIMDComputer<DistanceFunction::l2, Quantization::u4> {
             uint8x16_t diff_lo = vabdq_u8(a_lo, b_lo);
             uint8x16_t diff_hi = vabdq_u8(a_hi, b_hi);
             // Square and accumulate
-            sum_vec = squared_dot_accumulate(sum_vec, diff_lo);
-            sum_vec = squared_dot_accumulate(sum_vec, diff_hi);
+            sum_vec = SquaredDotAccumulate(sum_vec, diff_lo);
+            sum_vec = SquaredDotAccumulate(sum_vec, diff_hi);
         }
         distance_t distance = vaddvq_u32(sum_vec);
         // Scalar tail
@@ -441,47 +441,6 @@ class SIMDUtilsComputer<Quantization::u4> {
 class SIMDFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
-
-    /**
-     * @brief NEON-accelerated compaction of surviving positions.
-     *
-     * Survives where partial_l2[k] <= best_dist[k] * adsampling_ratio.
-     */
-    /**
-     * @brief NEON-accelerated compaction where partial_l2[k] <= threshold[k].
-     *
-     * Caller precomputes threshold[k] = best_dist[k] * adsampling_ratio.
-     */
-    static void RabitQCompactSurvivors(
-        size_t n_vectors,
-        size_t& n_survivors,
-        uint32_t* survivor_positions,
-        const float* partial_l2,
-        const float* threshold
-    ) {
-        n_survivors = 0;
-        size_t k = 0;
-        constexpr size_t k_simd_width = 4;
-        const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
-        for (; k < n_vectors_simd; k += k_simd_width) {
-            float32x4_t thresh = vld1q_f32(threshold + k);
-            float32x4_t dists = vld1q_f32(partial_l2 + k);
-            uint32x4_t cmp_result = vcleq_f32(dists, thresh);
-            uint32_t any_passed = vmaxvq_u32(cmp_result);
-            if (SKM_UNLIKELY(any_passed)) {
-                uint32_t mask[4];
-                vst1q_u32(mask, cmp_result);
-                for (size_t i = 0; i < k_simd_width; ++i) {
-                    survivor_positions[n_survivors] = static_cast<uint32_t>(k + i);
-                    n_survivors += (mask[i] != 0);
-                }
-            }
-        }
-        for (; k < n_vectors; ++k) {
-            survivor_positions[n_survivors] = static_cast<uint32_t>(k);
-            n_survivors += partial_l2[k] <= threshold[k];
-        }
-    }
 
     /**
      * @brief NEON-accelerated RaBitQ partial L2 for a 32-point block.

@@ -12,15 +12,15 @@
   A super-fast clustering library for high-dimensional vector embeddings
 </h3>
 
-<!-- <p align="center">
+<p align="center">
         <img src="./benchmarks/results/plots/github_1.png" height=260 alt="SuperKMeans vs FAISS and Scikit Learn" style="{max-height: 250px}">
-</p> -->
+</p>
 
 ## Why Super K-Means?
 - **Faster clustering** of vector embeddings (Cohere, OpenAI, MXBAI, CLIP, MiniLM) than FAISS.
 - Index 10M embeddings of 1024 dimensions [**in less than a minute**](https://www.lkuffo.com/superkmeans/) on a single CPU.
 - Faster **without compromising clustering quality**.
-- Support for **quantized clustering** (8-bit Scalar Quantization, LVQ, and RabitQ)
+- Support for [**quantized clustering**](#quantized-clustering) (8-bit Scalar Quantization, LVQ, and RabitQ)
 - Efficient on **CPUs** (ARM and x86) and **GPUs**.
 
 ## Our secret sauce
@@ -196,7 +196,11 @@ We are actively developing Super K-Means and accepting contributions! Check [CON
 To run our benchmark suite in C++, refer to [BENCHMARKING.md](./BENCHMARKING.md).
 
 ## Adoption
-SuperKMeans' ideas are part of:
+SuperKMeans' ideas have been adopted in:
 - [FAISS](https://github.com/facebookresearch/faiss/pull/5168)
 - [Zilliz](https://github.com/zilliztech/knowhere/pull/1635)
 - [Elastic](https://github.com/elastic/elasticsearch/pull/144599)
+- [ParadeDB](https://github.com/paradedb/superkmeans-rs)
+
+## Other implementations of SuperKMeans
+- [Rust](https://github.com/paradedb/superkmeans-rs)

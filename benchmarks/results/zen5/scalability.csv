@@ -1,1 +1,0 @@
-timestamp,algorithm,dataset,n_iters,actual_iterations,dimensionality,data_size,n_clusters,construction_time_ms,threads,final_objective,clustering_quality_stats,balance_stats,quantized_balance_stats,iteration_stats,config,run_label

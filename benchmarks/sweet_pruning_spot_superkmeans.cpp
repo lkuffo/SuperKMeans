@@ -46,10 +46,10 @@ int main(int argc, char* argv[]) {
         const std::string& dataset = dataset_entry.first;
         const size_t n = dataset_entry.second.first;
         const size_t d = dataset_entry.second.second;
-        const size_t n_clusters = bench_utils::get_default_n_clusters(n);
-        std::string filename = bench_utils::get_data_path(dataset);
-        std::string filename_queries = bench_utils::get_query_path(dataset);
-        std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+        const size_t n_clusters = bench_utils::GetDefaultNClusters(n);
+        std::string filename = bench_utils::GetDataPath(dataset);
+        std::string filename_queries = bench_utils::GetQueryPath(dataset);
+        std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
 
         std::cout << "\n========================================" << std::endl;
         std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")" << std::endl;
@@ -93,7 +93,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
         gt_file.close();
-        auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+        auto gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
         std::cout << "Loaded ground truth with " << gt_map.size() << " queries" << std::endl;
 
         for (float adjustment_factor : adjustment_factors) {
@@ -172,7 +172,7 @@ int main(int argc, char* argv[]) {
                     std::to_string(config.adjustment_factor_for_partial_d);
                 config_map["not_pruned_pct_window_size"] = std::to_string(PRUNING_PCT_WINDOW_SIZE);
 
-                bench_utils::write_results_to_csv(
+                bench_utils::WriteResultsToCsv(
                     experiment_name,
                     algorithm,
                     dataset,

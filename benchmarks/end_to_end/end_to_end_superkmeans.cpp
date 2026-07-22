@@ -25,11 +25,11 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = bench_utils::GetDefaultNClusters(n);
     int n_iters = bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
-    std::string filename = bench_utils::get_data_path(dataset);
-    std::string filename_queries = bench_utils::get_query_path(dataset);
+    std::string filename = bench_utils::GetDataPath(dataset);
+    std::string filename_queries = bench_utils::GetQueryPath(dataset);
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
               << std::endl;
     std::cout << "Final objective: " << final_objective << std::endl;
 
-    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
     std::ifstream gt_file(gt_filename);
     std::ifstream queries_file_check(filename_queries, std::ios::binary);
     if (gt_file.good() && queries_file_check.good()) {
@@ -114,7 +114,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Ground truth file: " << gt_filename << std::endl;
         std::cout << "Queries file: " << filename_queries << std::endl;
 
-        auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+        auto gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
         auto assignments =
@@ -126,14 +126,14 @@ int main(int argc, char* argv[]) {
                 GetClustersBalanceStats(assignments.data(), n, n_clusters);
         balance_stats.print();
 
-        auto results_knn_10 = bench_utils::compute_recall(
+        auto results_knn_10 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
         );
-        bench_utils::print_recall_results(results_knn_10, 10);
-        auto results_knn_100 = bench_utils::compute_recall(
+        bench_utils::PrintRecallResults(results_knn_10, 10);
+        auto results_knn_100 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
         );
-        bench_utils::print_recall_results(results_knn_100, 100);
+        bench_utils::PrintRecallResults(results_knn_100, 100);
 
         std::unordered_map<std::string, std::string> config_map;
         config_map["iters"] = std::to_string(config.iters);
@@ -150,7 +150,7 @@ int main(int argc, char* argv[]) {
         config_map["unrotate_centroids"] = config.unrotate_centroids ? "true" : "false";
         config_map["verbose"] = config.verbose ? "true" : "false";
 
-        bench_utils::write_results_to_csv(
+        bench_utils::WriteResultsToCsv(
             experiment_name,
             algorithm,
             dataset,
@@ -165,7 +165,7 @@ int main(int argc, char* argv[]) {
             config_map,
             results_knn_10,
             results_knn_100,
-            balance_stats.to_json()
+            balance_stats.ToJson()
         );
     } else {
         if (!gt_file.good()) {

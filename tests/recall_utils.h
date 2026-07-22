@@ -106,7 +106,7 @@ inline std::unordered_map<int, std::vector<int>> BuildGroundTruthNN(
 }
 
 // Average recall@knn at the exploration fraction closest to `frac`, extracted
-// from bench_utils::compute_recall's fraction sweep. Returns -1 if not found.
+// from bench_utils::ComputeRecall's fraction sweep. Returns -1 if not found.
 inline float RecallAtFraction(
     const std::unordered_map<int, std::vector<int>>& gt_map,
     const std::vector<uint32_t>& assignments,
@@ -118,7 +118,7 @@ inline float RecallAtFraction(
     int knn,
     float frac
 ) {
-    auto results = bench_utils::compute_recall(
+    auto results = bench_utils::ComputeRecall(
         gt_map, assignments, queries, centroids, n_queries, n_clusters, d, knn
     );
     for (const auto& r : results) {

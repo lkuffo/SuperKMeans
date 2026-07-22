@@ -101,7 +101,7 @@ Assign vectors to nearest centroids in full precision. Can be called before `tra
 
 **`quantized_assign(vectors, centroids)`**
 
-Assign vectors in the quantizer's compressed domain. Requires `train()` first. Equivalent to `assign()` when `quantizer="f32"`.
+Assign vectors in the quantizer's compressed domain. Standalone — fits a fresh quantizer on the input vectors (reusing no trained state), so it can be called before `train()`. Equivalent to `assign()` when `quantizer="f32"`.
 
 - **Parameters:**
   - `vectors` (ndarray): Shape (n_vectors, dimensionality), dtype float32

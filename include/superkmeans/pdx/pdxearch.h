@@ -13,7 +13,7 @@ namespace skmeans {
 /**
  * @brief PDXearch
  *
- * Implements the PDXearch algorithm for finding the nearest neighbor using the PDX
+ * Implements PDXearch for finding the nearest neighbor using the PDX
  * data layout combined with ADSampling-based pruning.
  * In this lightweight version, we optimize for top-1 search.
  * Reference: https://dl.acm.org/doi/abs/10.1145/3725333
@@ -267,15 +267,6 @@ class PDXearch {
         }
     }
 
-    /**
-     * @brief Converts distances back to original domain (for u8 quantization).
-     */
-    void BuildResultSet(KNNCandidate_t& best_candidate) {
-        // For u8, SetBestCandidate already converts to original float domain
-        // via inverse_scale_factor_squared. For f32, no conversion needed.
-        (void) best_candidate;
-    }
-
   public:
     /**
      * @brief Finds the top-1 neighbor using partial distances from GEMM.
@@ -306,7 +297,7 @@ class PDXearch {
         uint32_t current_dimension_idx = computed_distance_until;
         size_t current_cluster = 0;
 
-        // Setup previous top1 — convert float threshold to DISTANCES_TYPE domain
+        // Setup previous top1: convert float threshold to DISTANCES_TYPE domain
         if constexpr (q == Quantization::u8 || q == Quantization::u4) {
             const float scaled = prev_pruning_threshold * pdx_data.quantization_scale_squared;
             pruning_threshold =
@@ -357,7 +348,6 @@ class PDXearch {
                 );
             }
         }
-        BuildResultSet(top_embedding);
         return top_embedding;
     }
 };

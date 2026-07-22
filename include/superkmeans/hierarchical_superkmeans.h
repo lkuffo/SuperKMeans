@@ -169,23 +169,11 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             !this->hierarchical_config.data_already_rotated
         );
         // Create quantizer
-        if constexpr (q == Quantization::f32) {
-            this->quantizer = std::make_unique<F32Quantizer>();
-        } else {
-            if (this->hierarchical_config.quantizer_type == QuantizerType::sq8) {
-                this->quantizer = std::make_unique<SQ8Quantizer>();
-            } else if (this->hierarchical_config.quantizer_type == QuantizerType::lvq4) {
-                this->quantizer = std::make_unique<LVQ4Quantizer>();
-            } else if (this->hierarchical_config.quantizer_type == QuantizerType::rabitq) {
-                this->quantizer = std::make_unique<RaBitQQuantizer>();
-            } else {
-                throw std::invalid_argument("Unsupported quantizer type");
-            }
-        }
+        this->quantizer = this->CreateQuantizer();
         this->quantizer->Fit(data_to_cluster, this->n_samples, this->d);
         this->code_size = this->quantizer->CodeSize(this->d);
 
-        // Non-PDX quantizers (e.g. RaBitQ) override vertical_d to full d
+        // Non-PDX quantizers must override vertical_d to full d
         if (this->quantizer->SupportsPruning() && !this->quantizer->NeedsPDXLayout()) {
             this->vertical_d = this->d;
             this->partial_horizontal_centroids.reset(
@@ -200,7 +188,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             std::cout << "Trailing dimensions (d'') = " << this->d - this->vertical_d << std::endl;
         }
 
-        // Data encoding (for f32 this is a no-op / zero-copy)
+        // Data encoding
         const vector_value_t* encoded_data_p;
         if constexpr (q == Quantization::f32) {
             encoded_data_p = data_to_cluster;

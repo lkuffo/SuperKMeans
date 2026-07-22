@@ -122,7 +122,7 @@ else()
     message(STATUS "GPU disabled")
 endif()
 
-# ── NumKong (header-only SIMD kernels for quantized GEMM) ──
+# ── NumKong (for 8- and 4-bit GEMM) ──
 FetchContent_Declare(
     numkong
     GIT_REPOSITORY https://github.com/ashvardanian/NumKong.git
@@ -131,7 +131,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(numkong)
 
-# ── Ruy (Google matrix multiplication, for SQ8 pruning) ──
+# ── Ruy (for 8- and 4-bit GEMM in thinner vectors) ──
 if(NOT TARGET cpuinfo::cpuinfo)
     FetchContent_Declare(cpuinfo
         GIT_REPOSITORY https://github.com/pytorch/cpuinfo.git
@@ -144,7 +144,6 @@ if(NOT TARGET cpuinfo::cpuinfo)
     set(CPUINFO_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(cpuinfo)
 endif()
-
 FetchContent_Declare(ruy
     GIT_REPOSITORY https://github.com/google/ruy.git
     GIT_TAG master

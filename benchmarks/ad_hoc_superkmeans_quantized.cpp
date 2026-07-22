@@ -38,11 +38,11 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = bench_utils::GetDefaultNClusters(n);
     int n_iters = 10;
     float sampling_fraction = 1.0f;
-    std::string filename = bench_utils::get_data_path(dataset);
-    std::string filename_queries = bench_utils::get_query_path(dataset);
+    std::string filename = bench_utils::GetDataPath(dataset);
+    std::string filename_queries = bench_utils::GetQueryPath(dataset);
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
     q_balance_stats.print();
 
     // Compute recall if ground truth file exists
-    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
     std::ifstream gt_file(gt_filename);
     std::ifstream queries_file_check(filename_queries, std::ios::binary);
     if (gt_file.good() && queries_file_check.good()) {
@@ -155,33 +155,33 @@ int main(int argc, char* argv[]) {
         std::cout << "Ground truth file: " << gt_filename << std::endl;
         std::cout << "Queries file: " << filename_queries << std::endl;
 
-        auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+        auto gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
 
         // Recall with Assign()
         std::cout << "\n  [Assign()]" << std::endl;
-        auto results_knn_10 = bench_utils::compute_recall(
+        auto results_knn_10 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
         );
-        bench_utils::print_recall_results(results_knn_10, 10);
+        bench_utils::PrintRecallResults(results_knn_10, 10);
 
-        auto results_knn_100 = bench_utils::compute_recall(
+        auto results_knn_100 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
         );
-        bench_utils::print_recall_results(results_knn_100, 100);
+        bench_utils::PrintRecallResults(results_knn_100, 100);
 
         // Recall with QuantizedAssign()
         std::cout << "\n  [QuantizedAssign()]" << std::endl;
-        auto q_results_knn_10 = bench_utils::compute_recall(
+        auto q_results_knn_10 = bench_utils::ComputeRecall(
             gt_map, q_assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
         );
-        bench_utils::print_recall_results(q_results_knn_10, 10);
+        bench_utils::PrintRecallResults(q_results_knn_10, 10);
 
-        auto q_results_knn_100 = bench_utils::compute_recall(
+        auto q_results_knn_100 = bench_utils::ComputeRecall(
             gt_map, q_assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
         );
-        bench_utils::print_recall_results(q_results_knn_100, 100);
+        bench_utils::PrintRecallResults(q_results_knn_100, 100);
     } else {
         if (!gt_file.good()) {
             std::cout << "\nGround truth file not found: " << gt_filename << std::endl;

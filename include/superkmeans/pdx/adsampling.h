@@ -12,6 +12,14 @@
 
 namespace skmeans {
 
+/**
+ * @brief Compute the ADSampling ratio on the fly.
+ *
+ * @param visited_dimensions Number of dimensions already visited
+ * @param num_dimensions Total number of dimensions
+ * @param epsilon0 Pruning threshold parameter
+ * @return The computed sampling ratio
+ */
 inline float ComputeADSamplingRatio(
     size_t visited_dimensions,
     size_t num_dimensions,

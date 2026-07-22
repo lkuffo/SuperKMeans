@@ -65,48 +65,6 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::u8> {
 
         return _mm512_reduce_add_epi32(_mm512_add_epi32(d2_low_i32, d2_high_i32));
     };
-
-    /**
-     * @brief Asymmetric squared L2 using VNNI dpbusds.
-     *
-     * Only correct when absolute differences fit in 7 bits (max 127), e.g. when
-     * one operand's range is restricted. Uses saturating u8 subtraction for abs diff,
-     * then VNNI dot-product to square and accumulate.
-     * Adapted from SimSIMD: https://github.com/ashvardanian/SimSIMD
-     */
-    static distance_t HorizontalAsymmetric(
-        const data_t* SKM_RESTRICT vector1,
-        const data_t* SKM_RESTRICT vector2,
-        size_t num_dimensions
-    ) {
-        __m512i d2_i32_vec = _mm512_setzero_si512();
-        __m512i a_u8_vec, b_u8_vec;
-
-    simsimd_l2sq_u8_ice_cycle:
-        if (num_dimensions < 64) {
-            const __mmask64 mask =
-                static_cast<__mmask64>(_bzhi_u64(0xFFFFFFFFFFFFFFFF, num_dimensions));
-            a_u8_vec = _mm512_maskz_loadu_epi8(mask, vector1);
-            b_u8_vec = _mm512_maskz_loadu_epi8(mask, vector2);
-            num_dimensions = 0;
-        } else {
-            a_u8_vec = _mm512_loadu_si512(vector1);
-            b_u8_vec = _mm512_loadu_si512(vector2);
-            vector1 += 64, vector2 += 64, num_dimensions -= 64;
-        }
-
-        // Subtracting unsigned vectors via saturating subtraction:
-        __m512i d_u8_vec = _mm512_or_si512(
-            _mm512_subs_epu8(a_u8_vec, b_u8_vec), _mm512_subs_epu8(b_u8_vec, a_u8_vec)
-        );
-
-        // Multiply and accumulate — second operand interpreted as signed int8,
-        // so only correct when abs differences <= 127:
-        d2_i32_vec = _mm512_dpbusds_epi32(d2_i32_vec, d_u8_vec, d_u8_vec);
-        if (num_dimensions)
-            goto simsimd_l2sq_u8_ice_cycle;
-        return _mm512_reduce_add_epi32(d2_i32_vec);
-    };
 };
 
 template <>
@@ -565,43 +523,6 @@ class SIMDUtilsComputer<Quantization::u4> {
 class SIMDFastScanComputer {
   public:
     static constexpr size_t kBlockSize = 32;
-
-    /**
-     * @brief AVX-512-accelerated compaction of surviving positions.
-     *
-     * Survives where partial_l2[k] <= best_dist[k] * adsampling_ratio.
-     * Uses vpcompressd for native mask-driven compaction.
-     */
-    static void RabitQCompactSurvivors(
-        size_t n_vectors,
-        size_t& n_survivors,
-        uint32_t* survivor_positions,
-        const float* partial_l2,
-        const float* threshold
-    ) {
-        n_survivors = 0;
-        size_t k = 0;
-        constexpr size_t k_simd_width = 16;
-        const size_t n_vectors_simd = (n_vectors / k_simd_width) * k_simd_width;
-        const __m512i offsets =
-            _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
-        for (; k < n_vectors_simd; k += k_simd_width) {
-            __m512 thresh = _mm512_loadu_ps(threshold + k);
-            __m512 dists = _mm512_loadu_ps(partial_l2 + k);
-            __mmask16 cmp_mask = _mm512_cmp_ps_mask(dists, thresh, _CMP_LE_OQ);
-            if (SKM_UNLIKELY(cmp_mask)) {
-                __m512i indices = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int>(k)), offsets);
-                _mm512_mask_compressstoreu_epi32(
-                    survivor_positions + n_survivors, cmp_mask, indices
-                );
-                n_survivors += _mm_popcnt_u32(cmp_mask);
-            }
-        }
-        for (; k < n_vectors; ++k) {
-            survivor_positions[n_survivors] = static_cast<uint32_t>(k);
-            n_survivors += partial_l2[k] <= threshold[k];
-        }
-    }
 
     /**
      * @brief AVX-512-accelerated RaBitQ partial L2 for a 32-point block.

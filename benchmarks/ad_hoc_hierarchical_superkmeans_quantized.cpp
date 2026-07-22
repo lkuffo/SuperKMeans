@@ -24,9 +24,9 @@ void RunBenchmark(const std::string& dataset, const std::string& quantizer_name,
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
 
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
-    std::string filename = bench_utils::get_data_path(dataset);
-    std::string filename_queries = bench_utils::get_query_path(dataset);
+    const size_t n_clusters = bench_utils::GetDefaultNClusters(n);
+    std::string filename = bench_utils::GetDataPath(dataset);
+    std::string filename_queries = bench_utils::GetQueryPath(dataset);
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
@@ -119,34 +119,34 @@ void RunBenchmark(const std::string& dataset, const std::string& quantizer_name,
     std::cout << "--- QuantizedAssign() cluster balance ---" << std::endl;
     HSKM::GetClustersBalanceStats(q_assignments.data(), n, n_clusters).print();
 
-    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
     std::ifstream gt_file(gt_filename);
     std::ifstream queries_file_check(filename_queries, std::ios::binary);
     if (gt_file.good() && queries_file_check.good()) {
         gt_file.close();
         queries_file_check.close();
         std::cout << "\n--- Computing Recall ---" << std::endl;
-        auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+        auto gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
 
         std::cout << "\n  [Assign()]" << std::endl;
-        bench_utils::print_recall_results(
-            bench_utils::compute_recall(
+        bench_utils::PrintRecallResults(
+            bench_utils::ComputeRecall(
                 gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
             ),
             10
         );
-        bench_utils::print_recall_results(
-            bench_utils::compute_recall(
+        bench_utils::PrintRecallResults(
+            bench_utils::ComputeRecall(
                 gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
             ),
             100
         );
 
         std::cout << "\n  [QuantizedAssign()]" << std::endl;
-        bench_utils::print_recall_results(
-            bench_utils::compute_recall(
+        bench_utils::PrintRecallResults(
+            bench_utils::ComputeRecall(
                 gt_map,
                 q_assignments,
                 queries.data(),
@@ -158,8 +158,8 @@ void RunBenchmark(const std::string& dataset, const std::string& quantizer_name,
             ),
             10
         );
-        bench_utils::print_recall_results(
-            bench_utils::compute_recall(
+        bench_utils::PrintRecallResults(
+            bench_utils::ComputeRecall(
                 gt_map,
                 q_assignments,
                 queries.data(),

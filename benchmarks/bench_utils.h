@@ -31,7 +31,7 @@ namespace bench_utils {
  * @param n Number of data points
  * @return Default number of clusters
  */
-inline size_t get_default_n_clusters(size_t n) {
+inline size_t GetDefaultNClusters(size_t n) {
     return std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
 }
 
@@ -40,15 +40,15 @@ inline const std::string BENCHMARKS_ROOT = std::string(CMAKE_SOURCE_DIR) + "/ben
 inline const std::string DATA_DIR = BENCHMARKS_ROOT + "/data";
 inline const std::string GROUND_TRUTH_DIR = BENCHMARKS_ROOT + "/ground_truth";
 
-inline std::string get_data_path(const std::string& dataset) {
+inline std::string GetDataPath(const std::string& dataset) {
     return DATA_DIR + "/data_" + dataset + ".bin";
 }
 
-inline std::string get_query_path(const std::string& dataset) {
+inline std::string GetQueryPath(const std::string& dataset) {
     return DATA_DIR + "/data_" + dataset + "_test.bin";
 }
 
-inline std::string get_ground_truth_path(const std::string& dataset) {
+inline std::string GetGroundTruthPath(const std::string& dataset) {
     return GROUND_TRUTH_DIR + "/" + dataset + ".json";
 }
 
@@ -124,15 +124,6 @@ const std::vector<int> FAISS_EARLY_TERM_ITERS = {10};
 const int SCIKIT_EARLY_TERM_MAX_ITERS = 300;
 const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
 
-// PQ subspace counts to sweep over
-const std::vector<uint32_t> PQ8_M_VALUES = {32, 64};
-const std::vector<uint32_t> PQ4_M_VALUES = {32, 64, 96, 128, 256};
-
-// HNSW efSearch / efConstruction values to sweep over (with fixed M below)
-const std::vector<int> HNSW_EF_SEARCH_VALUES = {4, 8, 16, 32};
-const std::vector<int> HNSW_EF_CONSTRUCTION_VALUES = {128, 200};
-const int HNSW_M = 16;
-
 // Target dimensionalities for PCA/JLT preprocessing (multiples of 64 up to 2048)
 const std::vector<size_t> TARGET_D_VALUES = {32, 64, 96, 128, 192, 256, 320, 384, 512, 768, 1024};
 
@@ -166,8 +157,7 @@ const std::vector<int> VARYING_K_VALUES = {100, 1000, 10000, 100000};
  * @param filename Path to JSON file
  * @return Map of query index to vector IDs
  */
-inline std::unordered_map<int, std::vector<int>> parse_ground_truth_json(const std::string& filename
-) {
+inline std::unordered_map<int, std::vector<int>> ParseGroundTruthJson(const std::string& filename) {
     std::unordered_map<int, std::vector<int>> gt_map;
     std::ifstream file(filename);
     if (!file.is_open()) {
@@ -230,7 +220,7 @@ inline std::unordered_map<int, std::vector<int>> parse_ground_truth_json(const s
  * avg_vectors_to_visit)
  */
 template <typename AssignmentType>
-std::vector<std::tuple<int, float, float, float, float>> compute_recall(
+std::vector<std::tuple<int, float, float, float, float>> ComputeRecall(
     const std::unordered_map<int, std::vector<int>>& gt_map,
     const std::vector<AssignmentType>& assignments,
     const float* queries,
@@ -379,7 +369,7 @@ std::vector<std::tuple<int, float, float, float, float>> compute_recall(
     return results;
 }
 
-inline void print_recall_results(
+inline void PrintRecallResults(
     const std::vector<std::tuple<int, float, float, float, float>>& results,
     int knn
 ) {
@@ -400,7 +390,7 @@ inline void print_recall_results(
 /**
  * @brief Create directory recursively if it doesn't exist.
  */
-inline bool create_directory_recursive(const std::string& path) {
+inline bool CreateDirectoryRecursive(const std::string& path) {
     std::string current_path;
     std::istringstream path_stream(path);
     std::string segment;
@@ -438,7 +428,7 @@ inline bool create_directory_recursive(const std::string& path) {
  * @param results_knn_10 Results for KNN=10
  * @param results_knn_100 Results for KNN=100
  */
-inline void write_results_to_csv(
+inline void WriteResultsToCsv(
     const std::string& experiment_name,
     const std::string& algorithm,
     const std::string& dataset,
@@ -459,7 +449,7 @@ inline void write_results_to_csv(
     const char* arch_env = std::getenv("SKM_ARCH");
     std::string arch = arch_env ? std::string(arch_env) : "default";
     std::string results_dir = std::string(CMAKE_SOURCE_DIR) + "/benchmarks/results/" + arch;
-    create_directory_recursive(results_dir);
+    CreateDirectoryRecursive(results_dir);
     std::string csv_path = results_dir + "/" + experiment_name + ".csv";
     bool file_exists = (std::ifstream(csv_path).good());
     std::ofstream csv_file(csv_path, std::ios::app);
@@ -583,7 +573,7 @@ using recall_results_t = std::vector<std::tuple<int, float, float, float, float>
  *
  * Produces keys like recall@10@nprobe1, recall@10@0.10, etc.
  */
-inline std::string build_recall_stats_json(
+inline std::string BuildRecallStatsJson(
     const recall_results_t& results_knn_10,
     const recall_results_t& results_knn_100
 ) {
@@ -628,7 +618,7 @@ inline std::string build_recall_stats_json(
 /**
  * @brief Write results to CSV with recall stats packed into a single JSON column.
  *
- * Same core columns as write_results_to_csv, but instead of one column per
+ * Same core columns as WriteResultsToCsv, but instead of one column per
  * recall measurement, all recall/std/centroids/vectors stats are stored in a
  * single ``clustering_quality_stats`` JSON column with the structure:
  *
@@ -637,7 +627,7 @@ inline std::string build_recall_stats_json(
  *     "quantized_assign": { ... }   // only present when provided
  *   }
  */
-inline void write_results_to_csv_v2(
+inline void WriteResultsToCsvV2(
     const std::string& experiment_name,
     const std::string& algorithm,
     const std::string& dataset,
@@ -662,7 +652,7 @@ inline void write_results_to_csv_v2(
     const char* arch_env = std::getenv("SKM_ARCH");
     std::string arch = arch_env ? std::string(arch_env) : "default";
     std::string results_dir = std::string(CMAKE_SOURCE_DIR) + "/benchmarks/results/" + arch;
-    create_directory_recursive(results_dir);
+    CreateDirectoryRecursive(results_dir);
     std::string csv_path = results_dir + "/" + experiment_name + ".csv";
     bool file_exists = (std::ifstream(csv_path).good());
     std::ofstream csv_file(csv_path, std::ios::app);
@@ -700,13 +690,13 @@ inline void write_results_to_csv_v2(
 
     if (has_assign) {
         quality_ss << "\"assign\":"
-                   << build_recall_stats_json(assign_results_knn_10, assign_results_knn_100);
+                   << BuildRecallStatsJson(assign_results_knn_10, assign_results_knn_100);
     }
     if (has_quantized) {
         if (has_assign)
             quality_ss << ",";
         quality_ss << "\"quantized_assign\":"
-                   << build_recall_stats_json(
+                   << BuildRecallStatsJson(
                           quantized_assign_results_knn_10, quantized_assign_results_knn_100
                       );
     }
@@ -767,45 +757,6 @@ inline void write_results_to_csv_v2(
 }
 
 /**
- * @brief Generate random int8 matrix (row-major, n × d).
- */
-inline std::vector<int8_t> generate_random_i8(size_t n, size_t d, uint32_t seed = 42) {
-    std::vector<int8_t> data(n * d);
-    std::mt19937 rng(seed);
-    std::uniform_int_distribution<int> dist(-128, 127);
-    for (auto& v : data) {
-        v = static_cast<int8_t>(dist(rng));
-    }
-    return data;
-}
-
-/**
- * @brief Generate random uint8 matrix (row-major, n × d).
- */
-inline std::vector<uint8_t> generate_random_u8(size_t n, size_t d, uint32_t seed = 42) {
-    std::vector<uint8_t> data(n * d);
-    std::mt19937 rng(seed);
-    std::uniform_int_distribution<int> dist(0, 255);
-    for (auto& v : data) {
-        v = static_cast<uint8_t>(dist(rng));
-    }
-    return data;
-}
-
-/**
- * @brief Generate random float32 matrix (row-major, n × d) with values in [-1, 1].
- */
-inline std::vector<float> generate_random_f32(size_t n, size_t d, uint32_t seed = 42) {
-    std::vector<float> data(n * d);
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (auto& v : data) {
-        v = dist(rng);
-    }
-    return data;
-}
-
-/**
  * @brief Compute top-k nearest centroid distances for a random sample of points
  *        and write them to a JSON file. Optionally prints the first few on screen.
  *
@@ -820,7 +771,7 @@ inline std::vector<float> generate_random_f32(size_t n, size_t d, uint32_t seed 
  * @param print_count  Number of sample points to print on screen (0 to skip)
  * @param seed         Random seed for sampling
  */
-inline void compute_and_store_topk_distances(
+inline void ComputeAndStoreTopkDistances(
     const float* vectors,
     const float* centroids,
     size_t n_vectors,

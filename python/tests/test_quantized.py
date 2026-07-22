@@ -121,6 +121,38 @@ class TestQuantizedSuperKMeans:
         assert np.mean(q_labels == labels) >= 0.9
 
     @pytest.mark.parametrize("quantizer", QUANTIZERS)
+    def test_quantized_assign_before_train(self, quantizer):
+        """quantized_assign is standalone (fits a fresh quantizer on the input), so it
+        works before train() and closely matches the post-train result."""
+        n, d, k = 5000, 128, 300
+        data = make_clustered_data(n=n, d=d, k=k)
+
+        trained = SuperKMeans(
+            n_clusters=k, dimensionality=d, quantizer=quantizer,
+            iters=10, sampling_fraction=1.0,
+        )
+        centroids = trained.train(data)
+        after = trained.quantized_assign(data, centroids)
+
+        fresh = SuperKMeans(n_clusters=k, dimensionality=d, quantizer=quantizer)
+        assert not fresh.is_trained_
+        before = fresh.quantized_assign(data, centroids)  # no train() needed
+
+        assert before.shape == (n,)
+        assert before.dtype == np.uint32
+        assert np.all(before < k)
+        assert np.mean(before == after) >= 0.99
+
+    def test_assign_training_points_requires_train(self):
+        """assign_training_points reuses trained state, so it must raise before train()."""
+        n, d, k = 1000, 128, 50
+        data = make_clustered_data(n=n, d=d, k=k)
+        centroids = np.ascontiguousarray(data[:k], dtype=np.float32)
+        km = SuperKMeans(n_clusters=k, dimensionality=d, quantizer="sq8")
+        with pytest.raises(RuntimeError):
+            km.assign_training_points(data, centroids)
+
+    @pytest.mark.parametrize("quantizer", QUANTIZERS)
     def test_repr_shows_quantizer(self, quantizer):
         km = SuperKMeans(n_clusters=10, dimensionality=128, quantizer=quantizer)
         assert f"quantizer={quantizer!r}" in repr(km)

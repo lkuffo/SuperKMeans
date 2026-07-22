@@ -81,7 +81,7 @@ struct SuperKMeansIterationStats {
     // Whether this iteration used BLAS-only computation (no PDX pruning)
     bool is_gemm_only = false;
 
-    std::string to_json() const {
+    std::string ToJson() const {
         std::ostringstream oss;
         oss << "{\"iteration\":" << iteration << ",\"objective\":" << std::setprecision(6)
             << objective << ",\"shift\":" << std::setprecision(4) << shift << ",\"split\":" << split
@@ -91,13 +91,13 @@ struct SuperKMeansIterationStats {
         return oss.str();
     }
 
-    static std::string vector_to_json(const std::vector<SuperKMeansIterationStats>& stats) {
+    static std::string VectorToJson(const std::vector<SuperKMeansIterationStats>& stats) {
         std::ostringstream oss;
         oss << "[";
         for (size_t i = 0; i < stats.size(); ++i) {
             if (i > 0)
                 oss << ",";
-            oss << stats[i].to_json();
+            oss << stats[i].ToJson();
         }
         oss << "]";
         return oss.str();
@@ -120,7 +120,6 @@ struct ClusterBalanceStats {
     float iqr = 0.0f;
     float whisker_low = 0.0f;
     float whisker_high = 0.0f;
-    // Percentiles: 5, 10, 20, 25, 30, 40, 50, 60, 70, 75, 80, 90, 95, 99, 99.9
     static constexpr std::array<float, 15> PERCENTILE_KEYS = {
         5.0f,
         10.0f,
@@ -140,7 +139,7 @@ struct ClusterBalanceStats {
     };
     std::array<float, 15> percentiles = {};
 
-    std::string to_json() const {
+    std::string ToJson() const {
         std::ostringstream oss;
         oss << std::setprecision(4);
         oss << "{\"mean\":" << mean << ",\"geometric_mean\":" << geometric_mean
@@ -288,10 +287,8 @@ class SuperKMeans {
             data_norms.reset(new float[n_samples]);
             centroid_norms.reset(new float[n_clusters]);
         }
-        // SQ quantizers manage their own uint32 accumulator buffers internally
         std::unique_ptr<size_t[]> not_pruned_counts(new size_t[n_samples]);
         EnsureTmpDistancesBuffer();
-        // PDX vertical_d setup (partial_d is set after quantizer is created)
         vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(PDXDim(d)).vertical_d;
         partial_horizontal_centroids.reset(new centroid_value_t[n_clusters * vertical_d]);
 
@@ -313,12 +310,11 @@ class SuperKMeans {
             !config.data_already_rotated
         );
 
-        // Create quantizer for all q types
         quantizer = CreateQuantizer();
         quantizer->Fit(data_to_cluster, n_samples, d);
         code_size = quantizer->CodeSize(d);
 
-        // Compute partial_d: non-PDX quantizers override vertical_d to full d
+        // Compute partial_d: non-PDX quantizers must override vertical_d to full d
         if (quantizer->SupportsPruning() && !quantizer->NeedsPDXLayout()) {
             vertical_d = d;
         }
@@ -328,7 +324,7 @@ class SuperKMeans {
             std::cout << "Trailing dimensions (d'') = " << d - vertical_d << std::endl;
         }
 
-        // Data encoding (for f32 this is a no-op)
+        // Data encoding
         const vector_value_t* encoded_data_p;
         if constexpr (q == Quantization::f32) {
             encoded_data_p = data_to_cluster;
@@ -618,8 +614,8 @@ class SuperKMeans {
      * Leverages the assignments from training for a faster
      * assignment than brute force Assign().
      *
-     * TODO(@lkuffo, high): Signature is misleading, as vectors are centroids incoming in params are
-     * not used
+     * TODO(@lkuffo, high): Signature is misleading, as vectors 
+     * and centroids incoming in params are not used
      *
      * @param vectors The training data matrix (row-major, n_vectors x d)
      * @param centroids The centroids matrix (row-major, n_centroids x d)
@@ -1103,7 +1099,6 @@ class SuperKMeans {
             quantizer->ResetCentroidAccumulators(n_clusters, d);
         } else {
             std::fill(not_pruned_counts, not_pruned_counts + n_samples, 0);
-            // Cache centroid partial norms and run pruned search
             quantizer->Encode(prev_centroids.get(), quantized_centroids.get(), n_clusters, d);
             quantizer->CacheCentroidPartialNorms(
                 quantized_centroids.get(), n_clusters, d, partial_d
@@ -1857,9 +1852,9 @@ class SuperKMeans {
     std::unique_ptr<float[]> centroid_norms;
     std::unique_ptr<size_t[]> sampled_indices;
 
-    // Quantization state (F32Quantizer for f32, SQ8/SQ4/etc for u8)
+    // Quantization state 
     std::unique_ptr<IQuantizer<q>> quantizer;
-    size_t code_size = 0; // bytes per encoded vector (= d for SQ8/SQ4, variable for RaBitQ)
+    size_t code_size = 0; // bytes per encoded vector (= d for SQ8, variable for RaBitQ)
     std::unique_ptr<vector_value_t[]> quantized_data;
     std::unique_ptr<vector_value_t[]> quantized_centroids;
     std::unique_ptr<vector_value_t[]> pdxified_quantized_centroids;

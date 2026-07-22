@@ -91,6 +91,7 @@ static inline constexpr float PROPORTION_HORIZONTAL_DIM = 0.75;
 static inline constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;
 static inline constexpr size_t H_DIM_SIZE = 64;
 
+// Below 32, GEMM stops accelerating
 static inline constexpr uint32_t MIN_PARTIAL_D = 32;
 
 // Thresholds below which GEMM-only (no pruning) is used
@@ -135,6 +136,7 @@ static constexpr uint32_t AlignValue(T n) {
     return ((n + (val - 1)) / val) * val;
 }
 
+// Below this threshold, NumKong loses to Ruy for 8-bit GEMM
 static constexpr size_t THIN_MATRIX_THRESHOLD = 256;
 
 #if defined(__ARM_NEON)

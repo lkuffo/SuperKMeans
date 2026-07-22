@@ -137,6 +137,7 @@ class SuperKMeans:
         self._hierarchical = None
         self._cpp_skmeans_obj = None
         self._assign_only_obj = None
+        self._quantized_assign_only_obj = None
         self._config_params = {
             'iters': iters,
             'iters_mesoclustering': iters_mesoclustering,
@@ -279,6 +280,27 @@ class SuperKMeans:
             self._assign_only_obj = _SuperKMeansCpp(self._n_clusters, self._dimensionality)
         return self._assign_only_obj
 
+    def _quantized_assign_engine(self):
+        """C++ object used to run quantized_assign().
+
+        quantized_assign is standalone (it fits a fresh quantizer on the input and
+        reuses no trained state), so it can run before train(): reuse the trained
+        object if present, otherwise lazily build a flat engine configured with the
+        chosen quantizer.
+        """
+        if self._cpp_skmeans_obj is not None:
+            return self._cpp_skmeans_obj
+        if self._quantizer == "f32":
+            return self._assign_engine()
+        if self._quantized_assign_only_obj is None:
+            config = _SuperKMeansConfigCpp()
+            config.quantizer_type = _QUANTIZER_MAP[self._quantizer]
+            config.seed = self._config_params['seed']
+            self._quantized_assign_only_obj = _QuantizedSuperKMeansCpp(
+                self._n_clusters, self._dimensionality, config
+            )
+        return self._quantized_assign_only_obj
+
     def assign(
         self,
         vectors: NDArray[np.float32],
@@ -360,6 +382,9 @@ class SuperKMeans:
                 f"got {vectors.shape[1]} and {centroids.shape[1]}"
             )
 
+        if self._cpp_skmeans_obj is None:
+            raise RuntimeError("assign_training_points requires train() to be called first")
+
         return self._cpp_skmeans_obj.assign_training_points(vectors, centroids)
 
     def quantized_assign(
@@ -368,12 +393,12 @@ class SuperKMeans:
         centroids: NDArray[np.float32],
     ) -> NDArray[np.uint32]:
         """
-        Assign vectors to their nearest centroid using the trained quantizer.
+        Assign vectors to their nearest centroid in the quantizer's compressed domain.
 
-        Encodes the input vectors and centroids with the fitted quantizer, then searches
-        in the quantized domain. Requires train() to have been called first. Works with
-        any vectors, not just the training data. For quantizer="f32" this is equivalent
-        to assign().
+        Standalone: fits a fresh quantizer on the input vectors, encodes both the vectors
+        and the centroids, then searches in the quantized domain (it does not reuse trained
+        state). Works with any vectors, not just the training data, and can be called before
+        train(). For quantizer="f32" this is equivalent to assign().
 
         Parameters
         ----------
@@ -391,8 +416,6 @@ class SuperKMeans:
         ------
         ValueError
             If inputs have wrong shape, dtype, or memory layout.
-        RuntimeError
-            If the model has not been trained yet.
         """
         vectors = self.validate_numpy_array(vectors, "vectors")
         centroids = self.validate_numpy_array(centroids, "centroids")
@@ -403,7 +426,7 @@ class SuperKMeans:
                 f"got {vectors.shape[1]} and {centroids.shape[1]}"
             )
 
-        return self._cpp_skmeans_obj.quantized_assign(vectors, centroids)
+        return self._quantized_assign_engine().quantized_assign(vectors, centroids)
 
     @property
     def n_clusters_(self) -> int:

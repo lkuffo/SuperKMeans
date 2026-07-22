@@ -26,7 +26,7 @@ int main(int argc, char* argv[]) {
     int n_iters = bench_utils::MAX_ITERS;
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
-    std::string filename = bench_utils::get_data_path(dataset);
+    std::string filename = bench_utils::GetDataPath(dataset);
 
     std::cout << "=== Running algorithm: " << algorithm << " ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
@@ -101,7 +101,7 @@ int main(int argc, char* argv[]) {
         config_map["frozen_centroids"] = cp.frozen_centroids ? "true" : "false";
         config_map["verbose"] = cp.verbose ? "true" : "false";
 
-        bench_utils::write_results_to_csv(
+        bench_utils::WriteResultsToCsv(
             experiment_name,
             algorithm,
             dataset,
