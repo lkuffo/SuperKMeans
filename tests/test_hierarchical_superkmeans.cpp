@@ -700,6 +700,62 @@ TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignPathsValid) {
     }
 }
 
+template <typename WrapperT>
+class HierarchicalQuantizedWrapperTest : public ::testing::Test {};
+
+using HierarchicalWrapperTypes = ::testing::Types<
+    skmeans::HierarchicalSuperKMeansSQ8,
+    skmeans::HierarchicalSuperKMeansLVQ4,
+    skmeans::HierarchicalSuperKMeansRabitQ>;
+TYPED_TEST_SUITE(HierarchicalQuantizedWrapperTest, HierarchicalWrapperTypes);
+
+TYPED_TEST(HierarchicalQuantizedWrapperTest, DefaultConfigForcesSchemeAndTrains) {
+    const size_t n = 15000, d = 128, n_clusters = 300;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+
+    skmeans::HierarchicalSuperKMeansConfig config;
+    config.iters_mesoclustering = 5;
+    config.iters_fineclustering = 5;
+    config.seed = 42;
+
+    TypeParam kmeans(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), n);
+    ASSERT_EQ(centroids.size(), n_clusters * d);
+
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    ASSERT_EQ(assignments.size(), n);
+    for (size_t i = 0; i < n; ++i)
+        ASSERT_LT(assignments[i], n_clusters) << "at " << i;
+}
+
+TEST(HierarchicalQuantizedWrapper, ForcesSchemeOverMismatchedConfig) {
+    const size_t n = 15000, d = 128, n_clusters = 300;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
+
+    skmeans::HierarchicalSuperKMeansConfig config;
+    config.iters_mesoclustering = 5;
+    config.iters_fineclustering = 5;
+    config.seed = 42;
+    config.n_threads = 1;
+    config.early_termination = false;
+    config.quantizer_type = skmeans::QuantizerType::sq8;
+
+    auto wrapped =
+        skmeans::HierarchicalSuperKMeansLVQ4(n_clusters, d, config).Train(data.data(), n);
+
+    skmeans::HierarchicalSuperKMeansConfig forced = config;
+    forced.quantizer_type = skmeans::QuantizerType::lvq4;
+    auto direct =
+        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>(
+            n_clusters, d, forced
+        )
+            .Train(data.data(), n);
+
+    ASSERT_EQ(wrapped.size(), direct.size());
+    for (size_t i = 0; i < wrapped.size(); ++i)
+        EXPECT_FLOAT_EQ(wrapped[i], direct[i]) << "at " << i;
+}
+
 TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignTrainingPointsBlasOnlyReuse) {
     const std::vector<std::pair<skmeans::QuantizerType, const char*>> quantizers = {
         {skmeans::QuantizerType::sq8, "sq8"},

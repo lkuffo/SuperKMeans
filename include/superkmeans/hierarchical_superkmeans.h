@@ -994,4 +994,28 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
     HierarchicalSuperKMeansIterationStats hierarchical_iteration_stats;
 };
 
+template <QuantizerType scheme, DistanceFunction alpha = DistanceFunction::l2>
+class QuantizedHierarchicalSuperKMeans : public HierarchicalSuperKMeans<Quantization::u8, alpha> {
+    static_assert(
+        scheme != QuantizerType::none,
+        "QuantizedHierarchicalSuperKMeans requires sq8, lvq4, or rabitq"
+    );
+
+  public:
+    QuantizedHierarchicalSuperKMeans(
+        size_t n_clusters,
+        size_t dimensionality,
+        HierarchicalSuperKMeansConfig config = {}
+    )
+        : HierarchicalSuperKMeans<Quantization::u8, alpha>(
+              n_clusters,
+              dimensionality,
+              WithForcedQuantizer<scheme>(config)
+          ) {}
+};
+
+using HierarchicalSuperKMeansSQ8 = QuantizedHierarchicalSuperKMeans<QuantizerType::sq8>;
+using HierarchicalSuperKMeansLVQ4 = QuantizedHierarchicalSuperKMeans<QuantizerType::lvq4>;
+using HierarchicalSuperKMeansRabitQ = QuantizedHierarchicalSuperKMeans<QuantizerType::rabitq>;
+
 } // namespace skmeans

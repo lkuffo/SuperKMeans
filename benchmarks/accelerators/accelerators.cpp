@@ -256,8 +256,7 @@ void RunPipeline(
         }
 
         // Iteration stats JSON
-        std::string iter_stats_json =
-            skmeans::SuperKMeansIterationStats::VectorToJson(iter_stats);
+        std::string iter_stats_json = skmeans::SuperKMeansIterationStats::VectorToJson(iter_stats);
 
         // Recall computation
         bench_utils::recall_results_t assign_r10, assign_r100;

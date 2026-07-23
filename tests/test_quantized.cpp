@@ -164,6 +164,50 @@ TEST(QuantizedConstruction, RequiresQuantizerType) {
     EXPECT_THROW(skm_u8(10, 64, config), std::invalid_argument);
 }
 
+template <typename WrapperT>
+class QuantizedWrapperTest : public ::testing::Test {};
+
+using WrapperTypes = ::testing::Types<SuperKMeansSQ8, SuperKMeansLVQ4, SuperKMeansRabitQ>;
+TYPED_TEST_SUITE(QuantizedWrapperTest, WrapperTypes);
+
+TYPED_TEST(QuantizedWrapperTest, DefaultConfigForcesSchemeAndTrains) {
+    const size_t n = 3000, d = 128, n_clusters = 10;
+    std::vector<float> data = MakeBlobs(n, d, n_clusters);
+
+    TypeParam kmeans(n_clusters, d);
+    EXPECT_FALSE(kmeans.IsTrained());
+    auto centroids = kmeans.Train(data.data(), n);
+    EXPECT_TRUE(kmeans.IsTrained());
+    EXPECT_EQ(centroids.size(), n_clusters * d);
+
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    ASSERT_EQ(assignments.size(), n);
+    for (size_t i = 0; i < n; ++i)
+        EXPECT_LT(assignments[i], n_clusters) << "at " << i;
+}
+
+TEST(QuantizedWrapper, ForcesSchemeOverMismatchedConfig) {
+    const size_t n = 3000, d = 128, n_clusters = 10;
+    std::vector<float> data = MakeBlobs(n, d, n_clusters);
+
+    SuperKMeansConfig config;
+    config.iters = 10;
+    config.seed = 7;
+    config.n_threads = 1;
+    config.early_termination = false;
+    config.quantizer_type = QuantizerType::sq8;
+
+    auto wrapped = SuperKMeansLVQ4(n_clusters, d, config).Train(data.data(), n);
+
+    SuperKMeansConfig forced = config;
+    forced.quantizer_type = QuantizerType::lvq4;
+    auto direct = skm_u8(n_clusters, d, forced).Train(data.data(), n);
+
+    ASSERT_EQ(wrapped.size(), direct.size());
+    for (size_t i = 0; i < wrapped.size(); ++i)
+        EXPECT_FLOAT_EQ(wrapped[i], direct[i]) << "at " << i;
+}
+
 TEST_P(QuantizedIntegrationTest, InvalidInputs_Throw) {
     const size_t n = 10000, d = 64, n_clusters = 10;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);

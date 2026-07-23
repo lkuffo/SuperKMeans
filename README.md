@@ -97,7 +97,7 @@ centroids = kmeans.train(data) # We return float32 centroids
 assignments = kmeans.quantized_assign(data, centroids)
 ```
 
-Check our [fully working example](./examples/quantized_clustering.py).
+Check our fully working examples in [Python](./examples/quantized_clustering.py) or [C++](./examples/quantized_clustering.cpp).
 
 ## Documentation
 Check [our wiki](https://github.com/cwida/SuperKMeans/wiki/Documentation) for advanced usage and API reference.

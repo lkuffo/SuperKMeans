@@ -1886,4 +1886,36 @@ class SuperKMeans {
     std::unique_ptr<uint32_t[]> assignments;
     std::vector<SuperKMeansIterationStats> iteration_stats;
 };
+
+template <QuantizerType scheme, typename Config>
+Config WithForcedQuantizer(Config config) {
+    static_assert(scheme != QuantizerType::none, "Wrapper must fix a real quantizer scheme");
+    if (config.quantizer_type != QuantizerType::none && config.quantizer_type != scheme) {
+        std::cout << "[SuperKMeans] Warning: ignoring config.quantizer_type="
+                  << QuantizerTypeName(config.quantizer_type) << ", forcing "
+                  << QuantizerTypeName(scheme) << " (fixed by the wrapper class)" << std::endl;
+    }
+    config.quantizer_type = scheme;
+    return config;
+}
+
+template <QuantizerType scheme, DistanceFunction alpha = DistanceFunction::l2>
+class QuantizedSuperKMeans : public SuperKMeans<Quantization::u8, alpha> {
+    static_assert(
+        scheme != QuantizerType::none,
+        "QuantizedSuperKMeans requires sq8, lvq4, or rabitq"
+    );
+
+  public:
+    QuantizedSuperKMeans(size_t n_clusters, size_t dimensionality, SuperKMeansConfig config = {})
+        : SuperKMeans<Quantization::u8, alpha>(
+              n_clusters,
+              dimensionality,
+              WithForcedQuantizer<scheme>(config)
+          ) {}
+};
+
+using SuperKMeansSQ8 = QuantizedSuperKMeans<QuantizerType::sq8>;
+using SuperKMeansLVQ4 = QuantizedSuperKMeans<QuantizerType::lvq4>;
+using SuperKMeansRabitQ = QuantizedSuperKMeans<QuantizerType::rabitq>;
 } // namespace skmeans

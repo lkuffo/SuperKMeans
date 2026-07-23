@@ -156,6 +156,20 @@ enum class Quantization : uint8_t { f32, u8, u4, b8, f16, bf16 };
 
 enum class QuantizerType : uint8_t { none, sq8, rabitq, lvq4 };
 
+inline const char* QuantizerTypeName(QuantizerType q) {
+    switch (q) {
+    case QuantizerType::none:
+        return "none";
+    case QuantizerType::sq8:
+        return "sq8";
+    case QuantizerType::rabitq:
+        return "rabitq";
+    case QuantizerType::lvq4:
+        return "lvq4";
+    }
+    return "unknown";
+}
+
 // Distance type: float for all quantization types.
 // Even u8 GEMM produces integer dot products, but we convert to float L2 distances
 // so that convergence/recall code works uniformly.

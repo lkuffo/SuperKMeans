@@ -98,9 +98,12 @@ Performance-critical — weigh every copy/allocation.
   Cover it in `tests/test_distance_computers.cpp`.
 - **Add a quantizer** — implement the `IQuantizer<q>` pure-virtual interface
   (`quantizers/quantizer.h`: `Fit`/`Encode`/`Decode`/`ComputeNorms`/`FindNearestNeighbor`/…), add
-  a value to `QuantizerType` (`common.h`), register it in `CreateQuantizer()` (`superkmeans.h`),
-  expose it in the bindings (`bindings.cpp` enum + `__init__.py` `_QUANTIZERS`/`_QUANTIZER_MAP`),
-  and add tests (see Testing).
+  a value to `QuantizerType` + a case in `QuantizerTypeName()` (`common.h`), register it in
+  `CreateQuantizer()` (`superkmeans.h`), expose a thin convenience wrapper — a
+  `using SuperKMeans<Name> = QuantizedSuperKMeans<QuantizerType::…>` alias in `superkmeans.h` and
+  its `HierarchicalSuperKMeans<Name>` twin in `hierarchical_superkmeans.h` (so users never type
+  `Quantization::u8`) — expose it in the bindings (`bindings.cpp` enum + `__init__.py`
+  `_QUANTIZERS`/`_QUANTIZER_MAP`), and add tests (see Testing).
 - **Add a benchmark** — register the target with `skmeans_add_benchmark(<name>.out <source>)` in
   `benchmarks/CMakeLists.txt` (`skmeans_add_faiss_benchmark` for FAISS-linked ones).
 
