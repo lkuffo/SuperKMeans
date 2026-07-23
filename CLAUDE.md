@@ -42,12 +42,17 @@ Docs: `README.md`, `INSTALL.md`, `BENCHMARKING.md`, `CONTRIBUTING.md`, `python/R
 
 **A change isn't done until all pass. Run in the FOREGROUND — never background these.**
 
-1. **Format** — `./scripts/format.sh`, then `./scripts/format_check.sh` clean.
-2. **Build** — `cmake . -DSKMEANS_COMPILE_TESTS=ON && make -j$(nproc) tests`, no errors.
-3. **C++ tests** — `ctest --output-on-failure` all pass (a few parametrized cases skip by design).
-4. **Lint** — `./scripts/tidy_check.sh`: no `.clang-tidy` warnings from `include/superkmeans/`.
-5. **Python** — `venv/bin/pip install .` (builds the bindings), then `venv/bin/pytest python/tests/`.
-6. **CLAUDE.md accurate** — if the change invalidated anything here (paths, commands, contracts,
+1. **Hierarchical parity (first, before building)** — if the change touched `superkmeans.h`,
+   evaluate whether it must also be applied to `hierarchical_superkmeans.h`.
+   `HierarchicalSuperKMeans` inherits `SuperKMeans` (ctor + shared members propagate via
+   delegation) but **overrides `Train` and the clustering pipeline** — so edits to the
+   training/pipeline path do NOT automatically carry over. Apply/verify there too.
+2. **Format** — `./scripts/format.sh`, then `./scripts/format_check.sh` clean.
+3. **Build** — `cmake . -DSKMEANS_COMPILE_TESTS=ON && make -j$(nproc) tests`, no errors.
+4. **C++ tests** — `ctest --output-on-failure` all pass (a few parametrized cases skip by design).
+5. **Lint** — `./scripts/tidy_check.sh`: no `.clang-tidy` warnings from `include/superkmeans/`.
+6. **Python** — `venv/bin/pip install .` (builds the bindings), then `venv/bin/pytest python/tests/`.
+7. **CLAUDE.md accurate** — if the change invalidated anything here (paths, commands, contracts,
    thresholds, gotchas, SIMD org, style), update this file in the same change.
 
 New feature ⇒ ship a unit test with it (C++ in `tests/`, Python in `python/tests/` if exposed).

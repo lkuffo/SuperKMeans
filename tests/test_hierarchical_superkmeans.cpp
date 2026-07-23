@@ -139,6 +139,19 @@ TEST_F(HierarchicalSuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     }
 }
 
+TEST_F(HierarchicalSuperKMeansTest, FlatRejectsQuantizerType) {
+    EXPECT_THROW(
+        ([&]() {
+            skmeans::HierarchicalSuperKMeansConfig config;
+            config.quantizer_type = skmeans::QuantizerType::sq8;
+            skmeans::HierarchicalSuperKMeans<
+                skmeans::Quantization::f32,
+                skmeans::DistanceFunction::l2>(10, 64, config);
+        }()),
+        std::invalid_argument
+    );
+}
+
 TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     const size_t n = 10000;
     const size_t d = 64;

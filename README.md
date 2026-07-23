@@ -84,7 +84,7 @@ int main(int argc, char* argv[]) {
 Check our [examples](./examples/) for fully working examples in Python and C++.
 
 ## Quantized Clustering
-SuperKMeans support **clustering quantized vectors**, substantially accelerating clustering and barely affecting clustering quality. We support 8-bit scalar quantization, [LVQ](https://arxiv.org/pdf/2304.04759), and [RabitQ](https://github.com/VectorDB-NTU/RaBitQ-Library). You give us `float32` vectors and we handle the rest:
+SuperKMeans supports **clustering quantized vectors**, substantially accelerating clustering and barely affecting clustering quality. We support 8-bit scalar quantization, [LVQ](https://arxiv.org/pdf/2304.04759), and [RabitQ](https://github.com/VectorDB-NTU/RaBitQ-Library). You give us `float32` vectors and we handle the rest:
 
 ```py
 kmeans = SuperKMeans(

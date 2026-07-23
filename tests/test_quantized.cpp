@@ -159,6 +159,11 @@ TEST_P(QuantizedIntegrationTest, QuantizedAssign_RepeatedDifferentData) {
         << "QuantizedAssign did not reflect the second (different) dataset";
 }
 
+TEST(QuantizedConstruction, RequiresQuantizerType) {
+    SuperKMeansConfig config;
+    EXPECT_THROW(skm_u8(10, 64, config), std::invalid_argument);
+}
+
 TEST_P(QuantizedIntegrationTest, InvalidInputs_Throw) {
     const size_t n = 10000, d = 64, n_clusters = 10;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);

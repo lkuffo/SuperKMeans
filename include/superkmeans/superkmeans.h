@@ -216,6 +216,20 @@ class SuperKMeans {
                 std::to_string(dimensionality)
             );
         }
+        if constexpr (q == Quantization::f32) {
+            if (config.quantizer_type != QuantizerType::none) {
+                throw std::invalid_argument(
+                    "SuperKMeans<f32> requires quantizer_type == none; use SuperKMeans<u8> for "
+                    "sq8/lvq4/rabitq"
+                );
+            }
+        } else {
+            if (config.quantizer_type == QuantizerType::none) {
+                throw std::invalid_argument(
+                    "quantized SuperKMeans requires quantizer_type sq8, lvq4, or rabitq (got none)"
+                );
+            }
+        }
         n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
         g_n_threads = n_threads;
         pruner = std::make_unique<pruner_t>(dimensionality, PRUNER_INITIAL_THRESHOLD, config.seed);
@@ -614,7 +628,7 @@ class SuperKMeans {
      * Leverages the assignments from training for a faster
      * assignment than brute force Assign().
      *
-     * TODO(@lkuffo, high): Signature is misleading, as vectors 
+     * TODO(@lkuffo, high): Signature is misleading, as vectors
      * and centroids incoming in params are not used
      *
      * @param vectors The training data matrix (row-major, n_vectors x d)
@@ -1852,7 +1866,7 @@ class SuperKMeans {
     std::unique_ptr<float[]> centroid_norms;
     std::unique_ptr<size_t[]> sampled_indices;
 
-    // Quantization state 
+    // Quantization state
     std::unique_ptr<IQuantizer<q>> quantizer;
     size_t code_size = 0; // bytes per encoded vector (= d for SQ8, variable for RaBitQ)
     std::unique_ptr<vector_value_t[]> quantized_data;

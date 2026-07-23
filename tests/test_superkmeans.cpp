@@ -90,6 +90,19 @@ TEST_F(SuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     }
 }
 
+TEST_F(SuperKMeansTest, FlatRejectsQuantizerType) {
+    EXPECT_THROW(
+        ([&]() {
+            skmeans::SuperKMeansConfig config;
+            config.quantizer_type = skmeans::QuantizerType::sq8;
+            skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                10, 64, config
+            );
+        }()),
+        std::invalid_argument
+    );
+}
+
 TEST_F(SuperKMeansTest, InvalidInputs_ThrowExceptions) {
     const size_t n = 10000;
     const size_t d = 32;
