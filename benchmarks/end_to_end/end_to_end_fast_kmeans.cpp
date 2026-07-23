@@ -183,6 +183,17 @@ int main(int argc, char* argv[]) {
         );
         bench_utils::print_recall_results(results_knn_100, 100);
 
+        std::cout << "\n--- Computing Internal Metrics ---" << std::endl;
+        std::vector<float> data_row(n * d);
+        for (size_t i = 0; i < n * d; ++i) {
+            data_row[i] = static_cast<float>(x.data[i]);
+        }
+        auto internal_metrics = bench_utils::compute_internal_metrics(
+            data_row.data(), centroids_row.data(), assignments_vec, n, n_clusters, d
+        );
+        std::cout << "Calinski-Harabasz: " << internal_metrics.calinski_harabasz
+                  << "  Silhouette: " << internal_metrics.silhouette << std::endl;
+
         std::unordered_map<std::string, std::string> config_map;
         config_map["algorithm"] = "\"" + variant + "\"";
         config_map["algorithm_class"] = "\"" + alg_it->second + "\"";
@@ -190,6 +201,8 @@ int main(int argc, char* argv[]) {
         config_map["actual_iterations"] = std::to_string(actual_iterations);
         config_map["seed"] = "42";
         config_map["precision"] = "\"float64\"";
+        config_map["calinski_harabasz"] = std::to_string(internal_metrics.calinski_harabasz);
+        config_map["silhouette"] = std::to_string(internal_metrics.silhouette);
 
         bench_utils::write_results_to_csv(
             experiment_name,

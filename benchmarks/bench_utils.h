@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Eigen/Dense>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -8,6 +9,8 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
+#include <omp.h>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -362,6 +365,119 @@ inline void print_recall_results(
             std_recall
         );
     }
+}
+
+/**
+ * @brief Internal (intrinsic) clustering-quality metrics.
+ *
+ * All quantities use squared/Euclidean distance to centroids, consistent with the
+ * k-means (WCSS) objective.
+ */
+struct InternalMetrics {
+    double wgss = 0.0;              // within-cluster sum of squares (== WCSS objective)
+    double bgss = 0.0;             // between-cluster sum of squares
+    double calinski_harabasz = 0.0;
+    double silhouette = 0.0;       // mean centroid-based (simplified) silhouette
+};
+
+/**
+ * @brief Compute the Calinski-Harabasz index and a centroid-based simplified
+ * Silhouette coefficient from a clustering result.
+ *
+ * Calinski-Harabasz = (BGSS / (k-1)) / (WGSS / (n-k)); higher is better.
+ * Simplified silhouette: per point, a = distance to its assigned centroid,
+ * b = distance to the nearest other centroid, s = (b-a)/max(a,b); mean over points.
+ *
+ * Distances to all centroids are computed in row-blocks via a per-block GEMM so the
+ * full n x n_clusters matrix is never materialized. Cost is one assignment-style pass.
+ *
+ * @tparam AssignmentType Type of assignment values (uint32_t, faiss::idx_t, ...)
+ */
+template <typename AssignmentType>
+inline InternalMetrics compute_internal_metrics(
+    const float* data,
+    const float* centroids,
+    const std::vector<AssignmentType>& assignments,
+    size_t n,
+    size_t n_clusters,
+    size_t d
+) {
+    using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+    Eigen::Map<const MatrixR> centroids_map(centroids, n_clusters, d);
+
+    std::vector<float> centroid_norms(n_clusters);
+    for (size_t j = 0; j < n_clusters; ++j) {
+        centroid_norms[j] = centroids_map.row(j).squaredNorm();
+    }
+
+    std::vector<size_t> cluster_sizes(n_clusters, 0);
+    for (size_t i = 0; i < n; ++i) {
+        cluster_sizes[static_cast<size_t>(assignments[i])]++;
+    }
+
+    constexpr size_t BLOCK = 1024;
+    const int max_threads = omp_get_max_threads();
+    std::vector<Eigen::RowVectorXd> partial_sums(
+        max_threads, Eigen::RowVectorXd::Zero(static_cast<Eigen::Index>(d))
+    );
+    double wgss = 0.0;
+    double silhouette_sum = 0.0;
+
+#pragma omp parallel
+    {
+        Eigen::RowVectorXd& psum = partial_sums[omp_get_thread_num()];
+        MatrixR dots;
+#pragma omp for reduction(+ : wgss, silhouette_sum) schedule(dynamic)
+        for (size_t start = 0; start < n; start += BLOCK) {
+            const size_t rows = std::min(BLOCK, n - start);
+            Eigen::Map<const MatrixR> block(data + start * d, rows, d);
+            dots.noalias() = block * centroids_map.transpose(); // rows x n_clusters
+            psum += block.colwise().sum().cast<double>();
+            for (size_t i = 0; i < rows; ++i) {
+                const size_t assigned = static_cast<size_t>(assignments[start + i]);
+                const float point_norm = block.row(i).squaredNorm();
+                const float a2 = std::max(
+                    0.0f, point_norm + centroid_norms[assigned] - 2.0f * dots(i, assigned)
+                );
+                float b2 = std::numeric_limits<float>::max();
+                for (size_t j = 0; j < n_clusters; ++j) {
+                    if (j == assigned) {
+                        continue;
+                    }
+                    const float dist2 = point_norm + centroid_norms[j] - 2.0f * dots(i, j);
+                    b2 = std::min(b2, dist2);
+                }
+                b2 = std::max(0.0f, b2);
+                wgss += a2;
+                const float a = std::sqrt(a2);
+                const float b = std::sqrt(b2);
+                const float denom = std::max(a, b);
+                silhouette_sum += denom > 1e-12f ? static_cast<double>((b - a) / denom) : 0.0;
+            }
+        }
+    }
+
+    Eigen::RowVectorXd sum = Eigen::RowVectorXd::Zero(static_cast<Eigen::Index>(d));
+    for (const auto& p : partial_sums) {
+        sum += p;
+    }
+    const Eigen::RowVectorXf global_mean = (sum / static_cast<double>(n)).cast<float>();
+
+    double bgss = 0.0;
+    for (size_t j = 0; j < n_clusters; ++j) {
+        bgss += static_cast<double>(cluster_sizes[j]) *
+                (centroids_map.row(j) - global_mean).squaredNorm();
+    }
+
+    InternalMetrics m;
+    m.wgss = wgss;
+    m.bgss = bgss;
+    m.silhouette = silhouette_sum / static_cast<double>(n);
+    if (n_clusters > 1 && n > n_clusters && wgss > 0.0) {
+        m.calinski_harabasz =
+            (bgss / static_cast<double>(n_clusters - 1)) / (wgss / static_cast<double>(n - n_clusters));
+    }
+    return m;
 }
 
 /**

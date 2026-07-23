@@ -2,6 +2,7 @@
 
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/pdx/utils.h"
+#include <memory>
 #include <omp.h>
 #include <random>
 
@@ -189,31 +190,40 @@ class ADSamplingPruner {
             return;
         }
 #endif
-        const char trans_a = 'T';
-        const char trans_b = 'N';
-        int m = static_cast<int>(num_dimensions);
-        int n_blas = static_cast<int>(n);
-        int k = static_cast<int>(num_dimensions);
-        float alpha = 1.0f;
-        float beta = 0.0f;
-        int lda = static_cast<int>(num_dimensions);
-        int ldb = static_cast<int>(num_dimensions);
-        int ldc = static_cast<int>(num_dimensions);
-        sgemm_(
-            &trans_a,
-            &trans_b,
-            &m,
-            &n_blas,
-            &k,
-            &alpha,
-            matrix.data(),
-            &lda,
-            vectors,
-            &ldb,
-            &beta,
-            out_buffer,
-            &ldc
-        );
+        RotateBlockGemm(vectors, out_buffer, n);
+    }
+
+    /**
+     * @brief In-place variant of Rotate (no full-size output buffer).
+     *
+     * The DCT/FFTW path is already safe to run in-place, so it is delegated to Rotate.
+     * The GEMM path cannot alias input and output in a single sgemm call, so it streams
+     * the input in row-blocks of ROTATION_INPLACE_BLOCK_ROWS, rotating each block into a
+     * small scratch buffer and copying it back over the original rows.
+     *
+     * @param vectors Input/output vectors (row-major, n × num_dimensions)
+     * @param n Number of vectors to rotate
+     */
+    void RotateInPlace(float* SKM_RESTRICT vectors, const uint32_t n) {
+#ifdef HAS_FFTW
+#ifdef __AVX2__
+        if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION && IsPowerOf2(num_dimensions)) {
+#else
+        if (num_dimensions >= D_THRESHOLD_FOR_DCT_ROTATION) {
+#endif
+            Rotate(vectors, vectors, n);
+            return;
+        }
+#endif
+        const uint32_t block_rows = ROTATION_INPLACE_BLOCK_ROWS;
+        auto block_buffer =
+            std::unique_ptr<float[]>(new float[static_cast<size_t>(block_rows) * num_dimensions]);
+        for (uint32_t start = 0; start < n; start += block_rows) {
+            const uint32_t rows = std::min(block_rows, n - start);
+            float* block = vectors + static_cast<size_t>(start) * num_dimensions;
+            RotateBlockGemm(block, block_buffer.get(), rows);
+            std::copy_n(block_buffer.get(), static_cast<size_t>(rows) * num_dimensions, block);
+        }
     }
 
     /**
@@ -281,6 +291,43 @@ class ADSamplingPruner {
     float epsilon0 = 1.5f;            // Pruning aggressiveness parameter
     MatrixR matrix;                   // Rotation matrix (or sign vector for DCT)
     std::vector<uint32_t> flip_masks; // Sign flip masks for DCT-based rotation
+
+    /**
+     * @brief Rotates n vectors via a single GEMM: out = vectors * matrix^T.
+     *
+     * out_buffer must not alias vectors (sgemm forbids aliasing C with A/B).
+     */
+    void RotateBlockGemm(
+        const float* SKM_RESTRICT vectors,
+        float* SKM_RESTRICT out_buffer,
+        const uint32_t n
+    ) {
+        const char trans_a = 'T';
+        const char trans_b = 'N';
+        int m = static_cast<int>(num_dimensions);
+        int n_blas = static_cast<int>(n);
+        int k = static_cast<int>(num_dimensions);
+        float alpha = 1.0f;
+        float beta = 0.0f;
+        int lda = static_cast<int>(num_dimensions);
+        int ldb = static_cast<int>(num_dimensions);
+        int ldc = static_cast<int>(num_dimensions);
+        sgemm_(
+            &trans_a,
+            &trans_b,
+            &m,
+            &n_blas,
+            &k,
+            &alpha,
+            matrix.data(),
+            &lda,
+            vectors,
+            &ldb,
+            &beta,
+            out_buffer,
+            &ldc
+        );
+    }
 
     /**
      * @brief Computes the pruning ratio for a given number of visited dimensions.

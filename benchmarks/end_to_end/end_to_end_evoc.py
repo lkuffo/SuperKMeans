@@ -16,7 +16,7 @@ import numpy as np
 import time
 import evoc
 from bench_utils import (DATASET_PARAMS, load_ground_truth, compute_recall,
-                         print_recall_results, KNN_VALUES, Timer, write_results_to_csv,
+                         print_recall_results, compute_internal_metrics, KNN_VALUES, Timer, write_results_to_csv,
                          MAX_ITERS, N_QUERIES, ANGULAR_DATASETS, get_default_n_clusters,
                          get_data_path, get_query_path, get_ground_truth_path)
 
@@ -136,9 +136,16 @@ if __name__ == "__main__":
         )
         print_recall_results(results_knn_100, 100)
 
+        print("\n--- Computing Internal Metrics ---")
+        internal_metrics = compute_internal_metrics(data, centroids, assignments)
+        print(f"Calinski-Harabasz: {internal_metrics['calinski_harabasz']:.4f}  "
+              f"Silhouette: {internal_metrics['silhouette']:.4f}")
+
         # Record basic configuration for reproducibility.
         # Use getattr with defaults to support multiple EVoC versions.
         config_dict = {
+            "calinski_harabasz": internal_metrics["calinski_harabasz"],
+            "silhouette": internal_metrics["silhouette"],
             "noise_level": str(getattr(clusterer, "noise_level", "NA")),
             "base_min_cluster_size": str(
                 getattr(clusterer, "base_min_cluster_size", "NA")

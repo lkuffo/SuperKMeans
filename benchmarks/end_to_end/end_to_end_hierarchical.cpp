@@ -142,6 +142,13 @@ int main(int argc, char* argv[]) {
         );
         bench_utils::print_recall_results(results_knn_100, 100);
 
+        std::cout << "\n--- Computing Internal Metrics ---" << std::endl;
+        auto internal_metrics = bench_utils::compute_internal_metrics(
+            data.data(), centroids.data(), assignments, n, n_clusters, d
+        );
+        std::cout << "Calinski-Harabasz: " << internal_metrics.calinski_harabasz
+                  << "  Silhouette: " << internal_metrics.silhouette << std::endl;
+
         std::unordered_map<std::string, std::string> config_map;
         config_map["iters"] = std::to_string(config.iters);
         config_map["sampling_fraction"] = std::to_string(config.sampling_fraction);
@@ -156,6 +163,8 @@ int main(int argc, char* argv[]) {
         config_map["ann_explore_fraction"] = std::to_string(config.ann_explore_fraction);
         config_map["unrotate_centroids"] = config.unrotate_centroids ? "true" : "false";
         config_map["verbose"] = config.verbose ? "true" : "false";
+        config_map["calinski_harabasz"] = std::to_string(internal_metrics.calinski_harabasz);
+        config_map["silhouette"] = std::to_string(internal_metrics.silhouette);
 
         bench_utils::write_results_to_csv(
             experiment_name,

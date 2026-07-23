@@ -61,6 +61,9 @@ static inline constexpr float PROPORTION_HORIZONTAL_DIM = 0.75;
 static inline constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;
 static inline constexpr size_t H_DIM_SIZE = 64;
 
+// Row-block size for the streaming in-place GEMM rotation (RotateInPlace)
+static inline constexpr uint32_t ROTATION_INPLACE_BLOCK_ROWS = 4096;
+
 static inline constexpr uint32_t MIN_PARTIAL_D = 16;
 
 // Thresholds below which GEMM-only (no pruning) is used

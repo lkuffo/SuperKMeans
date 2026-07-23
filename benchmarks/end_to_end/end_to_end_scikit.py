@@ -16,7 +16,7 @@ from sklearn.cluster import KMeans
 import numpy as np
 import time
 from bench_utils import (DATASET_PARAMS, load_ground_truth, compute_recall,
-                         print_recall_results, KNN_VALUES, Timer, write_results_to_csv,
+                         print_recall_results, compute_internal_metrics, KNN_VALUES, Timer, write_results_to_csv,
                          MAX_ITERS, N_QUERIES, ANGULAR_DATASETS, get_default_n_clusters,
                          get_data_path, get_query_path, get_ground_truth_path)
 
@@ -91,7 +91,14 @@ if __name__ == "__main__":
         results_knn_100 = compute_recall(gt_dict, assignments, queries, centroids, num_centroids, 100)
         print_recall_results(results_knn_100, 100)
 
+        print("\n--- Computing Internal Metrics ---")
+        internal_metrics = compute_internal_metrics(data, centroids, assignments)
+        print(f"Calinski-Harabasz: {internal_metrics['calinski_harabasz']:.4f}  "
+              f"Silhouette: {internal_metrics['silhouette']:.4f}")
+
         config_dict = {
+            "calinski_harabasz": internal_metrics["calinski_harabasz"],
+            "silhouette": internal_metrics["silhouette"],
             "init": str(km.init),
             "n_init": str(km.n_init),
             "max_iter": str(km.max_iter),

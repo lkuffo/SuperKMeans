@@ -214,6 +214,71 @@ def compute_recall(gt_dict, assignments, queries, centroids, num_centroids, knn)
     return results
 
 
+def compute_internal_metrics(data, centroids, assignments, block_size=4096):
+    """Compute internal (intrinsic) clustering-quality metrics.
+
+    Mirrors the C++ bench_utils::compute_internal_metrics. All quantities use
+    squared/Euclidean distance to centroids, consistent with the k-means (WCSS)
+    objective. Distances to all centroids are computed in row-blocks so the full
+    n x n_clusters matrix is never materialized.
+
+    Calinski-Harabasz = (BGSS / (k-1)) / (WGSS / (n-k)); higher is better.
+    Simplified silhouette: per point, a = distance to its assigned centroid,
+    b = distance to the nearest other centroid, s = (b-a)/max(a,b); mean over points.
+
+    Args:
+        data: (n, d) array of points
+        centroids: (n_clusters, d) array of centroids
+        assignments: (n,) array of cluster indices
+
+    Returns:
+        Dict with keys: wgss, bgss, calinski_harabasz, silhouette
+    """
+    data = np.asarray(data, dtype=np.float32)
+    centroids = np.asarray(centroids, dtype=np.float32)
+    assignments = np.asarray(assignments)
+    n, d = data.shape
+    n_clusters = centroids.shape[0]
+
+    centroid_norms = np.sum(centroids ** 2, axis=1)  # (k,)
+    cluster_sizes = np.bincount(assignments, minlength=n_clusters)  # (k,)
+
+    wgss = 0.0
+    silhouette_sum = 0.0
+    point_sum = np.zeros(d, dtype=np.float64)
+    for start in range(0, n, block_size):
+        block = data[start:start + block_size]  # (b, d)
+        rows = block.shape[0]
+        point_sum += block.sum(axis=0, dtype=np.float64)
+        point_norms = np.sum(block ** 2, axis=1, keepdims=True)  # (b, 1)
+        dist2 = point_norms + centroid_norms[None, :] - 2.0 * (block @ centroids.T)  # (b, k)
+        np.maximum(dist2, 0.0, out=dist2)
+        rows_range = np.arange(rows)
+        idx = assignments[start:start + rows]
+        a2 = dist2[rows_range, idx].copy()
+        dist2[rows_range, idx] = np.inf  # exclude the assigned centroid from the b term
+        b2 = dist2.min(axis=1)
+        wgss += float(a2.sum())
+        a = np.sqrt(a2)
+        b = np.sqrt(b2)
+        denom = np.maximum(a, b)
+        s = np.where(denom > 1e-12, (b - a) / denom, 0.0)
+        silhouette_sum += float(s.sum())
+
+    global_mean = (point_sum / n).astype(np.float32)
+    bgss = float(np.sum(cluster_sizes * np.sum((centroids - global_mean) ** 2, axis=1)))
+    silhouette = silhouette_sum / n
+    calinski_harabasz = 0.0
+    if n_clusters > 1 and n > n_clusters and wgss > 0.0:
+        calinski_harabasz = (bgss / (n_clusters - 1)) / (wgss / (n - n_clusters))
+    return {
+        "wgss": wgss,
+        "bgss": bgss,
+        "calinski_harabasz": calinski_harabasz,
+        "silhouette": silhouette,
+    }
+
+
 def print_recall_results(results, knn):
     print(f"\n--- Recall@{knn} ---")
     for centroids_to_explore, explore_frac, recall, std_recall, avg_vectors in results:
