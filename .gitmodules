@@ -4,6 +4,3 @@
 [submodule "extern/findFFTW"]
 	path = extern/findFFTW
 	url = https://github.com/egpbos/findFFTW.git
-[submodule "extern/fast-kmeans"]
-	path = extern/fast-kmeans
-	url = https://github.com/alibeklfc/fast-kmeans.git

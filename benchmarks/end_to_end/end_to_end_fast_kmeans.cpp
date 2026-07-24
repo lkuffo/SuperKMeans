@@ -18,6 +18,7 @@
 #include "heap_kmeans.h"
 #include "compare_kmeans.h"
 #include "beta_hamerly_kmeans.h"
+#include "beta_kmeans.h"
 
 #include "bench_utils.h"
 
@@ -31,6 +32,7 @@ const std::unordered_map<std::string, std::string> VALID_ALGORITHMS = {
     {"heap", "HeapKmeans"},
     {"compare", "CompareKmeans"},
     {"beta_hamerly", "BetaHamerlyKmeans"},
+    {"beta_kmeans", "BetaKmeans"},
 };
 
 Kmeans* create_algorithm(const std::string& variant, size_t n_clusters) {
@@ -47,6 +49,7 @@ Kmeans* create_algorithm(const std::string& variant, size_t n_clusters) {
     if (variant == "heap")    return new HeapKmeans();
     if (variant == "compare") return new CompareKmeans();
     if (variant == "beta_hamerly") return new BetaHamerlyKmeans();
+    if (variant == "beta_kmeans") return new BetaKmeans();
     return nullptr;
 }
 
@@ -72,7 +75,7 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t d = it->second.second;
     const size_t n_clusters = bench_utils::get_default_n_clusters(n);
-    const int n_iters = 10; // bench_utils::MAX_ITERS;
+    const int n_iters = bench_utils::MAX_ITERS;
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
@@ -80,7 +83,7 @@ int main(int argc, char* argv[]) {
               << " (" << alg_it->second << ") ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters << std::endl;
-    std::cout << "NOTE: fast-kmeans uses double precision (float64) internally" << std::endl;
+    std::cout << "NOTE: fast-kmeans (vendored float copy) uses float32 internally" << std::endl;
 
     // Load raw float32 data from binary file
     std::string filename = bench_utils::get_data_path(dataset);
@@ -120,7 +123,14 @@ int main(int argc, char* argv[]) {
 
     // Create and run algorithm
     Kmeans* algo = create_algorithm(variant, n_clusters);
-    algo->initialize(&x, static_cast<unsigned short>(n_clusters), assignment, static_cast<int>(THREADS));
+    // fast-kmeans' BetaKmeans (plain "beta") is not thread-safe (its runThread races on
+    // shared members), so it runs single-threaded; all other variants parallelize.
+    int algo_threads = (variant == "beta_kmeans") ? 1 : static_cast<int>(THREADS);
+    if (algo_threads == 1 && variant == "beta_kmeans") {
+        std::cout << "NOTE: beta_kmeans runs single-threaded (its implementation is not thread-safe)"
+                  << std::endl;
+    }
+    algo->initialize(&x, static_cast<unsigned short>(n_clusters), assignment, algo_threads);
 
     bench_utils::TicToc timer;
     timer.Tic();

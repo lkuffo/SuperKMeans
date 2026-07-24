@@ -133,23 +133,48 @@ target_link_libraries(cohere_bench_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(cohere_bench_faiss.out cohere_bench_faiss.cpp)
 target_link_libraries(cohere_bench_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
 
-# fast-kmeans library (Hamerly, Elkan, Annulus, Drake, etc.)
-# set(FAST_KMEANS_DIR ${CMAKE_SOURCE_DIR}/extern/fast-kmeans/src)
-# file(GLOB FAST_KMEANS_SRCS ${FAST_KMEANS_DIR}/*.cpp)
-# # Exclude driver files and python bindings from the library
-# list(FILTER FAST_KMEANS_SRCS EXCLUDE REGEX "driver-.*\\.cpp$")
-# list(FILTER FAST_KMEANS_SRCS EXCLUDE REGEX "fastkmeans.*\\.cpp$")
-# list(FILTER FAST_KMEANS_SRCS EXCLUDE REGEX "py.*\\.cpp$")
+# fast-kmeans library (Hamerly, Elkan, Annulus, Drake, beta-kmeans, etc.)
+# Vendored float copy of the extern/fast-kmeans submodule (double->float for a fair
+# float-vs-float comparison with the other competitors); submodule kept as provenance.
+set(FAST_KMEANS_DIR ${CMAKE_SOURCE_DIR}/extern/fast-kmeans-float)
+file(GLOB FAST_KMEANS_SRCS ${FAST_KMEANS_DIR}/*.cpp)
+# Exclude driver files (they contain main())
+list(FILTER FAST_KMEANS_SRCS EXCLUDE REGEX "driver-.*\\.cpp$")
 
-# add_library(fast_kmeans STATIC ${FAST_KMEANS_SRCS})
-# target_include_directories(fast_kmeans PUBLIC ${FAST_KMEANS_DIR})
-# target_compile_definitions(fast_kmeans PUBLIC USE_THREADS)
-# target_link_libraries(fast_kmeans PUBLIC pthread)
-# target_compile_options(fast_kmeans PRIVATE -w) # Suppress warnings from third-party code
+# macOS lacks pthread_barrier_t (used by fast-kmeans under USE_THREADS); force-include a shim.
+set(PTHREAD_BARRIER_SHIM ${CMAKE_SOURCE_DIR}/benchmarks/compat/pthread_barrier_shim.h)
 
-# # fast-kmeans benchmark on real datasets with recall computation
-# add_executable(end_to_end_fast_kmeans.out end_to_end/end_to_end_fast_kmeans.cpp)
-# target_link_libraries(end_to_end_fast_kmeans.out PRIVATE fast_kmeans ${BENCH_COMMON_LIBS})
+add_library(fast_kmeans STATIC ${FAST_KMEANS_SRCS})
+target_include_directories(fast_kmeans PUBLIC ${FAST_KMEANS_DIR})
+target_compile_definitions(fast_kmeans PUBLIC USE_THREADS)
+target_link_libraries(fast_kmeans PUBLIC pthread)
+target_compile_options(fast_kmeans PRIVATE -w -include ${PTHREAD_BARRIER_SHIM}) # Suppress warnings from third-party code
+
+# fast-kmeans benchmark on real datasets with recall computation
+add_executable(end_to_end_fast_kmeans.out end_to_end/end_to_end_fast_kmeans.cpp)
+target_link_libraries(end_to_end_fast_kmeans.out PRIVATE fast_kmeans ${BENCH_COMMON_LIBS})
+target_compile_options(end_to_end_fast_kmeans.out PRIVATE -include ${PTHREAD_BARRIER_SHIM})
+
+# Marigold competitor (Mortensen et al., VLDB 2023), vendored + adapted in extern/marigold
+add_executable(end_to_end_marigold.out end_to_end/end_to_end_marigold.cpp)
+target_include_directories(end_to_end_marigold.out PRIVATE ${CMAKE_SOURCE_DIR}/extern/marigold)
+target_link_libraries(end_to_end_marigold.out PRIVATE ${BENCH_COMMON_LIBS})
+target_compile_options(end_to_end_marigold.out PRIVATE -w) # third-party warnings
+
+# Dask-means competitor (arXiv 2412.02244), vendored + adapted in extern/daskmeans
+set(DASKMEANS_DIR ${CMAKE_SOURCE_DIR}/extern/daskmeans)
+file(GLOB DASKMEANS_SRCS
+    ${DASKMEANS_DIR}/algorithms/*.cpp
+    ${DASKMEANS_DIR}/structure/*.cpp
+    ${DASKMEANS_DIR}/utils/*.cpp)
+add_library(daskmeans STATIC ${DASKMEANS_SRCS})
+target_include_directories(daskmeans PUBLIC
+    ${DASKMEANS_DIR}/algorithms ${DASKMEANS_DIR}/structure ${DASKMEANS_DIR}/utils)
+target_compile_options(daskmeans PRIVATE -w) # third-party warnings
+
+add_executable(end_to_end_daskmeans.out end_to_end/end_to_end_daskmeans.cpp)
+target_link_libraries(end_to_end_daskmeans.out PRIVATE daskmeans ${BENCH_COMMON_LIBS})
+target_compile_options(end_to_end_daskmeans.out PRIVATE -w)
 
 add_custom_target(benchmarks
     DEPENDS
@@ -176,4 +201,7 @@ add_custom_target(benchmarks
         microbenchmark_rotation.out
         cohere_bench_superkmeans.out
         cohere_bench_faiss.out
+        end_to_end_fast_kmeans.out
+        end_to_end_marigold.out
+        end_to_end_daskmeans.out
 )

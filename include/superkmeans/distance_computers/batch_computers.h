@@ -344,6 +344,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                     batch_n_y = n_y - j;
                 }
                 // ABLATION: First y_batch uses full GEMM + brute-force min, no pruning
+                /*
                 if (j == 0) {
                     {
                         SKM_PROFILE_SCOPE("search/1st_blas");
@@ -377,6 +378,7 @@ class BatchComputer<DistanceFunction::l2, Quantization::f32> {
                     }
                     continue;
                 }
+                */
                 // Normal flow for j > 0: partial GEMM + pruning
                 {
                     SKM_PROFILE_SCOPE("search/blas");
