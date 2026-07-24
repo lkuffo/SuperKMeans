@@ -1,5 +1,6 @@
 #include "Centroid.h"
 #include "../utils/Utils.h"
+#include <algorithm>
 
 
 Centroid::Centroid(int point_id, std::vector<float> coordinate, int centroid_id)
