@@ -83,6 +83,12 @@ target_link_libraries(sampling_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 add_executable(sampling_hierarchical_superkmeans.out sampling/sampling_hierarchical_superkmeans.cpp)
 target_link_libraries(sampling_hierarchical_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
 
+add_executable(iters_superkmeans.out iters/iters_superkmeans.cpp)
+target_link_libraries(iters_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})
+
+add_executable(iters_faiss.out iters/iters_faiss.cpp)
+target_link_libraries(iters_faiss.out PRIVATE ${FAISS_COMMON_LIBS} ${BENCH_COMMON_LIBS})
+
 # Pareto benchmark (grid search)
 add_executable(pareto_superkmeans.out pareto/pareto_superkmeans.cpp)
 target_link_libraries(pareto_superkmeans.out PRIVATE ${BENCH_COMMON_LIBS})

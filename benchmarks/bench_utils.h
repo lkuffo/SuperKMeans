@@ -102,6 +102,16 @@ const std::vector<float> EXPLORE_FRACTIONS = {0.001f,  0.002f,  0.003f,  0.004f,
                                               0.0325f, 0.0350f, 0.0375f, 0.0400f, 0.0425f, 0.0450f,
                                               0.0475f, 0.0500f, 0.1f};
 
+// Fine exploration grid for the iters experiments: 0.10% .. 20.00% of centroids in
+// 0.10% steps (200 points), labelled @0.10 .. @20.00 in the CSV.
+const std::vector<float> ITERS_EXPLORE_FRACTIONS = [] {
+    std::vector<float> v;
+    v.reserve(200);
+    for (int i = 1; i <= 200; ++i)
+        v.push_back(static_cast<float>(i) * 0.001f);
+    return v;
+}();
+
 // KNN values to test
 const std::vector<int> KNN_VALUES = {10, 100};
 
@@ -218,7 +228,8 @@ std::vector<std::tuple<int, float, float, float, float>> compute_recall(
     size_t n_queries,
     size_t n_clusters,
     size_t d,
-    int knn
+    int knn,
+    const std::vector<float>& explore_fractions = EXPLORE_FRACTIONS
 ) {
     // Count cluster sizes to compute vectors to visit
     std::vector<size_t> cluster_sizes(n_clusters, 0);
@@ -265,7 +276,7 @@ std::vector<std::tuple<int, float, float, float, float>> compute_recall(
     }
 
     std::vector<std::tuple<int, float, float, float, float>> results;
-    for (float explore_frac : EXPLORE_FRACTIONS) {
+    for (float explore_frac : explore_fractions) {
         int centroids_to_explore = std::max(1, static_cast<int>(n_clusters * explore_frac));
 
         // For each query, find top-N nearest centroids
@@ -536,7 +547,8 @@ inline void write_results_to_csv(
     const std::unordered_map<std::string, std::string>& config_dict,
     const std::vector<std::tuple<int, float, float, float, float>>& results_knn_10,
     const std::vector<std::tuple<int, float, float, float, float>>& results_knn_100,
-    const std::string& balance_stats_json = ""
+    const std::string& balance_stats_json = "",
+    const std::vector<float>& explore_fractions = EXPLORE_FRACTIONS
 ) {
     const char* arch_env = std::getenv("SKM_ARCH");
     std::string arch = arch_env ? std::string(arch_env) : "default";
@@ -557,7 +569,7 @@ inline void write_results_to_csv(
         // Add columns for each KNN and explore fraction combination (only if we have recall data)
         if (has_recall_data) {
             for (int knn : KNN_VALUES) {
-                for (float explore_frac : EXPLORE_FRACTIONS) {
+                for (float explore_frac : explore_fractions) {
                     csv_file << ",recall@" << knn << "@" << std::fixed << std::setprecision(2)
                              << (explore_frac * 100.0f);
                     csv_file << ",recall_std@" << knn << "@" << std::fixed << std::setprecision(2)

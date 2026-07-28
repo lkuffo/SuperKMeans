@@ -12,9 +12,9 @@
 #include "superkmeans/superkmeans.h"
 
 int main(int argc, char* argv[]) {
-    const std::string experiment_name = "sampling";
     const std::string algorithm = "superkmeans";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("clip");
+    const std::string experiment_name = (argc > 2) ? std::string(argv[2]) : std::string("sampling");
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
         std::cerr << "Unknown dataset '" << dataset << "'\n";
@@ -24,8 +24,10 @@ int main(int argc, char* argv[]) {
     const size_t n = it->second.first;
     const size_t n_queries = bench_utils::N_QUERIES;
     const size_t d = it->second.second;
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
-    int n_iters = bench_utils::MAX_ITERS;
+    const size_t n_clusters = (argc > 3) ? static_cast<size_t>(std::stoul(argv[3]))
+                                          : bench_utils::get_default_n_clusters(n);
+    int n_iters = (argc > 4) ? std::stoi(argv[4]) : bench_utils::MAX_ITERS;
+    const float max_fraction = (argc > 5) ? std::stof(argv[5]) : 1.0f;
     std::string filename = bench_utils::get_data_path(dataset);
     std::string filename_queries = bench_utils::get_query_path(dataset);
     const size_t THREADS = omp_get_max_threads();
@@ -66,6 +68,7 @@ int main(int argc, char* argv[]) {
 
     std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
     for (float sampling_fraction : bench_utils::SAMPLING_FRACTION_VALUES) {
+        if (sampling_fraction > max_fraction) continue;
         std::cout << "\n========================================" << std::endl;
         std::cout << "Running with sampling_fraction = " << sampling_fraction << std::endl;
         std::cout << "========================================" << std::endl;
@@ -128,6 +131,20 @@ int main(int argc, char* argv[]) {
 
             auto assignments = kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
 
+            double full_wcss = 0.0;
+#pragma omp parallel for reduction(+ : full_wcss) num_threads(THREADS)
+            for (size_t i = 0; i < n; ++i) {
+                const size_t c = assignments[i];
+                const float* xp = data.data() + i * d;
+                const float* cp = centroids.data() + c * d;
+                double s = 0.0;
+                for (size_t j = 0; j < d; ++j) {
+                    const double diff = static_cast<double>(xp[j]) - static_cast<double>(cp[j]);
+                    s += diff * diff;
+                }
+                full_wcss += s;
+            }
+
             // Compute cluster balance statistics
             auto balance_stats =
                 skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
@@ -145,6 +162,7 @@ int main(int argc, char* argv[]) {
 
             std::unordered_map<std::string, std::string> config_map;
             config_map["iters"] = std::to_string(config.iters);
+            config_map["full_wcss"] = std::to_string(full_wcss);
             config_map["sampling_fraction"] = std::to_string(config.sampling_fraction);
             config_map["n_threads"] = std::to_string(config.n_threads);
             config_map["seed"] = std::to_string(config.seed);
