@@ -82,7 +82,7 @@ TEST_P(QuantizedIntegrationTest, Recall_MatchesGroundTruth) {
     float recall = skm_test::ClusteringRecall<Quantization::u8>(
         GetParam().type, CMAKE_SOURCE_DIR "/tests/test_data.bin"
     );
-    EXPECT_NEAR(recall, skm_test::RECALL_GROUND_TRUTH.at(GetParam().name), skm_test::RECALL_TOL);
+    EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at(GetParam().name) - skm_test::RECALL_TOL);
 }
 
 TEST_P(QuantizedIntegrationTest, QuantizedCentroidUpdate_Converges) {

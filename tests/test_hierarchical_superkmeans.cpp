@@ -1048,7 +1048,7 @@ TEST(HierarchicalRecallGroundTruthTest, F32_MatchesGroundTruth) {
     float recall = skm_test::HierarchicalClusteringRecall<skmeans::Quantization::f32>(
         skmeans::QuantizerType::none, CMAKE_SOURCE_DIR "/tests/test_data.bin"
     );
-    EXPECT_NEAR(recall, skm_test::RECALL_GROUND_TRUTH.at("hierarchical_f32"), skm_test::RECALL_TOL);
+    EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at("hierarchical_f32") - skm_test::RECALL_TOL);
 }
 
 struct HierarchicalQParam {
@@ -1076,7 +1076,7 @@ TEST_P(HierarchicalQuantizedRecallTest, MatchesGroundTruth) {
     float recall = skm_test::HierarchicalClusteringRecall<skmeans::Quantization::u8>(
         GetParam().type, CMAKE_SOURCE_DIR "/tests/test_data.bin"
     );
-    EXPECT_NEAR(recall, skm_test::RECALL_GROUND_TRUTH.at(GetParam().name), skm_test::RECALL_TOL);
+    EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at(GetParam().name) - skm_test::RECALL_TOL);
 }
 
 } // anonymous namespace

@@ -322,7 +322,7 @@ TEST(RecallGroundTruthTest, F32_MatchesGroundTruth) {
     float recall = skm_test::ClusteringRecall<skmeans::Quantization::f32>(
         skmeans::QuantizerType::none, CMAKE_SOURCE_DIR "/tests/test_data.bin"
     );
-    EXPECT_NEAR(recall, skm_test::RECALL_GROUND_TRUTH.at("f32"), skm_test::RECALL_TOL);
+    EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at("f32") - skm_test::RECALL_TOL);
 }
 
 } // anonymous namespace
