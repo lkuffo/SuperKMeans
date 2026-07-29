@@ -16,7 +16,7 @@ class SIMDComputer {};
 
 template <>
 class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u8> {
-
+  public:
     using distance_t = pdx_distance_t<skmeans::Quantization::u8>;
     using data_t = skmeans_value_t<skmeans::Quantization::u8>;
 
