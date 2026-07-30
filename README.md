@@ -208,7 +208,8 @@ SuperKMeans' ideas have been adopted in:
 
 ## Research behind SuperKMeans
 
-##### [A Super Fast K-means for Indexing Vector Embeddings](https://arxiv.org/pdf/2603.20009)
+**[A Super Fast K-means for Indexing Vector Embeddings](https://arxiv.org/pdf/2603.20009)**   
+
 ```bibtex
 @article{kuffo2026super,
   title={A Super Fast K-means for Indexing Vector Embeddings},
@@ -218,8 +219,9 @@ SuperKMeans' ideas have been adopted in:
 }
 ```
 
-##### Stop Indexing at Full Precision: Revisiting Clustering for Vector Embeddings
-```
+**Stop Indexing at Full Precision: Revisiting Clustering for Vector Embeddings**   
+
+```bibtex
 @article{kuffo2026superquantized,
   title={Stop Indexing at Full Precision: Revisiting Clustering for Vector Embeddings},
   author={Kuffo, Leonardo and Boncz, Peter},
