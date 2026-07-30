@@ -1,7 +1,8 @@
 <h1 align="center">
   Super K-Means
 <div align="center">
-    <a href="https://arxiv.org/pdf/2603.20009"><img src="https://img.shields.io/badge/Paper-arXiv-blue" alt="Paper" /></a>
+    <a href="https://arxiv.org/pdf/2603.20009"><img src="https://img.shields.io/badge/Paper%20I-SuperKMeans-red" alt="Paper" /></a>
+    <a href="https://arxiv.org/pdf/2603.20009"><img src="https://img.shields.io/badge/Paper%20II-Quantized%20Clustering-red" alt="Paper" /></a>
     <a href="https://pypi.org/project/superkmeans/"><img src="https://img.shields.io/pypi/pyversions/superkmeans.svg" alt="PyPI" /></a>
     <img src="https://github.com/cwida/SuperKMeans/actions/workflows/ci.yml/badge.svg?cacheSeconds=3600" alt="License" />
     <a href="https://github.com/cwida/SuperKMeans/blob/main/LICENSE"><img src="https://img.shields.io/github/license/cwida/SuperKMeans?cacheSeconds=3600" alt="License" /></a>
@@ -204,3 +205,25 @@ SuperKMeans' ideas have been adopted in:
 
 ## Other implementations of SuperKMeans
 - [Rust](https://github.com/paradedb/superkmeans-rs)
+
+## Research behind SuperKMeans
+
+##### [A Super Fast K-means for Indexing Vector Embeddings](https://arxiv.org/pdf/2603.20009)
+```bibtex
+@article{kuffo2026super,
+  title={A Super Fast K-means for Indexing Vector Embeddings},
+  author={Kuffo, Leonardo and Hepkema, Sven and Boncz, Peter},
+  journal={arXiv preprint arXiv:2603.20009},
+  year={2026}
+}
+```
+
+##### Stop Indexing at Full Precision: Revisiting Clustering for Vector Embeddings
+```
+@article{kuffo2026superquantized,
+  title={Stop Indexing at Full Precision: Revisiting Clustering for Vector Embeddings},
+  author={Kuffo, Leonardo and Boncz, Peter},
+  journal={VLDB 2026 Workshop: The 2nd Workshop on Vector Databases},
+  year={2026}
+}
+```
