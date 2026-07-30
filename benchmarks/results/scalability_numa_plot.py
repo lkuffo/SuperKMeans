@@ -14,6 +14,7 @@ Usage:
 import argparse, csv, os
 from collections import defaultdict
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter, NullFormatter
 
 CONFIGS = [  # (csv suffix, legend label, colour, marker)
     ("node0",      "single NUMA node",         "#1f77b4", "o"),
@@ -82,16 +83,25 @@ def main():
         if args.clock_ratio:
             ax.plot([1, maxN], [args.clock_ratio, args.clock_ratio * maxN], ls="--", color="0.35",
                     lw=1.0, label=f"clock-adjusted (×{args.clock_ratio:g})")
-        ymax = ax.get_ylim()[1]
+
+        ax.set_xscale("log", base=2); ax.set_yscale("log", base=2)
+        ax.set_xticks([t for t in (1, 2, 4, 8, 16, 24, 32, 48, 64, 96) if t <= maxN])
+        ax.set_yticks([1, 2, 4, 8, 16, 32, 64])
+        for axis in (ax.xaxis, ax.yaxis):
+            axis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+            axis.set_minor_formatter(NullFormatter())
+        ax.set_xlim(0.9, maxN * 1.15)
+
+        y0 = ax.get_ylim()[0]
         for x, c, txt in ((nb, "purple", "NUMA node 2"), (smt, "0.4", "SMT")):
             if x and 1 < x <= maxN:
                 ax.axvline(x, color=c, ls="-.", lw=0.9, alpha=0.6)
-                ax.text(x, ymax * 0.03, f" {txt}", rotation=90, fontsize=7.5, color=c, va="bottom")
+                ax.text(x, y0 * 1.15, f" {txt}", rotation=90, fontsize=7.5, color=c, va="bottom")
 
         ax.set_xlabel("threads (cores)")
         ax.set_ylabel(rf"speedup  $T(1)/T(n)$   ($T(1)$={T1/1000:.1f}s)")
         ax.set_title(ds)
-        ax.grid(alpha=0.25); ax.legend(fontsize=8, loc="upper left")
+        ax.grid(alpha=0.25, which="both"); ax.legend(fontsize=8, loc="upper left")
 
     fig.suptitle(f"{args.algo} thread scaling on {args.arch} (2-node NUMA) — speedup vs threads",
                  fontsize=12)

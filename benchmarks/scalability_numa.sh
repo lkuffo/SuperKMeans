@@ -21,7 +21,7 @@
 # The n_threads column in each CSV distinguishes the points within a curve.
 #
 # Usage: ./scalability_numa.sh [-b build_dir] [-a "algos"] [-c "configs"] [-t "threads"] [datasets...]
-#   -b build dir (default ../build)   -a algos (default superkmeans)   -c configs (default all 3)
+#   -b build dir (default ../build)   -a algos (default superkmeans)   -c configs (default interleave; node0/naive selectable)
 #   -t thread counts (default 96..1 descending, so the biggest run goes first)   datasets (default mxbai openai)
 # Requires numactl + lscpu. PYTHON env overrides the scikit interpreter.
 
@@ -29,7 +29,7 @@ set -e
 
 BUILD_DIR="../build"
 ALGOS="superkmeans"
-CONFIGS="interleave node0 naive"
+CONFIGS="interleave"
 THREADS_LIST="96 64 48 32 24 16 8 4 2 1"
 PYTHON="${PYTHON:-python3}"
 
