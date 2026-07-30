@@ -99,6 +99,8 @@ venv
 !tests/test_data.bin
 *.png
 *.hdf5
+*.csv
+benchmarks/results/topk_distances_*.json
 !benchmarks/results/plots/github_*.png
 !benchmarks/results/plots/comparison_*.png
 *.eps
