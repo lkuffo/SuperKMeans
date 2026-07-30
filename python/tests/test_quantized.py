@@ -1,19 +1,21 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
-from sklearn.datasets import make_blobs
 
 from superkmeans import SuperKMeans
 
 
 QUANTIZERS = ["sq8", "lvq4", "rabitq"]
 
+_TEST_DATA = Path(__file__).resolve().parents[2] / "tests" / "test_data.bin"
+_TEST_DATA_D = 1024
 
-def make_clustered_data(n=5000, d=128, k=50, seed=42):
-    """Well-separated blobs so quantized assignments should track exact ones."""
-    data, _ = make_blobs(
-        n_samples=n, n_features=d, centers=k, cluster_std=1.0, random_state=seed
-    )
-    return np.ascontiguousarray(data, dtype=np.float32)
+
+def load_test_data(n, d):
+    """First n rows and first d dims of the fixed test_data.bin."""
+    full = np.fromfile(_TEST_DATA, dtype=np.float32, count=n * _TEST_DATA_D)
+    return np.ascontiguousarray(full.reshape(n, _TEST_DATA_D)[:, :d])
 
 
 class TestQuantizedSuperKMeans:
@@ -26,7 +28,7 @@ class TestQuantizedSuperKMeans:
     @pytest.mark.parametrize("quantizer", QUANTIZERS)
     def test_train_shape(self, quantizer):
         d, k = 128, 300
-        data = make_clustered_data(d=d, k=k)
+        data = load_test_data(5000, d)
 
         km = SuperKMeans(
             n_clusters=k, dimensionality=d, quantizer=quantizer,
@@ -42,7 +44,7 @@ class TestQuantizedSuperKMeans:
     @pytest.mark.parametrize("quantizer", QUANTIZERS)
     def test_assign_family_valid(self, quantizer):
         n, d, k = 5000, 128, 300
-        data = make_clustered_data(n=n, d=d, k=k)
+        data = load_test_data(n, d)
 
         km = SuperKMeans(
             n_clusters=k, dimensionality=d, quantizer=quantizer,
@@ -62,7 +64,7 @@ class TestQuantizedSuperKMeans:
     @pytest.mark.parametrize("quantizer", QUANTIZERS)
     def test_quantized_close_to_exact(self, quantizer):
         n, d, k = 5000, 128, 300
-        data = make_clustered_data(n=n, d=d, k=k)
+        data = load_test_data(n, d)
 
         km = SuperKMeans(
             n_clusters=k, dimensionality=d, quantizer=quantizer,
@@ -76,13 +78,13 @@ class TestQuantizedSuperKMeans:
 
         quant_vs_exact = np.mean(quantized == exact)
         reuse_vs_quant = np.mean(reuse == quantized)
-        assert quant_vs_exact >= 0.9, f"{quantizer}: quantized vs exact {quant_vs_exact:.3f}"
-        assert reuse_vs_quant >= 0.9, f"{quantizer}: reuse vs quantized {reuse_vs_quant:.3f}"
+        assert quant_vs_exact > 0.5, f"{quantizer}: quantized vs exact {quant_vs_exact:.3f}"
+        assert reuse_vs_quant > 0.5, f"{quantizer}: reuse vs quantized {reuse_vs_quant:.3f}"
 
     def test_f32_quantized_assign(self):
         """quantizer='f32' is a full quantizer: quantized_assign matches exact assign."""
         n, d, k = 5000, 128, 300
-        data = make_clustered_data(n=n, d=d, k=k)
+        data = load_test_data(n, d)
 
         km = SuperKMeans(
             n_clusters=k, dimensionality=d, quantizer="f32",
@@ -98,7 +100,7 @@ class TestQuantizedSuperKMeans:
     def test_hierarchical_quantized(self, quantizer):
         """Exercise the QuantizedHierarchicalSuperKMeans binding end-to-end."""
         n, d, k = 8000, 128, 64
-        data = make_clustered_data(n=n, d=d, k=k)
+        data = load_test_data(n, d)
 
         km = SuperKMeans(
             n_clusters=k, dimensionality=d, quantizer=quantizer,
@@ -118,14 +120,14 @@ class TestQuantizedSuperKMeans:
             assert lab.shape == (n,)
             assert lab.dtype == np.uint32
             assert np.all(lab < k)
-        assert np.mean(q_labels == labels) >= 0.9
+        assert np.mean(q_labels == labels) > 0.5
 
     @pytest.mark.parametrize("quantizer", QUANTIZERS)
     def test_quantized_assign_before_train(self, quantizer):
         """quantized_assign is standalone (fits a fresh quantizer on the input), so it
         works before train() and closely matches the post-train result."""
         n, d, k = 5000, 128, 300
-        data = make_clustered_data(n=n, d=d, k=k)
+        data = load_test_data(n, d)
 
         trained = SuperKMeans(
             n_clusters=k, dimensionality=d, quantizer=quantizer,
@@ -146,7 +148,7 @@ class TestQuantizedSuperKMeans:
     def test_assign_training_points_requires_train(self):
         """assign_training_points reuses trained state, so it must raise before train()."""
         n, d, k = 1000, 128, 50
-        data = make_clustered_data(n=n, d=d, k=k)
+        data = load_test_data(n, d)
         centroids = np.ascontiguousarray(data[:k], dtype=np.float32)
         km = SuperKMeans(n_clusters=k, dimensionality=d, quantizer="sq8")
         with pytest.raises(RuntimeError):

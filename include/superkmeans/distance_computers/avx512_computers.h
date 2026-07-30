@@ -236,9 +236,9 @@ class SIMDComputer<skmeans::DistanceFunction::l2, Quantization::b8> {
             const __m256i shift_vec_256 = _mm256_set_epi64x(3, 2, 1, 0);
             __m256i x = _mm256_set1_epi64x(*reinterpret_cast<const int64_t*>(data + i));
             __m256i bp = _mm256_set_epi64x(
-                *reinterpret_cast<const int64_t*>(chunk_ptr + 3 * 16),
-                *reinterpret_cast<const int64_t*>(chunk_ptr + 2 * 16),
-                *reinterpret_cast<const int64_t*>(chunk_ptr + 1 * 16),
+                *reinterpret_cast<const int64_t*>(chunk_ptr + static_cast<size_t>(3) * 16),
+                *reinterpret_cast<const int64_t*>(chunk_ptr + static_cast<size_t>(2) * 16),
+                *reinterpret_cast<const int64_t*>(chunk_ptr + static_cast<size_t>(1) * 16),
                 *reinterpret_cast<const int64_t*>(chunk_ptr)
             );
             __m256i popcnt = _mm256_popcnt_epi64(_mm256_and_si256(x, bp));
@@ -298,7 +298,7 @@ class SIMDUtilsComputer {
             __mmask16 cmp_mask = _mm512_cmplt_epu32_mask(distances, threshold_vec);
             if (SKM_UNLIKELY(cmp_mask)) {
                 __m512i indices = _mm512_add_epi32(
-                    _mm512_set1_epi32(vector_idx),
+                    _mm512_set1_epi32(static_cast<int>(vector_idx)),
                     _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
                 );
                 _mm512_mask_compressstoreu_epi32(
@@ -385,7 +385,7 @@ class SIMDUtilsComputer<Quantization::f32> {
             __mmask16 cmp_mask = _mm512_cmp_ps_mask(distances, threshold_vec, _CMP_LT_OQ);
             if (SKM_UNLIKELY(cmp_mask)) {
                 __m512i indices = _mm512_add_epi32(
-                    _mm512_set1_epi32(vector_idx),
+                    _mm512_set1_epi32(static_cast<int>(vector_idx)),
                     _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
                 );
                 _mm512_mask_compressstoreu_epi32(
@@ -435,7 +435,7 @@ class SIMDUtilsComputer<Quantization::u4> {
             __mmask16 cmp_mask = _mm512_cmplt_epu32_mask(distances, threshold_vec);
             if (SKM_UNLIKELY(cmp_mask)) {
                 __m512i indices = _mm512_add_epi32(
-                    _mm512_set1_epi32(vector_idx),
+                    _mm512_set1_epi32(static_cast<int>(vector_idx)),
                     _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
                 );
                 _mm512_mask_compressstoreu_epi32(

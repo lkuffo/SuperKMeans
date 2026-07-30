@@ -80,24 +80,24 @@ inline void U8Gemm(
         ctx.set_max_num_threads(1);
 
         ruy::Matrix<std::uint8_t> lhs;
-        lhs.mutable_layout()->set_rows(local_rows);
-        lhs.mutable_layout()->set_cols(k);
+        lhs.mutable_layout()->set_rows(static_cast<int>(local_rows));
+        lhs.mutable_layout()->set_cols(static_cast<int>(k));
         lhs.mutable_layout()->set_order(ruy::Order::kRowMajor);
-        lhs.mutable_layout()->set_stride(a_stride);
+        lhs.mutable_layout()->set_stride(static_cast<int>(a_stride));
         lhs.set_data(a + row_start * a_stride);
 
         ruy::Matrix<std::uint8_t> rhs;
-        rhs.mutable_layout()->set_rows(k);
-        rhs.mutable_layout()->set_cols(n);
+        rhs.mutable_layout()->set_rows(static_cast<int>(k));
+        rhs.mutable_layout()->set_cols(static_cast<int>(n));
         rhs.mutable_layout()->set_order(ruy::Order::kColMajor);
-        rhs.mutable_layout()->set_stride(b_stride);
+        rhs.mutable_layout()->set_stride(static_cast<int>(b_stride));
         rhs.set_data(b);
 
         ruy::Matrix<std::int32_t> dst;
-        dst.mutable_layout()->set_rows(local_rows);
-        dst.mutable_layout()->set_cols(n);
+        dst.mutable_layout()->set_rows(static_cast<int>(local_rows));
+        dst.mutable_layout()->set_cols(static_cast<int>(n));
         dst.mutable_layout()->set_order(ruy::Order::kRowMajor);
-        dst.mutable_layout()->set_stride(n);
+        dst.mutable_layout()->set_stride(static_cast<int>(n));
         dst.set_data(reinterpret_cast<std::int32_t*>(out + row_start * n));
 
         ruy::MulParams<std::int32_t, std::int32_t> mul_params;
