@@ -1,3 +1,13 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = [
+#   "numpy",
+#   "faiss-cpu",
+#   "scikit-learn",
+#   "h5py"
+# ]
+# ///
+
 import json
 import numpy as np
 import os

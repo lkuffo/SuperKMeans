@@ -4,6 +4,7 @@
 #   "numpy",
 #   "h5py",
 #   "datasets",
+#   "huggingface_hub",
 # ]
 # ///
 
@@ -238,6 +239,79 @@ def setup_cohere_dataset(full=False):
     print(f"Saved test:  {test_file}")
 
 
+def setup_openai5m_dataset():
+    """Download base.fbin and queries.fbin from makneeee/openai_large_5m and
+    strip the fbin header to produce raw .bin files.
+
+    fbin format (big-ann-benchmarks):
+      - bytes [0:4]   uint32 little-endian: n_vectors
+      - bytes [4:8]   uint32 little-endian: n_dims
+      - bytes [8:]    n_vectors * n_dims * float32 (row-major)
+    """
+    from huggingface_hub import hf_hub_download
+
+    repo_id = "makneeee/openai_large_5m"
+    cache_dir = str(DATA_DIR / ".hf_cache")
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    train_file = DATA_DIR / "data_openai5m.bin"
+    test_file = DATA_DIR / "data_openai5m_test.bin"
+
+    print(f"Downloading openai5m from HuggingFace dataset {repo_id} ...")
+
+    def fetch_and_strip(remote_path, out_path):
+        print(f"\nFetching {remote_path} ...")
+        local_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=remote_path,
+            repo_type="dataset",
+            cache_dir=cache_dir,
+        )
+        print(f"  cached at: {local_path}")
+
+        with open(local_path, "rb") as f_in:
+            header = f_in.read(8)
+            if len(header) < 8:
+                raise RuntimeError(f"{remote_path}: file shorter than 8-byte header")
+            n = int(np.frombuffer(header[0:4], dtype=np.uint32)[0])
+            d = int(np.frombuffer(header[4:8], dtype=np.uint32)[0])
+            expected_body = n * d * 4
+            print(f"  header: n={n:,}, d={d}, expected body bytes={expected_body:,}")
+
+            with open(out_path, "wb") as f_out:
+                copied = 0
+                chunk = 1 << 22  # 4 MiB
+                while True:
+                    buf = f_in.read(chunk)
+                    if not buf:
+                        break
+                    f_out.write(buf)
+                    copied += len(buf)
+            if copied != expected_body:
+                print(
+                    f"  WARNING: copied {copied:,} bytes, expected {expected_body:,} "
+                    f"(file may be truncated or have trailing data)"
+                )
+
+        print(f"  Wrote {out_path}  ({n:,} vectors x {d} dims)")
+        return n, d
+
+    n_train, d_train = fetch_and_strip("fbin/base.fbin", train_file)
+    n_test, d_test = fetch_and_strip("fbin/queries.fbin", test_file)
+
+    if d_train != d_test:
+        print(
+            f"WARNING: train dim ({d_train}) != test dim ({d_test}). "
+            f"This is unexpected for openai5m."
+        )
+
+    print(
+        f"\nopenai5m: train={n_train:,}, test={n_test:,}, dim={d_train}"
+    )
+    print(f"Saved train: {train_file}")
+    print(f"Saved test:  {test_file}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Process datasets for SuperKMeans benchmarks",
@@ -271,6 +345,8 @@ Examples:
         setup_cohere_dataset()
     elif args.dataset == "cohere50m":
         setup_cohere_dataset(True)
+    elif args.dataset == "openai5m":
+        setup_openai5m_dataset()
     else:
         setup_hdf5_dataset(args.dataset, args.data_dir)
 

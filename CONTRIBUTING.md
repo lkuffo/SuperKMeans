@@ -7,7 +7,7 @@ These are our current priorities:
 **Features**:
 - Support `uint64_t` for the `assignments`. Right now, we are limited to ~4 billion vectors.
 - Support for different datatypes: 64-bit `double`, 16-bit `half`, 8-bit `uint8` (experimental).
-- Support for out-of-core capabilities
+- Support for out-of-core capabilities.
 
 **Improvements**:
 - A proper benchmarking framework for development.
@@ -26,7 +26,7 @@ git checkout -b my-feature
 4. **Open a Pull Request (PR)** against the `main` branch.
 
 > [!IMPORTANT]
-> Let us know in advance if you plan implementing a big feature!
+> Let us know in advance if you plan to implement a big feature!
 
 ## Testing
 
@@ -58,11 +58,12 @@ Tests are also prone to bugs. If that is the case, please open an Issue.
 * Variables and Class/Struct member names: `snake_case`
 * Constants and magic variables: `UPPER_SNAKE_CASE`
 * Avoid `new` and `delete`
-* There is a `.clang-format` in the project. Make sure to adhere to it. We have provided scripts to check and format the files within the project:
+* There is a `.clang-format` and a `.clang-tidy` in the project. Make sure to adhere to it. We have provided scripts to check and format the files within the project:
 ```bash
 pip install clang-format==18.1.8
 ./scripts/format_check.sh   # Checks the formatting
 ./scripts/format.sh         # Fix the formatting
+./scripts/tidy_check.sh     # .clang-tidy checks
 ```
 
 ## Communication

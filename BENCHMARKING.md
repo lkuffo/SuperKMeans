@@ -15,7 +15,7 @@ Check [INSTALL.md](./INSTALL.md).
 > A proper BLAS implementation is **EXTREMELY** important for performance. The pre-installed BLAS in your Linux distribution and OpenBLAS installed via `apt` are **SLOW**.
 
 ### FAISS 
-Our CMake will install FAISS for you. However, you need to set the proper optimization flag. For example, with a machine that supports AVX512 you shall do:
+Our CMake will install FAISS for you. However, you need to set the proper optimization flag. For example, on a machine that supports AVX512, you should do:
 ```bash
 cmake .  -DFAISS_OPT_LEVEL="avx512" -DSKMEANS_COMPILE_BENCHMARKS=ON
 make -j$(nproc) benchmarks
@@ -40,9 +40,9 @@ pip install numpy scikit-learn h5py
 
 ## Datasets Preparation
 
-Our benchmarks do not yet support using custom datasets. We have made our datasets publicly downloadable [here](https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing). Download them into `/benchmarks/data/`. See below the **List of Datasets** to see the mapping of IDs to `.hdf5` files.
+Our benchmarks do not yet support using custom datasets. We have made our datasets publicly downloadable [here](https://drive.google.com/drive/folders/1f76UCrU52N2wToGMFg9ir1MY8ZocrN34?usp=sharing). Download them into `/benchmarks/data/`. See the **List of Datasets** below for the mapping of IDs to `.hdf5` files.
 
-Once you have downloaded a dataset, you have to prepare it for the benchmarks. The script is ready for using `uv`, or you can also run it as a plain Python script with your `venv`. 
+Once you have downloaded a dataset, you have to prepare it for the benchmarks. The script is ready to use with `uv`, or you can run it as a plain Python script with your `venv`. 
 ```bash
 cd benchmarks
 uv run --script setup_data.py [--data-dir <data_dir>] <dataset> 
@@ -62,6 +62,7 @@ python setup_data.py [--data-dir <data_dir>] <dataset>
 | ------------ | ----------------------------------- | ------------- | ------------ | --------- | ---- | ----------- |
 | `arxiv`      | `instructorxl-arxiv-768`            | Text          | InstructorXL | 2,253,000 | 768  | 6.92        |
 | `openai`     | `openai-1536-angular`               | Text          | OpenAI       | 999,000   | 1536 | 6.14        |
+| `jina`       | `codesearchnet-jina-768-cosine`     | Code          | Jina         | 1,374,067 | 768  | 4.22        |
 | `wiki`       | `simplewiki-openai-3072-normalized` | Text          | OpenAI       | 260,372   | 3072 | 3.20        |
 | `mxbai`      | `agnews-mxbai-1024-euclidean`       | Text          | MXBAI        | 769,382   | 1024 | 3.15        |
 | `contriever` | `contriever-768`                    | Text          | Contriever   | 999,000   | 768  | 3.07        |
@@ -88,7 +89,7 @@ We have a handful of `.sh` scripts in `./benchmarks/` to reproduce the experimen
 ## Benchmarks List
 
 ### End-to-End
-Runs clustering with Super K-Means, FAISS K-Means, and Scikit-Learn K-Means with the number of clusters fixed to $k= 4*\sqrt{N}$, and the number of iterations fixed to 25, for instance, for 1M vectors, $k=4000$. 
+Runs clustering with Super K-Means, FAISS K-Means, and Scikit-Learn K-Means with the number of clusters fixed to $k= 4*\sqrt{N}$ (for instance, $k=4000$ for 1M vectors), and the number of iterations fixed to 25. 
 
 **Output**: CSV file in `./benchmarks/results/default/end_to_end.csv` reporting construction time in milliseconds of each algorithm, and the `recall` that the centroids would yield when used for vector search tasks.
 
@@ -97,7 +98,7 @@ Runs clustering with Super K-Means, FAISS K-Means, and Scikit-Learn K-Means with
 ./end_to_end.sh -b .. -p <python_path> <dataset1_id> <dataset2_id> <datasetn_id>
 ```
 
-- `python_path`: Path to your Python binaries
+- `python_path`: Path to your Python binaries.
 - `dataset_id`: Identifier of the dataset you want to benchmark. You can run benchmarks across multiple datasets at once by separating the dataset IDs with spaces.
 
 
@@ -112,7 +113,7 @@ Runs clustering with Super K-Means, FAISS K-Means, and Scikit-Learn K-Means usin
 ```
 
 ### Early Termination
-Runs clustering with Super K-Means, FAISS K-Means, and Scikit-Learn K-Means with the number of clusters fixed to $k= 4*\sqrt{N}$. In FAISS, we stop at 10 iterations. In Scikit-Learn, we stop at 300 iterations, but activating the default `tolerance` parameter for early stopping. Finally, for Super K-Means, we use **Early Termination by Recall**, and try different tolerance levels.
+Runs clustering with Super K-Means, FAISS K-Means, and Scikit-Learn K-Means with the number of clusters fixed to $k= 4*\sqrt{N}$. In FAISS, we stop at 10 iterations. In Scikit-Learn, we stop at 300 iterations but activate the default `tolerance` parameter for early stopping. Finally, for Super K-Means, we use **Early Termination by Recall**, and try different tolerance levels.
 
 **Output**: CSV file in `./benchmarks/results/default/early_termination.csv` reporting construction time in milliseconds of each algorithm and the `recall` that the centroids would yield when used for vector search tasks.
 
@@ -142,13 +143,27 @@ Runs clustering with Super K-Means using different iterations (from 1 to 10), wi
 ./pareto.sh -b .. <dataset_id>
 ```
 
+### Accelerators
+Runs an exhaustive parameter sweep over the accelerators of Super K-Means: dimensionality reduction (`pca`, `jlt`, `mat`), quantization (`sq8`, `lvq4`, `rabitq`), quantized centroid updates, full-precision final centroids, and pruning vs. BLAS-only assignment. It also covers the hierarchical pipeline (`hsk`). This is used to study the runtime/recall trade-off of the accelerators and their combinations. The number of clusters is fixed to $k= 4*\sqrt{N}$.
+
+**Output**: One CSV file per pipeline in `./benchmarks/results/default/accelerators_<dim_reduction>_<quantizer>.csv` (e.g. `accelerators_raw_sq8.csv`, `accelerators_pca_f32.csv`), reporting construction time in milliseconds and the `recall` that the centroids would yield when used for vector search tasks, alongside the pipeline configuration.
+
+**Command (assuming `pwd` is `./benchmarks`)**:
+```sh
+./accelerators.sh -b .. <dataset1_id> <dataset2_id> <datasetn_id>
+```
+
+- `dataset_id`: [Optional] Identifier of the dataset you want to benchmark. You can run benchmarks across multiple datasets at once by separating the dataset IDs with spaces. Default: `mxbai openai`.
+
+The script builds `accelerators.out` for you, so there is no need to `make` it beforehand.
+
 ### Profiling
 
 **Output**: Console logs with runtime and profiling information. These logs are non-persistent. 
 
-**Command (assuming `pwd` is `./benchmarks`)**
+**Command (assuming `pwd` is `./benchmarks`)**:
 
 ```sh
 make ad_hoc_superkmeans.out
-./ad_hoc_superkmeans <dataset_id>
+./ad_hoc_superkmeans.out <dataset_id>
 ```

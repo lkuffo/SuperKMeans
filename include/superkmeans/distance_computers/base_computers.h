@@ -35,12 +35,42 @@ class DistanceComputer<DistanceFunction::l2, Quantization::f32> {
     constexpr static auto Horizontal = computer::Horizontal;
 };
 
-// template <>
-// class DistanceComputer<DistanceFunction::l2, Quantization::u8> {
-//     using computer = SIMDComputer<DistanceFunction::l2, Quantization::u8>;
-//   public:
-//     constexpr static auto Horizontal = computer::Horizontal;
-// };
+template <>
+class DistanceComputer<DistanceFunction::l2, Quantization::u8> {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+    using computer = ScalarComputer<DistanceFunction::l2, Quantization::u8>;
+#else
+    using computer = SIMDComputer<DistanceFunction::l2, Quantization::u8>;
+#endif
+
+  public:
+    constexpr static auto Horizontal = computer::Horizontal;
+};
+
+template <>
+class DistanceComputer<DistanceFunction::l2, Quantization::u4> {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+    using computer = ScalarComputer<DistanceFunction::l2, Quantization::u4>;
+#else
+    using computer = SIMDComputer<DistanceFunction::l2, Quantization::u4>;
+#endif
+
+  public:
+    constexpr static auto Horizontal = computer::Horizontal;
+};
+
+template <>
+class DistanceComputer<DistanceFunction::l2, Quantization::b8> {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+    using computer = ScalarComputer<DistanceFunction::l2, Quantization::b8>;
+#else
+    using computer = SIMDComputer<DistanceFunction::l2, Quantization::b8>;
+#endif
+
+  public:
+    constexpr static auto Horizontal = computer::Horizontal;
+    constexpr static auto HorizontalMultiPlane = computer::HorizontalMultiPlane;
+};
 
 template <Quantization q>
 class UtilsComputer {
@@ -53,6 +83,56 @@ class UtilsComputer {
   public:
     constexpr static auto FlipSign = computer::FlipSign;
     constexpr static auto InitPositionsArray = computer::InitPositionsArray;
+    constexpr static auto PackU8ToU4x2 = computer::PackU8ToU4x2;
+    constexpr static auto UnpackU4x2ToU8 = computer::UnpackU4x2ToU8;
+};
+
+class FastScanComputer {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+    using computer = ScalarFastScanComputer;
+#else
+    using computer = SIMDFastScanComputer;
+#endif
+
+  public:
+    static constexpr size_t kBlockSize = computer::kBlockSize;
+    constexpr static auto ScanBlock = computer::ScanBlock<false>;
+    constexpr static auto RabitQCorrection = computer::RabitQCorrection<false>;
+    constexpr static auto RabitQCorrectionAndCompact = computer::RabitQCorrectionAndCompact<false>;
+
+    template <int NBlocks>
+    static void ScanBlockMulti(
+        const uint8_t* const* packed,
+        const uint8_t* lut,
+        size_t binary_bytes,
+        uint16_t* const* out_dot
+    ) {
+        computer::template ScanBlockMulti<NBlocks>(packed, lut, binary_bytes, out_dot);
+    }
+};
+
+class RaBitQCodec {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+    using codec = ScalarRaBitQCodec;
+#else
+    using codec = SIMDRaBitQCodec;
+#endif
+
+  public:
+    constexpr static auto EncodeOne = codec::EncodeOne;
+    constexpr static auto DecodeOne = codec::DecodeOne;
+};
+
+class LVQ4Codec {
+#if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
+    using codec = ScalarLVQ4Codec;
+#else
+    using codec = SIMDLVQ4Codec;
+#endif
+
+  public:
+    constexpr static auto EncodeOne = codec::EncodeOne;
+    constexpr static auto DecodeOne = codec::DecodeOne;
 };
 
 } // namespace skmeans

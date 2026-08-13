@@ -243,6 +243,27 @@ class Profiler {
         os << "===========================================\n";
     }
 
+    /**
+     * @brief Serialize all timer entries as a JSON string.
+     *
+     * Output format: {"name": {"time_ms": 123.4, "calls": 10}, ...}
+     */
+    std::string ToJson() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::string json = "{";
+        bool first = true;
+        for (const auto& [name, data] : timers_) {
+            if (!first)
+                json += ", ";
+            first = false;
+            double ms = data.accum_time_ns / 1e6;
+            json += "\"" + name + "\": {\"time_ms\": " + std::to_string(ms) +
+                    ", \"calls\": " + std::to_string(data.call_count) + "}";
+        }
+        json += "}";
+        return json;
+    }
+
     // Check if profiling is enabled
     bool IsEnabled() const { return enabled_; }
 

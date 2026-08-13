@@ -24,10 +24,10 @@ int main(int argc, char* argv[]) {
 
     const size_t n = it->second.first;
     const size_t d = it->second.second;
-    const size_t n_clusters = bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = bench_utils::GetDefaultNClusters(n);
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
-    std::string filename = bench_utils::get_data_path(dataset);
+    std::string filename = bench_utils::GetDataPath(dataset);
 
     std::cout << "=== Running algorithm: " << algorithm << " ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
@@ -49,8 +49,8 @@ int main(int argc, char* argv[]) {
     file.read(reinterpret_cast<char*>(data.data()), n * d * sizeof(float));
     file.close();
 
-    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
-    std::string queries_filename = bench_utils::get_query_path(dataset);
+    std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
+    std::string queries_filename = bench_utils::GetQueryPath(dataset);
 
     for (int n_iters : bench_utils::FAISS_EARLY_TERM_ITERS) {
         std::cout << "\n========================================" << std::endl;
@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
             std::cout << "Ground truth file: " << gt_filename << std::endl;
             std::cout << "Queries file: " << queries_filename << std::endl;
 
-            auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+            auto gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
             int n_queries = bench_utils::N_QUERIES;
             std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                       << " from ground truth)" << std::endl;
@@ -122,14 +122,14 @@ int main(int argc, char* argv[]) {
             );
 
             // Compute recall for both KNN values
-            auto results_knn_10 = bench_utils::compute_recall(
+            auto results_knn_10 = bench_utils::ComputeRecall(
                 gt_map, assignments, queries.data(), centroids, n_queries, n_clusters, d, 10
             );
-            bench_utils::print_recall_results(results_knn_10, 10);
-            auto results_knn_100 = bench_utils::compute_recall(
+            bench_utils::PrintRecallResults(results_knn_10, 10);
+            auto results_knn_100 = bench_utils::ComputeRecall(
                 gt_map, assignments, queries.data(), centroids, n_queries, n_clusters, d, 100
             );
-            bench_utils::print_recall_results(results_knn_100, 100);
+            bench_utils::PrintRecallResults(results_knn_100, 100);
 
             std::unordered_map<std::string, std::string> config_map;
             config_map["niter"] = std::to_string(cp.niter);
@@ -143,7 +143,7 @@ int main(int argc, char* argv[]) {
             config_map["frozen_centroids"] = cp.frozen_centroids ? "true" : "false";
             config_map["verbose"] = cp.verbose ? "true" : "false";
 
-            bench_utils::write_results_to_csv(
+            bench_utils::WriteResultsToCsv(
                 experiment_name,
                 algorithm,
                 dataset,

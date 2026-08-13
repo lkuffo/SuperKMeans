@@ -13,6 +13,29 @@
 namespace skmeans {
 
 /**
+ * @brief Compute the ADSampling ratio on the fly.
+ *
+ * @param visited_dimensions Number of dimensions already visited
+ * @param num_dimensions Total number of dimensions
+ * @param epsilon0 Pruning threshold parameter
+ * @return The computed sampling ratio
+ */
+inline float ComputeADSamplingRatio(
+    size_t visited_dimensions,
+    size_t num_dimensions,
+    float epsilon0
+) {
+    if (visited_dimensions == 0 || visited_dimensions >= num_dimensions)
+        return 1.0f;
+    const double eps0 = static_cast<double>(epsilon0);
+    const double ratio = static_cast<double>(visited_dimensions) /
+                         static_cast<double>(num_dimensions) *
+                         (1.0 + eps0 / std::sqrt(static_cast<double>(visited_dimensions))) *
+                         (1.0 + eps0 / std::sqrt(static_cast<double>(visited_dimensions)));
+    return static_cast<float>(ratio);
+}
+
+/**
  * @brief ADSampling pruner
  *
  * Implements Adaptive Dimension Sampling (ADSampling) which enables early termination
@@ -313,17 +336,7 @@ class ADSamplingPruner {
      * @return Ratio to multiply with best distance to get pruning threshold
      */
     float GetRatio(const size_t visited_dimensions) {
-        if (visited_dimensions == 0) {
-            return 1.0;
-        }
-        if (visited_dimensions == num_dimensions) {
-            return 1.0;
-        }
-        return static_cast<float>(
-            static_cast<double>(visited_dimensions) / static_cast<double>(num_dimensions) *
-            (1.0 + epsilon0 / std::sqrt(static_cast<double>(visited_dimensions))) *
-            (1.0 + epsilon0 / std::sqrt(static_cast<double>(visited_dimensions)))
-        );
+        return ComputeADSamplingRatio(visited_dimensions, num_dimensions, epsilon0);
     }
 };
 

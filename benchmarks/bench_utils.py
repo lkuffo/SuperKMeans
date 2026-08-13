@@ -85,12 +85,14 @@ DATASET_PARAMS = {
     "openai": (999_000, 1536),
     "arxiv": (2_253_000, 768),
     "cohere": (10_000_000, 1024),
-    "cohere50m": (50_000_000, 1024)
+    "cohere50m": (50_000_000, 1024),
+    "openai5m": (5_000_000, 1536),
+    "jina": (1_374_067, 768),
 }
 
 # Datasets that should use angular/spherical k-means
 ANGULAR_DATASETS = [
-    "yandex", "glove200", "glove100", "glove50", "llama", "yi", "contriever"
+    "yandex", "jina", "glove200", "glove100", "glove50", "llama", "yi", "contriever"
 ]
 
 # Mapping from dataset identifier to HDF5 filename (without .hdf5 extension)
@@ -109,6 +111,7 @@ DATASET_HDF5_NAMES = {
     "gist": "gist-960-euclidean",
     "contriever": "contriever-768",
     "wiki": "simplewiki-openai-3072-normalized",
+    "jina": "codesearchnet-jina-768-cosine",
 }
 
 # Standard exploration fractions for recall computation
@@ -118,6 +121,9 @@ EXPLORE_FRACTIONS = [
     0.0300, 0.0325, 0.0350, 0.0375, 0.0400, 0.0425, 0.0450, 0.0475, 0.0500,
     0.1
 ]
+
+# Fixed absolute centroid counts to always evaluate (nprobe=1, nprobe=2)
+ABSOLUTE_EXPLORE_COUNTS = [1, 2]
 
 # KNN values to test
 KNN_VALUES = [10, 100]
@@ -172,10 +178,17 @@ def compute_recall(gt_dict, assignments, queries, centroids, num_centroids, knn)
     dot_products = queries @ centroids.T  # (n_queries, num_centroids)
     distances = query_norms + centroid_norms - 2 * dot_products  # (n_queries, num_centroids)
 
-    results = []
-    for explore_frac in EXPLORE_FRACTIONS:
-        centroids_to_explore = max(1, int(num_centroids * explore_frac))
+    # Build list of (centroids_to_explore, explore_frac) configs:
+    # absolute counts first (nprobe=1, nprobe=2), then fraction-based
+    explore_configs = []
+    for count in ABSOLUTE_EXPLORE_COUNTS:
+        c = min(count, num_centroids)
+        explore_configs.append((c, c / num_centroids))
+    for frac in EXPLORE_FRACTIONS:
+        explore_configs.append((max(1, int(num_centroids * frac)), frac))
 
+    results = []
+    for centroids_to_explore, explore_frac in explore_configs:
         # Find top-N nearest centroids for each query
         top_centroid_indices = np.argsort(distances, axis=1)[:, :centroids_to_explore]
 
@@ -251,7 +264,9 @@ def write_results_to_csv(
         final_objective,
         config_dict,
         results_knn_10,
-        results_knn_100
+        results_knn_100,
+        balance_stats_json="",
+        iteration_stats_json=""
 ):
     """Write results to CSV file.
 
@@ -270,6 +285,7 @@ def write_results_to_csv(
         config_dict: Dictionary with algorithm-specific configuration (will be serialized to JSON)
         results_knn_10: Results for KNN=10
         results_knn_100: Results for KNN=100
+        balance_stats_json: JSON string with cluster balance statistics
     """
     arch = os.environ.get('SKM_ARCH', 'default')
     benchmarks_dir = Path(__file__).parent
@@ -285,11 +301,18 @@ def write_results_to_csv(
               'data_size', 'n_clusters', 'construction_time_ms', 'threads', 'final_objective']
     if has_recall_data:
         for knn in KNN_VALUES:
+            for count in ABSOLUTE_EXPLORE_COUNTS:
+                header.append(f'recall@{knn}@nprobe{count}')
+                header.append(f'recall_std@{knn}@nprobe{count}')
+                header.append(f'centroids_explored@{knn}@nprobe{count}')
+                header.append(f'vectors_explored@{knn}@nprobe{count}')
             for explore_frac in EXPLORE_FRACTIONS:
                 header.append(f'recall@{knn}@{explore_frac * 100:.2f}')
                 header.append(f'recall_std@{knn}@{explore_frac * 100:.2f}')
                 header.append(f'centroids_explored@{knn}@{explore_frac * 100:.2f}')
                 header.append(f'vectors_explored@{knn}@{explore_frac * 100:.2f}')
+    header.append('balance_stats')
+    header.append('iteration_stats')
     header.append('config')
     row = [
         timestamp,
@@ -318,8 +341,150 @@ def write_results_to_csv(
             row.append(f'{std_recall:.6f}')
             row.append(str(centroids_to_explore))
             row.append(f'{avg_vectors:.2f}')
+    row.append(balance_stats_json)
+    row.append(iteration_stats_json)
     config_json = json.dumps(config_dict)
     row.append(config_json)
+    with open(csv_path, 'a', newline='') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(header)
+        writer.writerow(row)
+    print(f"Results written to: {csv_path}")
+
+
+def _build_recall_stats_dict(results_knn_10, results_knn_100):
+    """Build a flat dict of recall stats from result tuples.
+
+    Returns dict with keys like:
+        recall@10@nprobe1, recall_std@10@nprobe1, centroids_explored@10@nprobe1, vectors_explored@10@nprobe1,
+        recall@10@0.10, recall_std@10@0.10, ...
+    """
+    stats = {}
+    for knn, results in [(10, results_knn_10), (100, results_knn_100)]:
+        if not results:
+            continue
+        abs_idx = 0
+        for centroids_to_explore, explore_frac, recall, std_recall, avg_vectors in results:
+            if abs_idx < len(ABSOLUTE_EXPLORE_COUNTS):
+                count = ABSOLUTE_EXPLORE_COUNTS[abs_idx]
+                suffix = f"nprobe{count}"
+                abs_idx += 1
+            else:
+                suffix = f"{explore_frac * 100:.2f}"
+            stats[f"recall@{knn}@{suffix}"] = round(recall, 6)
+            stats[f"recall_std@{knn}@{suffix}"] = round(std_recall, 6)
+            stats[f"centroids_explored@{knn}@{suffix}"] = centroids_to_explore
+            stats[f"vectors_explored@{knn}@{suffix}"] = round(avg_vectors, 2)
+    return stats
+
+
+def write_results_to_csv_v2(
+        experiment_name,
+        algorithm,
+        dataset,
+        n_iters,
+        actual_iterations,
+        dimensionality,
+        data_size,
+        n_clusters,
+        construction_time_ms,
+        threads,
+        final_objective,
+        config_dict,
+        assign_results_knn_10,
+        assign_results_knn_100,
+        quantized_assign_results_knn_10=None,
+        quantized_assign_results_knn_100=None,
+        balance_stats_json="",
+        iteration_stats_json=""
+):
+    """Write results to CSV with recall stats packed into a single JSON column.
+
+    Same core columns as write_results_to_csv, but instead of one column per
+    recall measurement, all recall/std/centroids/vectors stats are stored in a
+    single ``clustering_quality_stats`` JSON column with the structure::
+
+        {
+            "assign": {
+                "recall@10@nprobe1": 0.50,
+                "recall_std@10@nprobe1": 0.26,
+                "centroids_explored@10@nprobe1": 1,
+                "vectors_explored@10@nprobe1": 78.07,
+                ...
+            },
+            "quantized_assign": { ... }   // only present when provided
+        }
+
+    Args:
+        experiment_name: Name of the experiment (used as CSV filename)
+        algorithm: Algorithm name
+        dataset: Dataset name
+        n_iters: Requested iterations
+        actual_iterations: Actual iterations performed
+        dimensionality: Data dimensionality
+        data_size: Number of data points
+        n_clusters: Number of clusters
+        construction_time_ms: Construction time in milliseconds
+        threads: Number of threads used
+        final_objective: Final k-means objective value
+        config_dict: Algorithm-specific config (serialized to JSON)
+        assign_results_knn_10: Recall results for KNN=10 (float assignments)
+        assign_results_knn_100: Recall results for KNN=100 (float assignments)
+        quantized_assign_results_knn_10: Recall results for KNN=10 (quantized assignments), or None
+        quantized_assign_results_knn_100: Recall results for KNN=100 (quantized assignments), or None
+        balance_stats_json: JSON string with cluster balance statistics
+        iteration_stats_json: JSON string with per-iteration statistics
+    """
+    arch = os.environ.get('SKM_ARCH', 'default')
+    benchmarks_dir = Path(__file__).parent
+    results_dir = benchmarks_dir / 'results' / arch
+    results_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = results_dir / f'{experiment_name}.csv'
+
+    file_exists = csv_path.exists()
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    header = [
+        'timestamp', 'algorithm', 'dataset', 'n_iters', 'actual_iterations',
+        'dimensionality', 'data_size', 'n_clusters', 'construction_time_ms',
+        'threads', 'final_objective',
+        'clustering_quality_stats',
+        'balance_stats', 'iteration_stats', 'config'
+    ]
+
+    # Build the clustering_quality_stats JSON
+    quality_stats = {}
+    assign_stats = _build_recall_stats_dict(assign_results_knn_10, assign_results_knn_100)
+    if assign_stats:
+        quality_stats["assign"] = assign_stats
+
+    if quantized_assign_results_knn_10 is not None or quantized_assign_results_knn_100 is not None:
+        qa_stats = _build_recall_stats_dict(
+            quantized_assign_results_knn_10 or [],
+            quantized_assign_results_knn_100 or []
+        )
+        if qa_stats:
+            quality_stats["quantized_assign"] = qa_stats
+
+    row = [
+        timestamp,
+        algorithm,
+        dataset,
+        n_iters,
+        actual_iterations,
+        dimensionality,
+        data_size,
+        n_clusters,
+        f'{construction_time_ms:.2f}',
+        threads,
+        f'{final_objective:.6f}',
+        json.dumps(quality_stats) if quality_stats else "",
+        balance_stats_json,
+        iteration_stats_json,
+        json.dumps(config_dict)
+    ]
+
     with open(csv_path, 'a', newline='') as f:
         writer = csv.writer(f)
         if not file_exists:

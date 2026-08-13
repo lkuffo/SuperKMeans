@@ -1,7 +1,8 @@
 <h1 align="center">
   Super K-Means
 <div align="center">
-    <a href="https://arxiv.org/pdf/2603.20009"><img src="https://img.shields.io/badge/Paper-arXiv-blue" alt="Paper" /></a>
+    <a href="https://arxiv.org/pdf/2603.20009"><img src="https://img.shields.io/badge/Paper%20I-SuperKMeans-red" alt="Paper" /></a>
+    <a href="https://arxiv.org/pdf/2603.20009"><img src="https://img.shields.io/badge/Paper%20II-Quantized%20Clustering-red" alt="Paper" /></a>
     <a href="https://pypi.org/project/superkmeans/"><img src="https://img.shields.io/pypi/pyversions/superkmeans.svg" alt="PyPI" /></a>
     <img src="https://github.com/cwida/SuperKMeans/actions/workflows/ci.yml/badge.svg?cacheSeconds=3600" alt="License" />
     <a href="https://github.com/cwida/SuperKMeans/blob/main/LICENSE"><img src="https://img.shields.io/github/license/cwida/SuperKMeans?cacheSeconds=3600" alt="License" /></a>
@@ -17,10 +18,11 @@
 </p>
 
 ## Why Super K-Means?
-- **100x faster clustering** than FAISS of vector embeddings (Cohere, OpenAI, MXBAI, CLIP, MiniLM).
+- **Faster clustering** of vector embeddings (Cohere, OpenAI, MXBAI, CLIP, MiniLM) than FAISS.
 - Index 10M embeddings of 1024 dimensions [**in less than a minute**](https://www.lkuffo.com/superkmeans/) on a single CPU.
 - Faster **without compromising clustering quality**.
-- Efficient in **CPUs** (ARM and x86) and **GPUs**.
+- Support for [**quantized clustering**](#quantized-clustering) (8-bit Scalar Quantization, LVQ, and RabitQ)
+- Efficient on **CPUs** (ARM and x86) and **GPUs**.
 
 ## Our secret sauce
 - Carefully interleaving GEMM routines and pruning kernels that **prune dimensions** efficiently
@@ -82,8 +84,24 @@ int main(int argc, char* argv[]) {
 
 Check our [examples](./examples/) for fully working examples in Python and C++.
 
+## Quantized Clustering
+SuperKMeans supports **clustering quantized vectors**, substantially accelerating clustering and barely affecting clustering quality. We support 8-bit scalar quantization, [LVQ](https://arxiv.org/pdf/2304.04759), and [RabitQ](https://github.com/VectorDB-NTU/RaBitQ-Library). You give us `float32` vectors and we handle the rest:
+
+```py
+kmeans = SuperKMeans(
+    n_clusters=k,
+    dimensionality=d,
+    quantizer='rabitq'
+)
+
+centroids = kmeans.train(data) # We return float32 centroids
+assignments = kmeans.quantized_assign(data, centroids)
+```
+
+Check our fully working examples in [Python](./examples/quantized_clustering.py) or [C++](./examples/quantized_clustering.cpp).
+
 ## Documentation
-Check [our wiki](https://github.com/cwida/SuperKMeans/wiki/Documentation) for advanced usage.
+Check [our wiki](https://github.com/cwida/SuperKMeans/wiki/Documentation) for advanced usage and API reference.
 
 ## Installation
 
@@ -172,7 +190,42 @@ For a more comprehensive installation and compilation guide, check [INSTALL.md](
 Check [INSTALL.md](./INSTALL.md).
 
 ## Roadmap
-We are actively developing Super K-Means and accepting contributions! Check [CONTRIBUTING.md](./CONTRIBUTING.md)
+We are actively developing Super K-Means and accepting contributions! Check [CONTRIBUTING.md](./CONTRIBUTING.md).
+
 
 ## Benchmarking
 To run our benchmark suite in C++, refer to [BENCHMARKING.md](./BENCHMARKING.md).
+
+## Adoption
+SuperKMeans' ideas have been adopted in:
+- [FAISS](https://github.com/facebookresearch/faiss/pull/5168)
+- [Zilliz](https://github.com/zilliztech/knowhere/pull/1635)
+- [Elastic](https://github.com/elastic/elasticsearch/pull/144599)
+- [ParadeDB](https://github.com/paradedb/superkmeans-rs)
+
+## Other implementations of SuperKMeans
+- [Rust](https://github.com/paradedb/superkmeans-rs)
+
+## Research behind SuperKMeans
+
+**[A Super Fast K-means for Indexing Vector Embeddings](https://arxiv.org/pdf/2603.20009)**   
+
+```bibtex
+@article{kuffo2026super,
+  title={A Super Fast K-means for Indexing Vector Embeddings},
+  author={Kuffo, Leonardo and Hepkema, Sven and Boncz, Peter},
+  journal={arXiv preprint arXiv:2603.20009},
+  year={2026}
+}
+```
+
+**Stop Indexing at Full Precision: Revisiting Clustering for Vector Embeddings**   
+
+```bibtex
+@article{kuffo2026superquantized,
+  title={Stop Indexing at Full Precision: Revisiting Clustering for Vector Embeddings},
+  author={Kuffo, Leonardo and Boncz, Peter},
+  journal={VLDB 2026 Workshop: The 2nd Workshop on Vector Databases},
+  year={2026}
+}
+```

@@ -26,8 +26,8 @@ int main(int argc, char* argv[]) {
     const size_t d = it->second.second;
     int n_iters = bench_utils::MAX_ITERS;
     float sampling_fraction = 1.0;
-    std::string filename = bench_utils::get_data_path(dataset);
-    std::string filename_queries = bench_utils::get_query_path(dataset);
+    std::string filename = bench_utils::GetDataPath(dataset);
+    std::string filename_queries = bench_utils::GetQueryPath(dataset);
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
@@ -124,7 +124,7 @@ int main(int argc, char* argv[]) {
         config_map["unrotate_centroids"] = config.unrotate_centroids ? "true" : "false";
         config_map["verbose"] = config.verbose ? "true" : "false";
 
-        bench_utils::write_results_to_csv(
+        bench_utils::WriteResultsToCsv(
             experiment_name,
             algorithm,
             dataset,

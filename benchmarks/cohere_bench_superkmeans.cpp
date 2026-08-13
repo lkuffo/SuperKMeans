@@ -104,7 +104,7 @@ int main() {
     balance_stats.print();
 
     // Compute recall if ground truth file exists
-    std::string gt_filename = bench_utils::get_ground_truth_path(dataset);
+    std::string gt_filename = bench_utils::GetGroundTruthPath(dataset);
     std::ifstream gt_file(gt_filename);
     std::ifstream queries_file_check(filename_queries, std::ios::binary);
     if (gt_file.good() && queries_file_check.good()) {
@@ -114,19 +114,19 @@ int main() {
         std::cout << "Ground truth file: " << gt_filename << std::endl;
         std::cout << "Queries file: " << filename_queries << std::endl;
 
-        auto gt_map = bench_utils::parse_ground_truth_json(gt_filename);
+        auto gt_map = bench_utils::ParseGroundTruthJson(gt_filename);
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
 
-        auto results_knn_10 = bench_utils::compute_recall(
+        auto results_knn_10 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
         );
-        bench_utils::print_recall_results(results_knn_10, 10);
+        bench_utils::PrintRecallResults(results_knn_10, 10);
 
-        auto results_knn_100 = bench_utils::compute_recall(
+        auto results_knn_100 = bench_utils::ComputeRecall(
             gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
         );
-        bench_utils::print_recall_results(results_knn_100, 100);
+        bench_utils::PrintRecallResults(results_knn_100, 100);
 
         std::unordered_map<std::string, std::string> config_map;
         config_map["sampling_fraction"] = std::to_string(config.sampling_fraction);
@@ -139,7 +139,7 @@ int main() {
         config_map["assignment_time"] = std::to_string(assignment_time_ms);
         config_map["assignment_time_naive"] = std::to_string(assignment_time_ms_brute);
 
-        bench_utils::write_results_to_csv(
+        bench_utils::WriteResultsToCsv(
             experiment_name,
             algorithm,
             dataset,
@@ -154,7 +154,7 @@ int main() {
             config_map,
             results_knn_10,
             results_knn_100,
-            balance_stats.to_json()
+            balance_stats.ToJson()
         );
     } else {
         if (!gt_file.good()) {

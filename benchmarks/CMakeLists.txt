@@ -21,7 +21,7 @@ set(FAISS_OPT_LEVEL "${FAISS_OPT_LEVEL}" CACHE STRING "CPU optimization level" F
 FetchContent_Declare(
     faiss
     GIT_REPOSITORY https://github.com/facebookresearch/faiss.git
-    GIT_TAG        v1.11.0
+    GIT_TAG        v1.14.0
 )
 FetchContent_MakeAvailable(faiss)
 
@@ -31,13 +31,13 @@ set(FAISS_COMMON_LIBS faiss)
 
 # Link architecture-specific FAISS library based on FAISS_OPT_LEVEL
 if(FAISS_OPT_LEVEL STREQUAL "avx512_spr")
-    list(APPEND FAISS_COMMON_LIBS faiss_avx512_spr)
+    list(PREPEND FAISS_COMMON_LIBS faiss_avx512_spr)
 elseif(FAISS_OPT_LEVEL STREQUAL "avx512")
-    list(APPEND FAISS_COMMON_LIBS faiss_avx512)
+    list(PREPEND FAISS_COMMON_LIBS faiss_avx512)
 elseif(FAISS_OPT_LEVEL STREQUAL "avx2")
-    list(APPEND FAISS_COMMON_LIBS faiss_avx2)
+    list(PREPEND FAISS_COMMON_LIBS faiss_avx2)
 elseif(FAISS_OPT_LEVEL STREQUAL "sve")
-    list(APPEND FAISS_COMMON_LIBS faiss_sve)
+    list(PREPEND FAISS_COMMON_LIBS faiss_sve)
 endif()
 
 # Add benchmarks directory to include path for bench_utils.h
@@ -69,7 +69,11 @@ skmeans_add_benchmark(pareto_superkmeans.out pareto/pareto_superkmeans.cpp)
 skmeans_add_benchmark(pareto_hierarchical_superkmeans.out pareto/pareto_hierarchical_superkmeans.cpp)
 skmeans_add_benchmark(ad_hoc_superkmeans.out ad_hoc_superkmeans.cpp)
 skmeans_add_benchmark(ad_hoc_hierarchical_superkmeans.out ad_hoc_hierarchical_superkmeans.cpp)
+skmeans_add_benchmark(ad_hoc_hierarchical_superkmeans_quantized.out ad_hoc_hierarchical_superkmeans_quantized.cpp)
 skmeans_add_benchmark(ad_hoc_assign.out ad_hoc_assign.cpp)
+skmeans_add_benchmark(ad_hoc_superkmeans_quantized.out ad_hoc_superkmeans_quantized.cpp)
+skmeans_add_faiss_benchmark(accelerators.out accelerators/accelerators.cpp)
+skmeans_add_benchmark(scalability.out scalability.cpp)
 skmeans_add_benchmark(sweet_pruning_spot_superkmeans.out sweet_pruning_spot_superkmeans.cpp)
 skmeans_add_benchmark(microbenchmark_init_positions_array.out microbenchmarks/microbenchmark_init_positions_array.cpp)
 skmeans_add_benchmark(microbenchmark_flip_sign.out microbenchmarks/microbenchmark_flip_sign.cpp)
@@ -99,6 +103,7 @@ add_custom_target(benchmarks
         ad_hoc_superkmeans.out
         ad_hoc_hierarchical_superkmeans.out
         ad_hoc_assign.out
+        ad_hoc_superkmeans_quantized.out
         sweet_pruning_spot_superkmeans.out
         microbenchmark_init_positions_array.out
         microbenchmark_flip_sign.out

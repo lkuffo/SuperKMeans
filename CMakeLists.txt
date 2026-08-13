@@ -9,6 +9,7 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ── Options ──
 set(SKMEANS_PORTABLE OFF CACHE BOOL "Use portable SIMD flags instead of -march=native (for wheel builds)")
@@ -97,7 +98,6 @@ else()
         message(STATUS "BLAS library found: ${BLAS_LIBRARIES}")
         list(APPEND _SKMEANS_LINK_LIBS ${BLAS_LIBRARIES})
     endif()
-
 endif()
 
 # ── FFTW (optional) ──
@@ -122,6 +122,36 @@ if(SKMEANS_ENABLE_GPU)
 else()
     message(STATUS "GPU disabled")
 endif()
+
+# ── NumKong (for 8- and 4-bit GEMM) ──
+FetchContent_Declare(
+    numkong
+    GIT_REPOSITORY https://github.com/ashvardanian/NumKong.git
+    GIT_TAG main
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(numkong)
+
+# ── Ruy (for 8- and 4-bit GEMM in thinner vectors) ──
+if(NOT TARGET cpuinfo::cpuinfo)
+    FetchContent_Declare(cpuinfo
+        GIT_REPOSITORY https://github.com/pytorch/cpuinfo.git
+        GIT_TAG main
+        GIT_SHALLOW TRUE
+    )
+    set(CPUINFO_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(CPUINFO_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+    set(CPUINFO_BUILD_MOCK_TESTS OFF CACHE BOOL "" FORCE)
+    set(CPUINFO_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(cpuinfo)
+endif()
+FetchContent_Declare(ruy
+    GIT_REPOSITORY https://github.com/google/ruy.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+)
+set(RUY_MINIMAL_BUILD ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(ruy)
 
 # ── INTERFACE library target ──
 add_library(superkmeans INTERFACE)
@@ -155,7 +185,7 @@ target_include_directories(superkmeans ${_SKMEANS_SYSTEM} INTERFACE
     ${_SKMEANS_INCLUDE_DIRS}
 )
 
-target_link_libraries(superkmeans INTERFACE ${_SKMEANS_LINK_LIBS})
+target_link_libraries(superkmeans INTERFACE ${_SKMEANS_LINK_LIBS} numkong ruy::ruy cpuinfo::cpuinfo)
 target_compile_definitions(superkmeans INTERFACE ${_SKMEANS_COMPILE_DEFS})
 target_compile_features(superkmeans INTERFACE cxx_std_17)
 

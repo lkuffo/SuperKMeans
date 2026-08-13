@@ -1,8 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <omp.h>
+#include <vector>
 
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
@@ -17,6 +20,12 @@ class BatchComputer {};
 
 template <>
 class BatchComputer<DistanceFunction::l2, Quantization::u8> {};
+
+template <>
+class BatchComputer<DistanceFunction::l2, Quantization::u4> {};
+
+template <>
+class BatchComputer<DistanceFunction::l2, Quantization::b8> {};
 
 template <>
 class BatchComputer<DistanceFunction::l2, Quantization::f32> {

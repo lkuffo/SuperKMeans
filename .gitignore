@@ -46,6 +46,8 @@ Thumbs.db
 
 # Cmake and Build
 build/
+build-test/
+build-release/
 .cache/
 cmake-build-*/
 out/
@@ -97,6 +99,8 @@ venv
 !tests/test_data.bin
 *.png
 *.hdf5
+*.csv
+benchmarks/results/topk_distances_*.json
 !benchmarks/results/plots/github_*.png
 !benchmarks/results/plots/comparison_*.png
 *.eps
@@ -106,3 +110,10 @@ _deps/
 tmp/
 
 DartConfiguration.tcl
+
+*-download/
+*-source/
+cpuinfo
+FXdiv 
+kleidiai
+pthreadpool

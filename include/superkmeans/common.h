@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cinttypes>
+#include <cpuinfo.h>
 #include <cstdint>
 #include <cstdio>
 
@@ -90,7 +91,8 @@ static inline constexpr float PROPORTION_HORIZONTAL_DIM = 0.75;
 static inline constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;
 static inline constexpr size_t H_DIM_SIZE = 64;
 
-static inline constexpr uint32_t MIN_PARTIAL_D = 16;
+// Below 32, GEMM stops accelerating
+static inline constexpr uint32_t MIN_PARTIAL_D = 32;
 
 // Thresholds below which GEMM-only (no pruning) is used
 static inline constexpr size_t DIMENSION_THRESHOLD_FOR_PRUNING = 128;
@@ -108,6 +110,16 @@ static inline constexpr size_t Y_BATCH_SIZE = 1024;
 
 static inline constexpr size_t VECTOR_CHUNK_SIZE = Y_BATCH_SIZE;
 
+static inline constexpr size_t SKM_MAX_DIMS = 16384;
+
+// Why 4096? To avoid overflow in RabitQ
+// RaBitQ FastScan accumulates SQ dot products of nibbles into uint16 lanes
+static inline constexpr size_t RABITQ_MAX_DIMS = 4096;
+
+static inline constexpr uint32_t RABITQ_MIDDLE_CHECKPOINT_D_THRESHOLD = 768;
+
+static inline constexpr int RABITQ_SQ_BITS = 4;
+
 static inline constexpr size_t RECALL_CONVERGENCE_PATIENCE = 2;
 static inline constexpr float CENTROID_PERTURBATION_EPS = 1.0f / 1024.0f;
 // Epsilon parameter of ADSampling (Reference: https://dl.acm.org/doi/abs/10.1145/3589282)
@@ -124,20 +136,74 @@ static constexpr uint32_t AlignValue(T n) {
     return ((n + (val - 1)) / val) * val;
 }
 
+// Below this threshold, NumKong loses to Ruy for 8-bit GEMM
+static constexpr size_t THIN_MATRIX_THRESHOLD = 256;
+
+#if defined(__ARM_NEON)
+inline constexpr bool IS_ARM = true;
+#else
+inline constexpr bool IS_ARM = false;
+#endif
+
+inline bool DetectAMX() {
+    cpuinfo_initialize();
+    return cpuinfo_has_x86_amx_int8();
+}
+
 enum class DistanceFunction : uint8_t { l2, dp };
 
-enum class Quantization : uint8_t { f32, u8, f16, bf16 };
+enum class Quantization : uint8_t { f32, u8, u4, b8, f16, bf16 };
 
+enum class QuantizerType : uint8_t { none, sq8, rabitq, lvq4 };
+
+inline const char* QuantizerTypeName(QuantizerType q) {
+    switch (q) {
+    case QuantizerType::none:
+        return "none";
+    case QuantizerType::sq8:
+        return "sq8";
+    case QuantizerType::rabitq:
+        return "rabitq";
+    case QuantizerType::lvq4:
+        return "lvq4";
+    }
+    return "unknown";
+}
+
+// Distance type: float for all quantization types.
+// Even u8 GEMM produces integer dot products, but we convert to float L2 distances
+// so that convergence/recall code works uniformly.
 template <Quantization q>
 struct DistanceType {
-    using type = uint32_t;
-};
-template <>
-struct DistanceType<Quantization::f32> {
     using type = float;
 };
 template <Quantization q>
 using skmeans_distance_t = typename DistanceType<q>::type;
+
+// PDX-internal distance type: uint32_t for u8 (exact integer accumulation in quantized domain),
+// float for f32. Final distances (out_distances, KNNCandidate) always use float.
+template <Quantization q>
+struct PDXDistanceType {
+    using type = skmeans_distance_t<q>;
+};
+template <>
+struct PDXDistanceType<Quantization::u8> {
+    using type = uint32_t;
+};
+template <>
+struct PDXDistanceType<Quantization::u4> {
+    using type = uint32_t;
+};
+template <>
+struct PDXDistanceType<Quantization::b8> {
+    using type = uint32_t;
+};
+template <Quantization q>
+using pdx_distance_t = typename PDXDistanceType<q>::type;
+
+// Input data type: always float (user provides float data, quantization is internal)
+template <Quantization q>
+using skmeans_input_t = float;
 
 template <Quantization q>
 struct DataType {
@@ -178,8 +244,8 @@ template <Quantization q>
 struct Cluster {
     uint32_t num_embeddings{};
     uint32_t* indices = nullptr;
-    skmeans_value_t<Quantization::u8>* data = nullptr;
-    skmeans_value_t<Quantization::u8>* aux_vertical_dimensions_in_horizontal_layout =
+    skmeans_value_t<q>* data = nullptr;
+    skmeans_value_t<q>* aux_vertical_dimensions_in_horizontal_layout =
         nullptr; // Contains the vertical dimensions minus partial_d in a horizontal layout, aka the
                  // ones not visited by GEMM
 };

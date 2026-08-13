@@ -10,12 +10,22 @@ except Exception:
 
 from ._superkmeans import (
     SuperKMeans as _SuperKMeansCpp,
+    QuantizedSuperKMeans as _QuantizedSuperKMeansCpp,
     SuperKMeansConfig as _SuperKMeansConfigCpp,
     SuperKMeansIterationStats,
     HierarchicalSuperKMeans as _HierarchicalSuperKMeansCpp,
+    QuantizedHierarchicalSuperKMeans as _QuantizedHierarchicalSuperKMeansCpp,
     HierarchicalSuperKMeansConfig as _HierarchicalSuperKMeansConfigCpp,
     HierarchicalSuperKMeansIterationStats,
+    QuantizerType,
 )
+
+_QUANTIZERS = ("f32", "sq8", "lvq4", "rabitq")
+_QUANTIZER_MAP = {
+    "sq8": QuantizerType.sq8,
+    "lvq4": QuantizerType.lvq4,
+    "rabitq": QuantizerType.rabitq,
+}
 
 
 class SuperKMeans:
@@ -31,6 +41,10 @@ class SuperKMeans:
     hierarchical : bool, optional (default=None)
         Whether to use hierarchical clustering. If None, automatically
         uses hierarchical=True for datasets with n > 100,000, otherwise False.
+    quantizer : str, optional (default="f32")
+        Quantization scheme for clustering. One of "f32" (full precision),
+        "sq8" (8-bit scalar), "lvq4" (4-bit LVQ), or "rabitq" (RaBitQ). The
+        quantized schemes cluster in a compressed domain for speed/memory.
     iters : int, optional (default=10)
         Number of k-means iterations (only for non-hierarchical mode).
     iters_mesoclustering : int, optional (default=3)
@@ -82,6 +96,7 @@ class SuperKMeans:
         n_clusters: int,
         dimensionality: int,
         hierarchical: Optional[bool] = None,
+        quantizer: str = "f32",
         # Training parameters
         iters: int = 10,
         iters_mesoclustering: int = 3,
@@ -92,6 +107,8 @@ class SuperKMeans:
         n_threads: int = 0,
         seed: int = 42,
         use_blas_only: bool = False,
+        # Quantization parameters
+        full_precision_final_centroids: bool = False,
         # Convergence parameters
         tol: float = 1e-4,
         recall_tol: float = 0.005,
@@ -108,14 +125,19 @@ class SuperKMeans:
             raise ValueError("dimensionality must be positive")
         if sampling_fraction is not None and not 0.0 < sampling_fraction <= 1.0:
             raise ValueError("sampling_fraction must be in (0.0, 1.0]")
+        if quantizer not in _QUANTIZERS:
+            raise ValueError(f"quantizer must be one of {_QUANTIZERS}, got {quantizer!r}")
 
         self._n_clusters = n_clusters
         self._dimensionality = dimensionality
+        self._quantizer = quantizer
 
         # We defer the class resolution to the train method
         self._hierarchical_param = hierarchical
         self._hierarchical = None
         self._cpp_skmeans_obj = None
+        self._assign_only_obj = None
+        self._quantized_assign_only_obj = None
         self._config_params = {
             'iters': iters,
             'iters_mesoclustering': iters_mesoclustering,
@@ -126,6 +148,7 @@ class SuperKMeans:
             'n_threads': n_threads,
             'seed': seed,
             'use_blas_only': use_blas_only,
+            'full_precision_final_centroids': full_precision_final_centroids,
             'tol': tol,
             'recall_tol': recall_tol,
             'early_termination': early_termination,
@@ -218,14 +241,23 @@ class SuperKMeans:
             config.verbose = self._config_params['verbose']
             config.angular = self._config_params['angular']
 
+            quantized = self._quantizer != "f32"
+            if quantized:
+                config.quantizer_type = _QUANTIZER_MAP[self._quantizer]
+                config.full_precision_final_centroids = (
+                    self._config_params['full_precision_final_centroids']
+                )
+
             if self._hierarchical:
-                self._cpp_skmeans_obj = _HierarchicalSuperKMeansCpp(
-                    self._n_clusters, self._dimensionality, config
+                cpp_cls = (
+                    _QuantizedHierarchicalSuperKMeansCpp if quantized
+                    else _HierarchicalSuperKMeansCpp
                 )
             else:
-                self._cpp_skmeans_obj = _SuperKMeansCpp(
-                    self._n_clusters, self._dimensionality, config
-                )
+                cpp_cls = _QuantizedSuperKMeansCpp if quantized else _SuperKMeansCpp
+            self._cpp_skmeans_obj = cpp_cls(
+                self._n_clusters, self._dimensionality, config
+            )
 
         n_queries = 0
         if queries is not None:
@@ -234,15 +266,51 @@ class SuperKMeans:
 
         return self._cpp_skmeans_obj.train(data, queries, n_queries)
 
+    def _assign_engine(self):
+        """C++ object used to run exact float32 assign().
+
+        Exact assign() needs no trained state and is identical across the
+        flat/hierarchical/quantized variants, so it can run before train():
+        reuse the trained object if present, otherwise lazily build a flat
+        float32 engine.
+        """
+        if self._cpp_skmeans_obj is not None:
+            return self._cpp_skmeans_obj
+        if self._assign_only_obj is None:
+            self._assign_only_obj = _SuperKMeansCpp(self._n_clusters, self._dimensionality)
+        return self._assign_only_obj
+
+    def _quantized_assign_engine(self):
+        """C++ object used to run quantized_assign().
+
+        quantized_assign is standalone (it fits a fresh quantizer on the input and
+        reuses no trained state), so it can run before train(): reuse the trained
+        object if present, otherwise lazily build a flat engine configured with the
+        chosen quantizer.
+        """
+        if self._cpp_skmeans_obj is not None:
+            return self._cpp_skmeans_obj
+        if self._quantizer == "f32":
+            return self._assign_engine()
+        if self._quantized_assign_only_obj is None:
+            config = _SuperKMeansConfigCpp()
+            config.quantizer_type = _QUANTIZER_MAP[self._quantizer]
+            config.seed = self._config_params['seed']
+            self._quantized_assign_only_obj = _QuantizedSuperKMeansCpp(
+                self._n_clusters, self._dimensionality, config
+            )
+        return self._quantized_assign_only_obj
+
     def assign(
         self,
         vectors: NDArray[np.float32],
         centroids: NDArray[np.float32],
     ) -> NDArray[np.uint32]:
         """
-        Assign vectors to their nearest centroid using brute force.
+        Assign vectors to their nearest centroid using exact float32 brute force.
 
-        Works with any vectors, not just the training data.
+        Works with any vectors, not just the training data, and can be called
+        before train() (exact assignment needs no trained state).
 
         Parameters
         ----------
@@ -270,7 +338,7 @@ class SuperKMeans:
                 f"got {vectors.shape[1]} and {centroids.shape[1]}"
             )
 
-        return self._cpp_skmeans_obj.assign(vectors, centroids)
+        return self._assign_engine().assign(vectors, centroids)
 
     # Alias for assign() to match FAISS API
     add = assign
@@ -314,7 +382,51 @@ class SuperKMeans:
                 f"got {vectors.shape[1]} and {centroids.shape[1]}"
             )
 
+        if self._cpp_skmeans_obj is None:
+            raise RuntimeError("assign_training_points requires train() to be called first")
+
         return self._cpp_skmeans_obj.assign_training_points(vectors, centroids)
+
+    def quantized_assign(
+        self,
+        vectors: NDArray[np.float32],
+        centroids: NDArray[np.float32],
+    ) -> NDArray[np.uint32]:
+        """
+        Assign vectors to their nearest centroid in the quantizer's compressed domain.
+
+        Standalone: fits a fresh quantizer on the input vectors, encodes both the vectors
+        and the centroids, then searches in the quantized domain (it does not reuse trained
+        state). Works with any vectors, not just the training data, and can be called before
+        train(). For quantizer="f32" this is equivalent to assign().
+
+        Parameters
+        ----------
+        vectors : ndarray of shape (n_vectors, dimensionality), dtype=float32
+            Vectors to assign. Must be C-contiguous.
+        centroids : ndarray of shape (n_clusters, dimensionality), dtype=float32
+            Cluster centroids. Must be C-contiguous.
+
+        Returns
+        -------
+        assignments : ndarray of shape (n_vectors,), dtype=uint32
+            Cluster index (0 to n_clusters-1) for each vector.
+
+        Raises
+        ------
+        ValueError
+            If inputs have wrong shape, dtype, or memory layout.
+        """
+        vectors = self.validate_numpy_array(vectors, "vectors")
+        centroids = self.validate_numpy_array(centroids, "centroids")
+
+        if vectors.shape[1] != centroids.shape[1]:
+            raise ValueError(
+                f"vectors and centroids must have same dimensionality, "
+                f"got {vectors.shape[1]} and {centroids.shape[1]}"
+            )
+
+        return self._quantized_assign_engine().quantized_assign(vectors, centroids)
 
     @property
     def n_clusters_(self) -> int:
@@ -336,6 +448,11 @@ class SuperKMeans:
         return self._hierarchical
 
     @property
+    def quantizer_(self) -> str:
+        """The quantization scheme in use (read-only)."""
+        return self._quantizer
+
+    @property
     def iteration_stats(self):
         """Statistics for each iteration (available after training if verbose=True)."""
         if self._cpp_skmeans_obj is None:
@@ -354,10 +471,11 @@ class SuperKMeans:
     def __repr__(self) -> str:
         """String representation of the SuperKMeans object."""
         hierarchical_str = f", hierarchical={self._hierarchical}" if self._hierarchical is not None else ""
+        quantizer_str = f", quantizer={self._quantizer!r}" if self._quantizer != "f32" else ""
         return (
             f"SuperKMeans(n_clusters={self._n_clusters}, "
             f"dimensionality={self._dimensionality}, "
-            f"trained={self.is_trained_}{hierarchical_str})"
+            f"trained={self.is_trained_}{quantizer_str}{hierarchical_str})"
         )
 
 

@@ -3,17 +3,23 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <numeric>
+#include <random>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#include "superkmeans/common.h"
+#include "superkmeans/distance_computers/batch_computers.h"
 
 namespace bench_utils {
 
@@ -25,7 +31,7 @@ namespace bench_utils {
  * @param n Number of data points
  * @return Default number of clusters
  */
-inline size_t get_default_n_clusters(size_t n) {
+inline size_t GetDefaultNClusters(size_t n) {
     return std::max<size_t>(1u, static_cast<size_t>(std::sqrt(static_cast<double>(n)) * 4.0));
 }
 
@@ -34,15 +40,15 @@ inline const std::string BENCHMARKS_ROOT = std::string(CMAKE_SOURCE_DIR) + "/ben
 inline const std::string DATA_DIR = BENCHMARKS_ROOT + "/data";
 inline const std::string GROUND_TRUTH_DIR = BENCHMARKS_ROOT + "/ground_truth";
 
-inline std::string get_data_path(const std::string& dataset) {
+inline std::string GetDataPath(const std::string& dataset) {
     return DATA_DIR + "/data_" + dataset + ".bin";
 }
 
-inline std::string get_query_path(const std::string& dataset) {
+inline std::string GetQueryPath(const std::string& dataset) {
     return DATA_DIR + "/data_" + dataset + "_test.bin";
 }
 
-inline std::string get_ground_truth_path(const std::string& dataset) {
+inline std::string GetGroundTruthPath(const std::string& dataset) {
     return GROUND_TRUTH_DIR + "/" + dataset + ".json";
 }
 
@@ -85,12 +91,14 @@ const std::unordered_map<std::string, std::pair<size_t, size_t>> DATASET_PARAMS 
     {"gist", {1000000, 960}},
     {"openai", {999000, 1536}},
     {"arxiv", {2253000, 768}},
+    {"jina", {1374067, 768}},
     {"cohere", {10000000, 1024}},
     {"cohere50m", {50000000, 1024}},
+    {"openai5m", {5000000, 1536}},
 };
 
 const std::vector<std::string> ANGULAR_DATASETS =
-    {"yandex", "glove200", "glove100", "glove50", "llama"};
+    {"yandex", "jina", "glove200", "glove100", "glove50", "llama"};
 
 // Standard exploration fractions for recall computation
 const std::vector<float> EXPLORE_FRACTIONS = {0.001f,  0.002f,  0.003f,  0.004f,  0.005f,  0.006f,
@@ -98,6 +106,9 @@ const std::vector<float> EXPLORE_FRACTIONS = {0.001f,  0.002f,  0.003f,  0.004f,
                                               0.0175f, 0.0200f, 0.0225f, 0.0250f, 0.0275f, 0.0300f,
                                               0.0325f, 0.0350f, 0.0375f, 0.0400f, 0.0425f, 0.0450f,
                                               0.0475f, 0.0500f, 0.1f};
+
+// Fixed absolute centroid counts to always evaluate (nprobe=1, nprobe=2)
+const std::vector<int> ABSOLUTE_EXPLORE_COUNTS = {1, 2};
 
 // KNN values to test
 const std::vector<int> KNN_VALUES = {10, 100};
@@ -112,6 +123,9 @@ const std::vector<float> RECALL_TOL_VALUES =
 const std::vector<int> FAISS_EARLY_TERM_ITERS = {10};
 const int SCIKIT_EARLY_TERM_MAX_ITERS = 300;
 const float SCIKIT_EARLY_TERM_TOL = 1e-8f;
+
+// Target dimensionalities for PCA/JLT preprocessing (multiples of 64 up to 2048)
+const std::vector<size_t> TARGET_D_VALUES = {32, 64, 96, 128, 192, 256, 320, 384, 512, 768, 1024};
 
 // Sampling fraction values for sampling experiment
 const std::vector<float> SAMPLING_FRACTION_VALUES = {
@@ -143,8 +157,7 @@ const std::vector<int> VARYING_K_VALUES = {100, 1000, 10000, 100000};
  * @param filename Path to JSON file
  * @return Map of query index to vector IDs
  */
-inline std::unordered_map<int, std::vector<int>> parse_ground_truth_json(const std::string& filename
-) {
+inline std::unordered_map<int, std::vector<int>> ParseGroundTruthJson(const std::string& filename) {
     std::unordered_map<int, std::vector<int>> gt_map;
     std::ifstream file(filename);
     if (!file.is_open()) {
@@ -207,7 +220,7 @@ inline std::unordered_map<int, std::vector<int>> parse_ground_truth_json(const s
  * avg_vectors_to_visit)
  */
 template <typename AssignmentType>
-std::vector<std::tuple<int, float, float, float, float>> compute_recall(
+std::vector<std::tuple<int, float, float, float, float>> ComputeRecall(
     const std::unordered_map<int, std::vector<int>>& gt_map,
     const std::vector<AssignmentType>& assignments,
     const float* queries,
@@ -261,9 +274,19 @@ std::vector<std::tuple<int, float, float, float, float>> compute_recall(
         }
     }
 
+    // Build list of (centroids_to_explore, explore_frac) configs:
+    // absolute counts first (nprobe=1, nprobe=2), then fraction-based
+    std::vector<std::pair<int, float>> explore_configs;
+    for (int count : ABSOLUTE_EXPLORE_COUNTS) {
+        int c = std::min(count, static_cast<int>(n_clusters));
+        explore_configs.push_back({c, static_cast<float>(c) / static_cast<float>(n_clusters)});
+    }
+    for (float frac : EXPLORE_FRACTIONS) {
+        explore_configs.push_back({std::max(1, static_cast<int>(n_clusters * frac)), frac});
+    }
+
     std::vector<std::tuple<int, float, float, float, float>> results;
-    for (float explore_frac : EXPLORE_FRACTIONS) {
-        int centroids_to_explore = std::max(1, static_cast<int>(n_clusters * explore_frac));
+    for (const auto& [centroids_to_explore, explore_frac] : explore_configs) {
 
         // For each query, find top-N nearest centroids
         std::vector<float> query_recalls;
@@ -346,7 +369,7 @@ std::vector<std::tuple<int, float, float, float, float>> compute_recall(
     return results;
 }
 
-inline void print_recall_results(
+inline void PrintRecallResults(
     const std::vector<std::tuple<int, float, float, float, float>>& results,
     int knn
 ) {
@@ -367,7 +390,7 @@ inline void print_recall_results(
 /**
  * @brief Create directory recursively if it doesn't exist.
  */
-inline bool create_directory_recursive(const std::string& path) {
+inline bool CreateDirectoryRecursive(const std::string& path) {
     std::string current_path;
     std::istringstream path_stream(path);
     std::string segment;
@@ -405,7 +428,7 @@ inline bool create_directory_recursive(const std::string& path) {
  * @param results_knn_10 Results for KNN=10
  * @param results_knn_100 Results for KNN=100
  */
-inline void write_results_to_csv(
+inline void WriteResultsToCsv(
     const std::string& experiment_name,
     const std::string& algorithm,
     const std::string& dataset,
@@ -420,12 +443,13 @@ inline void write_results_to_csv(
     const std::unordered_map<std::string, std::string>& config_dict,
     const std::vector<std::tuple<int, float, float, float, float>>& results_knn_10,
     const std::vector<std::tuple<int, float, float, float, float>>& results_knn_100,
-    const std::string& balance_stats_json = ""
+    const std::string& balance_stats_json = "",
+    const std::string& iteration_stats_json = ""
 ) {
     const char* arch_env = std::getenv("SKM_ARCH");
     std::string arch = arch_env ? std::string(arch_env) : "default";
     std::string results_dir = std::string(CMAKE_SOURCE_DIR) + "/benchmarks/results/" + arch;
-    create_directory_recursive(results_dir);
+    CreateDirectoryRecursive(results_dir);
     std::string csv_path = results_dir + "/" + experiment_name + ".csv";
     bool file_exists = (std::ifstream(csv_path).good());
     std::ofstream csv_file(csv_path, std::ios::app);
@@ -441,6 +465,12 @@ inline void write_results_to_csv(
         // Add columns for each KNN and explore fraction combination (only if we have recall data)
         if (has_recall_data) {
             for (int knn : KNN_VALUES) {
+                for (int count : ABSOLUTE_EXPLORE_COUNTS) {
+                    csv_file << ",recall@" << knn << "@nprobe" << count;
+                    csv_file << ",recall_std@" << knn << "@nprobe" << count;
+                    csv_file << ",centroids_explored@" << knn << "@nprobe" << count;
+                    csv_file << ",vectors_explored@" << knn << "@nprobe" << count;
+                }
                 for (float explore_frac : EXPLORE_FRACTIONS) {
                     csv_file << ",recall@" << knn << "@" << std::fixed << std::setprecision(2)
                              << (explore_frac * 100.0f);
@@ -453,7 +483,7 @@ inline void write_results_to_csv(
                 }
             }
         }
-        csv_file << ",balance_stats,config\n";
+        csv_file << ",balance_stats,iteration_stats,config\n";
     }
     auto now = std::chrono::system_clock::now();
     auto now_time_t = std::chrono::system_clock::to_time_t(now);
@@ -497,6 +527,19 @@ inline void write_results_to_csv(
         csv_file << ",";
     }
 
+    // Write iteration_stats JSON
+    if (!iteration_stats_json.empty()) {
+        std::string escaped_iter = iteration_stats_json;
+        size_t pos = 0;
+        while ((pos = escaped_iter.find("\"", pos)) != std::string::npos) {
+            escaped_iter.replace(pos, 1, "\"\"");
+            pos += 2;
+        }
+        csv_file << ",\"" << escaped_iter << "\"";
+    } else {
+        csv_file << ",";
+    }
+
     std::ostringstream config_json_ss;
     config_json_ss << "{";
     bool first = true;
@@ -521,6 +564,321 @@ inline void write_results_to_csv(
 
     csv_file.close();
     std::cout << "Results written to: " << csv_path << std::endl;
+}
+
+using recall_results_t = std::vector<std::tuple<int, float, float, float, float>>;
+
+/**
+ * @brief Build a JSON object string from recall result tuples.
+ *
+ * Produces keys like recall@10@nprobe1, recall@10@0.10, etc.
+ */
+inline std::string BuildRecallStatsJson(
+    const recall_results_t& results_knn_10,
+    const recall_results_t& results_knn_100
+) {
+    std::ostringstream ss;
+    ss << std::fixed;
+    bool first_entry = true;
+    ss << "{";
+
+    auto emit_results = [&](int knn, const recall_results_t& results) {
+        size_t abs_idx = 0;
+        for (const auto& [centroids_to_explore, explore_frac, recall, std_recall, avg_vectors] :
+             results) {
+            if (!first_entry)
+                ss << ",";
+            first_entry = false;
+
+            std::string suffix;
+            if (abs_idx < ABSOLUTE_EXPLORE_COUNTS.size()) {
+                suffix = "nprobe" + std::to_string(ABSOLUTE_EXPLORE_COUNTS[abs_idx]);
+                abs_idx++;
+            } else {
+                std::ostringstream frac_ss;
+                frac_ss << std::fixed << std::setprecision(2) << (explore_frac * 100.0f);
+                suffix = frac_ss.str();
+            }
+
+            ss << "\"recall@" << knn << "@" << suffix << "\":" << std::setprecision(6) << recall;
+            ss << ",\"recall_std@" << knn << "@" << suffix << "\":" << std::setprecision(6)
+               << std_recall;
+            ss << ",\"centroids_explored@" << knn << "@" << suffix << "\":" << centroids_to_explore;
+            ss << ",\"vectors_explored@" << knn << "@" << suffix << "\":" << std::setprecision(2)
+               << avg_vectors;
+        }
+    };
+
+    emit_results(10, results_knn_10);
+    emit_results(100, results_knn_100);
+    ss << "}";
+    return ss.str();
+}
+
+/**
+ * @brief Write results to CSV with recall stats packed into a single JSON column.
+ *
+ * Same core columns as WriteResultsToCsv, but instead of one column per
+ * recall measurement, all recall/std/centroids/vectors stats are stored in a
+ * single ``clustering_quality_stats`` JSON column with the structure:
+ *
+ *   {
+ *     "assign": { "recall@10@nprobe1": ..., "recall_std@10@nprobe1": ..., ... },
+ *     "quantized_assign": { ... }   // only present when provided
+ *   }
+ */
+inline void WriteResultsToCsvV2(
+    const std::string& experiment_name,
+    const std::string& algorithm,
+    const std::string& dataset,
+    int n_iters,
+    int actual_iterations,
+    int dimensionality,
+    size_t data_size,
+    int n_clusters,
+    double construction_time_ms,
+    int threads,
+    double final_objective,
+    const std::unordered_map<std::string, std::string>& config_dict,
+    const recall_results_t& assign_results_knn_10,
+    const recall_results_t& assign_results_knn_100,
+    const recall_results_t& quantized_assign_results_knn_10 = {},
+    const recall_results_t& quantized_assign_results_knn_100 = {},
+    const std::string& balance_stats_json = "",
+    const std::string& quantized_balance_stats_json = "",
+    const std::string& iteration_stats_json = "",
+    const std::string& run_label = ""
+) {
+    const char* arch_env = std::getenv("SKM_ARCH");
+    std::string arch = arch_env ? std::string(arch_env) : "default";
+    std::string results_dir = std::string(CMAKE_SOURCE_DIR) + "/benchmarks/results/" + arch;
+    CreateDirectoryRecursive(results_dir);
+    std::string csv_path = results_dir + "/" + experiment_name + ".csv";
+    bool file_exists = (std::ifstream(csv_path).good());
+    std::ofstream csv_file(csv_path, std::ios::app);
+    if (!csv_file.is_open()) {
+        std::cerr << "Failed to open CSV file: " << csv_path << std::endl;
+        return;
+    }
+
+    if (!file_exists) {
+        csv_file << "timestamp,algorithm,dataset,n_iters,actual_iterations,dimensionality,"
+                    "data_size,n_clusters,construction_time_ms,threads,final_objective,"
+                    "clustering_quality_stats,balance_stats,quantized_balance_stats,"
+                    "iteration_stats,config,run_label\n";
+    }
+
+    // Timestamp
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm;
+    localtime_r(&now_time_t, &now_tm);
+    char timestamp[32];
+    std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &now_tm);
+
+    csv_file << timestamp << "," << algorithm << "," << dataset << "," << n_iters << ","
+             << actual_iterations << "," << dimensionality << "," << data_size << "," << n_clusters
+             << "," << std::fixed << std::setprecision(2) << construction_time_ms << "," << threads
+             << "," << std::setprecision(6) << final_objective;
+
+    // Build clustering_quality_stats JSON
+    std::ostringstream quality_ss;
+    quality_ss << "{";
+    bool has_assign = !assign_results_knn_10.empty() || !assign_results_knn_100.empty();
+    bool has_quantized =
+        !quantized_assign_results_knn_10.empty() || !quantized_assign_results_knn_100.empty();
+
+    if (has_assign) {
+        quality_ss << "\"assign\":"
+                   << BuildRecallStatsJson(assign_results_knn_10, assign_results_knn_100);
+    }
+    if (has_quantized) {
+        if (has_assign)
+            quality_ss << ",";
+        quality_ss << "\"quantized_assign\":"
+                   << BuildRecallStatsJson(
+                          quantized_assign_results_knn_10, quantized_assign_results_knn_100
+                      );
+    }
+    quality_ss << "}";
+
+    auto escape_csv_json = [](const std::string& json) -> std::string {
+        std::string escaped = json;
+        size_t p = 0;
+        while ((p = escaped.find("\"", p)) != std::string::npos) {
+            escaped.replace(p, 1, "\"\"");
+            p += 2;
+        }
+        return "\"" + escaped + "\"";
+    };
+
+    if (has_assign || has_quantized) {
+        csv_file << "," << escape_csv_json(quality_ss.str());
+    } else {
+        csv_file << ",";
+    }
+
+    // balance_stats
+    if (!balance_stats_json.empty()) {
+        csv_file << "," << escape_csv_json(balance_stats_json);
+    } else {
+        csv_file << ",";
+    }
+
+    // quantized_balance_stats (always write a valid JSON literal so
+    // pandas' json.loads() doesn't choke on NaN/empty cells).
+    csv_file << ","
+             << escape_csv_json(
+                    quantized_balance_stats_json.empty() ? "{}" : quantized_balance_stats_json
+                );
+
+    // iteration_stats
+    if (!iteration_stats_json.empty()) {
+        csv_file << "," << escape_csv_json(iteration_stats_json);
+    } else {
+        csv_file << ",";
+    }
+
+    // config
+    std::ostringstream config_json_ss;
+    config_json_ss << "{";
+    bool first = true;
+    for (const auto& [key, value] : config_dict) {
+        if (!first)
+            config_json_ss << ",";
+        config_json_ss << "\"" << key << "\":" << value;
+        first = false;
+    }
+    config_json_ss << "}";
+    csv_file << "," << escape_csv_json(config_json_ss.str()) << "," << run_label << "\n";
+
+    csv_file.close();
+    std::cout << "Results written to: " << csv_path << std::endl;
+}
+
+/**
+ * @brief Compute top-k nearest centroid distances for a random sample of points
+ *        and write them to a JSON file. Optionally prints the first few on screen.
+ *
+ * @param vectors      Data matrix (row-major, n_vectors x d)
+ * @param centroids    Centroid matrix (row-major, n_centroids x d)
+ * @param n_vectors    Number of data vectors
+ * @param n_centroids  Number of centroids
+ * @param d            Dimensionality
+ * @param k            Number of nearest centroids per point
+ * @param sample_size  Number of points to sample
+ * @param output_path  Path to write the JSON output
+ * @param print_count  Number of sample points to print on screen (0 to skip)
+ * @param seed         Random seed for sampling
+ */
+inline void ComputeAndStoreTopkDistances(
+    const float* vectors,
+    const float* centroids,
+    size_t n_vectors,
+    size_t n_centroids,
+    size_t d,
+    size_t k,
+    size_t sample_size,
+    const std::string& output_path,
+    size_t print_count = 3,
+    uint32_t seed = 42
+) {
+    using batch_computer =
+        skmeans::BatchComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>;
+
+    sample_size = std::min(sample_size, n_vectors);
+    k = std::min(k, n_centroids);
+
+    // Sample random point indices
+    std::mt19937 rng(seed);
+    std::vector<size_t> indices(n_vectors);
+    std::iota(indices.begin(), indices.end(), 0);
+    std::shuffle(indices.begin(), indices.end(), rng);
+    indices.resize(sample_size);
+
+    // Gather sampled vectors into contiguous buffer
+    std::vector<float> sampled(sample_size * d);
+    for (size_t i = 0; i < sample_size; ++i) {
+        std::memcpy(sampled.data() + i * d, vectors + indices[i] * d, d * sizeof(float));
+    }
+
+    // Compute norms
+    std::vector<float> sample_norms(sample_size);
+    std::vector<float> centroid_norms(n_centroids);
+    for (size_t i = 0; i < sample_size; ++i) {
+        float s = 0.0f;
+        const float* p = sampled.data() + i * d;
+        for (size_t j = 0; j < d; ++j)
+            s += p[j] * p[j];
+        sample_norms[i] = s;
+    }
+    for (size_t i = 0; i < n_centroids; ++i) {
+        float s = 0.0f;
+        const float* p = centroids + i * d;
+        for (size_t j = 0; j < d; ++j)
+            s += p[j] * p[j];
+        centroid_norms[i] = s;
+    }
+
+    // Allocate outputs
+    std::vector<uint32_t> out_knn(sample_size * k);
+    std::vector<float> out_distances(sample_size * k);
+    std::unique_ptr<float[]> tmp_buf(new float[skmeans::X_BATCH_SIZE * skmeans::Y_BATCH_SIZE]);
+
+    batch_computer::FindKNearestNeighbors(
+        sampled.data(),
+        centroids,
+        sample_size,
+        n_centroids,
+        d,
+        sample_norms.data(),
+        centroid_norms.data(),
+        k,
+        out_knn.data(),
+        out_distances.data(),
+        tmp_buf.get()
+    );
+
+    // Print first few samples
+    for (size_t i = 0; i < std::min(print_count, sample_size); ++i) {
+        std::cout << "Point " << indices[i] << " top-" << k << " centroid distances:";
+        for (size_t t = 0; t < std::min<size_t>(k, 10); ++t) {
+            std::cout << " c" << out_knn[i * k + t] << "=" << std::fixed << std::setprecision(2)
+                      << out_distances[i * k + t];
+        }
+        if (k > 10)
+            std::cout << " ...";
+        std::cout << std::defaultfloat << std::endl;
+    }
+
+    // Write JSON: array of objects, each with point_id, centroid_ids[], distances[]
+    std::ofstream json_file(output_path);
+    if (!json_file.is_open()) {
+        std::cerr << "Failed to open " << output_path << " for writing" << std::endl;
+        return;
+    }
+    json_file << std::setprecision(6) << "[\n";
+    for (size_t i = 0; i < sample_size; ++i) {
+        if (i > 0)
+            json_file << ",\n";
+        json_file << "  {\"point_id\":" << indices[i] << ",\"centroid_ids\":[";
+        for (size_t t = 0; t < k; ++t) {
+            if (t > 0)
+                json_file << ",";
+            json_file << out_knn[i * k + t];
+        }
+        json_file << "],\"distances\":[";
+        for (size_t t = 0; t < k; ++t) {
+            if (t > 0)
+                json_file << ",";
+            json_file << out_distances[i * k + t];
+        }
+        json_file << "]}";
+    }
+    json_file << "\n]\n";
+    json_file.close();
+    std::cout << "Top-" << k << " distances for " << sample_size
+              << " points written to: " << output_path << std::endl;
 }
 
 } // namespace bench_utils

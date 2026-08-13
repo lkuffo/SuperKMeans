@@ -14,6 +14,7 @@
 
 int main(int argc, char* argv[]) {
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
+    bool blas_only = !(argc > 2 && std::string(argv[2]) == "pruning");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -22,10 +23,10 @@ int main(int argc, char* argv[]) {
     }
     const size_t n = it->second.first;
     const size_t d = it->second.second;
-    const size_t n_clusters = 40000; // bench_utils::get_default_n_clusters(n);
+    const size_t n_clusters = 40000; // bench_utils::GetDefaultNClusters(n);
     int n_iters = 5;
     float sampling_fraction = 1.0;
-    std::string filename = bench_utils::get_data_path(dataset);
+    std::string filename = bench_utils::GetDataPath(dataset);
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
@@ -61,7 +62,7 @@ int main(int argc, char* argv[]) {
     config.unrotate_centroids = true;
     config.early_termination = false;
     config.sampling_fraction = sampling_fraction;
-    config.use_blas_only = false;
+    config.use_blas_only = blas_only;
 
     auto is_angular = std::find(
         bench_utils::ANGULAR_DATASETS.begin(), bench_utils::ANGULAR_DATASETS.end(), dataset

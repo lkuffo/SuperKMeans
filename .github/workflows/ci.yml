@@ -133,14 +133,16 @@ jobs:
         run: |
           cmake -B build_asan -DSKMEANS_COMPILE_TESTS=ON \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_C_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -D_GLIBCXX_SANITIZE_VECTOR=1" \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
 
       - name: Build tests
         run: cmake --build build_asan -j$(nproc) --target tests
 
       - name: Run tests
-        run: ctest --test-dir build_asan --output-on-failure --exclude-regex "SLOW_"
+        run: ctest --test-dir build_asan --output-on-failure
 
   sanitizers-tsan:
     runs-on: ubuntu-24.04
@@ -162,6 +164,8 @@ jobs:
         run: |
           cmake -B build_tsan -DSKMEANS_COMPILE_TESTS=ON \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS_DEBUG="-g -O1" \
+            -DCMAKE_C_FLAGS_DEBUG="-g -O1" \
             -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
             -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
 
@@ -169,7 +173,7 @@ jobs:
         run: cmake --build build_tsan -j$(nproc) --target tests
 
       - name: Run tests
-        run: ctest --test-dir build_tsan --output-on-failure --exclude-regex "SLOW_"
+        run: ctest --test-dir build_tsan --output-on-failure
 
   fetchcontent:
     runs-on: ubuntu-24.04

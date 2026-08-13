@@ -7,11 +7,12 @@ from superkmeans import SuperKMeans
 
 
 def print_usage(program_name):
-    print(f"Usage: {program_name} <hdf5_path> [k]")
+    print(f"Usage: {program_name} <hdf5_path> [k] [quantizer]")
     print("  hdf5_path: Path to HDF5 file containing 'train' dataset")
     print("  k: Number of clusters (default: 1000)")
+    print("  quantizer: f32, sq8, lvq4, or rabitq (default: f32)")
     print("Example:")
-    print(f"  {program_name} data/dataset.hdf5 4000")
+    print(f"  {program_name} data/dataset.hdf5 4000 sq8")
 
 
 def read_hdf5_data(hdf5_path):
@@ -42,12 +43,15 @@ def main():
 
     n, d = data.shape
     k = int(sys.argv[2]) if len(sys.argv) > 2 else math.sqrt(n) * 4
+    quantizer = sys.argv[3] if len(sys.argv) > 3 else "f32"
     print(f"Loaded {n:,} vectors with {d} dimensions")
     print(f"Number of clusters: {k}")
+    print(f"Quantizer: {quantizer}")
 
     kmeans = SuperKMeans(
         n_clusters=k,
         dimensionality=d,
+        quantizer=quantizer,
     )
 
     print("Generating centroids...")

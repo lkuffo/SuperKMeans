@@ -8,6 +8,9 @@
 
 namespace py = pybind11;
 
+using skmeans::DistanceFunction;
+using skmeans::Quantization;
+
 template <typename T>
 void ValidatePyArray(py::array_t<T> arr, const std::string& name, size_t expected_ndim) {
     auto info = arr.request();
@@ -22,9 +25,369 @@ void ValidatePyArray(py::array_t<T> arr, const std::string& name, size_t expecte
     }
 }
 
+// Shared body for assign()/quantized_assign()/assign_training_points(): validate the two float
+// matrices, invoke the assign-family callable, and copy the uint32 result into a NumPy array.
+template <typename Fn>
+py::array_t<uint32_t> AssignmentsToArray(
+    py::array_t<float> vectors,
+    py::array_t<float> centroids,
+    Fn&& call
+) {
+    ValidatePyArray(vectors, "vectors", 2);
+    ValidatePyArray(centroids, "centroids", 2);
+
+    auto vectors_info = vectors.request();
+    auto centroids_info = centroids.request();
+
+    size_t n_vectors = vectors_info.shape[0];
+    size_t n_centroids = centroids_info.shape[0];
+    if (vectors_info.shape[1] != centroids_info.shape[1]) {
+        throw std::runtime_error("vectors and centroids must have the same dimensionality");
+    }
+
+    auto assignments_vec = call(
+        static_cast<const float*>(vectors_info.ptr),
+        static_cast<const float*>(centroids_info.ptr),
+        n_vectors,
+        n_centroids
+    );
+
+    auto result = py::array_t<uint32_t>(n_vectors);
+    std::memcpy(
+        result.request().ptr, assignments_vec.data(), assignments_vec.size() * sizeof(uint32_t)
+    );
+    return result;
+}
+
+// Shared body for train(): run clustering and return the centroids as an (n_clusters, d) NumPy
+// array.
+template <typename KMeans>
+py::array_t<float> TrainToArray(
+    KMeans& self,
+    py::array_t<float> data,
+    py::object queries_obj,
+    size_t n_queries
+) {
+    ValidatePyArray(data, "data", 2);
+    auto data_info = data.request();
+    size_t n = data_info.shape[0];
+    size_t d = data_info.shape[1];
+    const float* data_ptr = static_cast<const float*>(data_info.ptr);
+
+    const float* queries_ptr = nullptr;
+    if (!queries_obj.is_none()) {
+        auto queries = queries_obj.cast<py::array_t<float>>();
+        ValidatePyArray(queries, "queries", 2);
+        auto queries_info = queries.request();
+        if (queries_info.shape[1] != static_cast<ssize_t>(d)) {
+            throw std::runtime_error("queries must have the same dimensionality as data");
+        }
+        n_queries = queries_info.shape[0];
+        queries_ptr = static_cast<const float*>(queries_info.ptr);
+    }
+
+    auto centroids_vec = self.Train(data_ptr, n, queries_ptr, n_queries);
+
+    size_t n_clusters = self.GetNClusters();
+    auto result = py::array_t<float>({n_clusters, d});
+    std::memcpy(result.request().ptr, centroids_vec.data(), centroids_vec.size() * sizeof(float));
+    return result;
+}
+
+template <Quantization q>
+void BindSuperKMeans(py::module& m, const char* name) {
+    using KMeans = skmeans::SuperKMeans<q, DistanceFunction::l2>;
+
+    py::class_<KMeans>(m, name, "SuperKMeans clustering")
+        .def(
+            py::init([](size_t n_clusters,
+                        size_t dimensionality,
+                        const skmeans::SuperKMeansConfig& config) {
+                return new KMeans(n_clusters, dimensionality, config);
+            }),
+            py::arg("n_clusters"),
+            py::arg("dimensionality"),
+            py::arg("config"),
+            "Initialize SuperKMeans with configuration.\n\n"
+            "Args:\n"
+            "    n_clusters: Number of clusters to create\n"
+            "    dimensionality: Number of dimensions in the data\n"
+            "    config: Configuration parameters (SuperKMeansConfig)"
+        )
+
+        .def(
+            py::init([](size_t n_clusters, size_t dimensionality) {
+                return new KMeans(n_clusters, dimensionality);
+            }),
+            py::arg("n_clusters"),
+            py::arg("dimensionality"),
+            "Initialize SuperKMeans with default configuration.\n\n"
+            "Args:\n"
+            "    n_clusters: Number of clusters to create\n"
+            "    dimensionality: Number of dimensions in the data"
+        )
+
+        .def(
+            "train",
+            [](KMeans& self, py::array_t<float> data, py::object queries_obj, size_t n_queries) {
+                return TrainToArray(self, data, queries_obj, n_queries);
+            },
+            py::arg("data"),
+            py::arg("queries") = py::none(),
+            py::arg("n_queries") = 0,
+            "Run k-means clustering to determine centroids.\n\n"
+            "Args:\n"
+            "    data: NumPy array of shape (n, d) with dtype float32\n"
+            "    queries: Optional NumPy array of query vectors for recall computation\n"
+            "    n_queries: Number of query vectors (ignored if queries is provided)\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_clusters, d) containing centroids"
+        )
+
+        .def(
+            "assign",
+            [](KMeans& self, py::array_t<float> vectors, py::array_t<float> centroids) {
+                return AssignmentsToArray(
+                    vectors,
+                    centroids,
+                    [&](const float* v, const float* c, size_t nv, size_t nc) {
+                        return self.Assign(v, c, nv, nc);
+                    }
+                );
+            },
+            py::arg("vectors"),
+            py::arg("centroids"),
+            "Assign vectors to their nearest centroid using exact float32 brute force.\n\n"
+            "Works with any vectors, not just the training data.\n\n"
+            "Args:\n"
+            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32\n"
+            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
+        )
+
+        .def(
+            "quantized_assign",
+            [](KMeans& self, py::array_t<float> vectors, py::array_t<float> centroids) {
+                return AssignmentsToArray(
+                    vectors,
+                    centroids,
+                    [&](const float* v, const float* c, size_t nv, size_t nc) {
+                        return self.QuantizedAssign(v, c, nv, nc);
+                    }
+                );
+            },
+            py::arg("vectors"),
+            py::arg("centroids"),
+            "Assign vectors to their nearest centroid using the trained quantizer.\n\n"
+            "Encodes the input vectors and centroids with the fitted quantizer, then searches in\n"
+            "the quantized domain. Requires train() to have been called first. Works with any\n"
+            "vectors, not just the training data.\n\n"
+            "Args:\n"
+            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32\n"
+            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
+        )
+
+        .def(
+            "assign_training_points",
+            [](KMeans& self, py::array_t<float> vectors, py::array_t<float> centroids) {
+                return AssignmentsToArray(
+                    vectors,
+                    centroids,
+                    [&](const float* v, const float* c, size_t nv, size_t nc) {
+                        return self.AssignTrainingPoints(v, c, nv, nc);
+                    }
+                );
+            },
+            py::arg("vectors"),
+            py::arg("centroids"),
+            "Fast assignment using trained state. Requires that the vectors are the same\n"
+            "as those used in train(). Leverages training assignments (and pruning) for faster\n"
+            "assignment than brute force assign().\n\n"
+            "Args:\n"
+            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32 (must be training "
+            "data)\n"
+            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
+        )
+
+        .def("get_n_clusters", &KMeans::GetNClusters, "Get the number of clusters.")
+
+        .def(
+            "is_trained",
+            [](const KMeans& self) { return self.IsTrained(); },
+            "Check whether the model has been trained."
+        )
+
+        .def_readonly(
+            "iteration_stats",
+            &KMeans::iteration_stats,
+            "List of statistics for each iteration (read-only)"
+        )
+
+        .def("__repr__", [name](const KMeans& self) {
+            return std::string("<") + name + ": n_clusters=" + std::to_string(self.GetNClusters()) +
+                   ", trained=" + (self.IsTrained() ? "True" : "False") + ">";
+        });
+}
+
+template <Quantization q>
+void BindHierarchicalSuperKMeans(py::module& m, const char* name) {
+    using KMeans = skmeans::HierarchicalSuperKMeans<q, DistanceFunction::l2>;
+
+    py::class_<KMeans>(m, name, "Hierarchical SuperKMeans clustering")
+        .def(
+            py::init([](size_t n_clusters,
+                        size_t dimensionality,
+                        const skmeans::HierarchicalSuperKMeansConfig& config) {
+                return new KMeans(n_clusters, dimensionality, config);
+            }),
+            py::arg("n_clusters"),
+            py::arg("dimensionality"),
+            py::arg("config"),
+            "Initialize HierarchicalSuperKMeans with configuration.\n\n"
+            "Args:\n"
+            "    n_clusters: Number of clusters to create\n"
+            "    dimensionality: Number of dimensions in the data\n"
+            "    config: Configuration parameters (HierarchicalSuperKMeansConfig)"
+        )
+
+        .def(
+            py::init([](size_t n_clusters, size_t dimensionality) {
+                return new KMeans(n_clusters, dimensionality);
+            }),
+            py::arg("n_clusters"),
+            py::arg("dimensionality"),
+            "Initialize HierarchicalSuperKMeans with default configuration.\n\n"
+            "Args:\n"
+            "    n_clusters: Number of clusters to create\n"
+            "    dimensionality: Number of dimensions in the data"
+        )
+
+        .def(
+            "train",
+            [](KMeans& self, py::array_t<float> data, py::object queries_obj, size_t n_queries) {
+                return TrainToArray(self, data, queries_obj, n_queries);
+            },
+            py::arg("data"),
+            py::arg("queries") = py::none(),
+            py::arg("n_queries") = 0,
+            "Run hierarchical k-means clustering to determine centroids.\n\n"
+            "Args:\n"
+            "    data: NumPy array of shape (n, d) with dtype float32\n"
+            "    queries: Optional NumPy array of query vectors for recall computation\n"
+            "    n_queries: Number of query vectors (ignored if queries is provided)\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_clusters, d) containing centroids"
+        )
+
+        .def(
+            "assign",
+            [](KMeans& self, py::array_t<float> vectors, py::array_t<float> centroids) {
+                return AssignmentsToArray(
+                    vectors,
+                    centroids,
+                    [&](const float* v, const float* c, size_t nv, size_t nc) {
+                        return self.Assign(v, c, nv, nc);
+                    }
+                );
+            },
+            py::arg("vectors"),
+            py::arg("centroids"),
+            "Assign vectors to their nearest centroid using exact float32 brute force.\n\n"
+            "Works with any vectors, not just the training data.\n\n"
+            "Args:\n"
+            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32\n"
+            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
+        )
+
+        .def(
+            "quantized_assign",
+            [](KMeans& self, py::array_t<float> vectors, py::array_t<float> centroids) {
+                return AssignmentsToArray(
+                    vectors,
+                    centroids,
+                    [&](const float* v, const float* c, size_t nv, size_t nc) {
+                        return self.QuantizedAssign(v, c, nv, nc);
+                    }
+                );
+            },
+            py::arg("vectors"),
+            py::arg("centroids"),
+            "Assign vectors to their nearest centroid using the trained quantizer.\n\n"
+            "Encodes the input vectors and centroids with the fitted quantizer, then searches in\n"
+            "the quantized domain. Requires train() to have been called first.\n\n"
+            "Args:\n"
+            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32\n"
+            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
+        )
+
+        .def(
+            "assign_training_points",
+            [](KMeans& self, py::array_t<float> vectors, py::array_t<float> centroids) {
+                return AssignmentsToArray(
+                    vectors,
+                    centroids,
+                    [&](const float* v, const float* c, size_t nv, size_t nc) {
+                        return self.AssignTrainingPoints(v, c, nv, nc);
+                    }
+                );
+            },
+            py::arg("vectors"),
+            py::arg("centroids"),
+            "Fast assignment using trained state. Requires that the vectors are the same\n"
+            "as those used in train(). Leverages training assignments for faster\n"
+            "assignment than brute force assign().\n\n"
+            "Args:\n"
+            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32 (must be training "
+            "data)\n"
+            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
+        )
+
+        .def("get_n_clusters", &KMeans::GetNClusters, "Get the number of clusters.")
+
+        .def(
+            "is_trained",
+            [](const KMeans& self) { return self.IsTrained(); },
+            "Check whether the model has been trained."
+        )
+
+        .def_readonly(
+            "iteration_stats",
+            &KMeans::iteration_stats,
+            "List of statistics for each iteration (read-only)"
+        )
+
+        .def_readonly(
+            "hierarchical_iteration_stats",
+            &KMeans::hierarchical_iteration_stats,
+            "Hierarchical iteration statistics (read-only)"
+        )
+
+        .def("__repr__", [name](const KMeans& self) {
+            return std::string("<") + name + ": n_clusters=" + std::to_string(self.GetNClusters()) +
+                   ", trained=" + (self.IsTrained() ? "True" : "False") + ">";
+        });
+}
+
 PYBIND11_MODULE(_superkmeans, m) {
     m.doc() =
         "A Super fast K-Means library for High-Dimensional vectors on CPUs (x86, ARM) and GPUs";
+
+    py::enum_<skmeans::QuantizerType>(m, "QuantizerType", "Quantization scheme for SuperKMeans")
+        .value("none", skmeans::QuantizerType::none)
+        .value("sq8", skmeans::QuantizerType::sq8)
+        .value("rabitq", skmeans::QuantizerType::rabitq)
+        .value("lvq4", skmeans::QuantizerType::lvq4);
 
     py::class_<skmeans::SuperKMeansConfig>(
         m, "SuperKMeansConfig", "Configuration parameters for SuperKMeans clustering."
@@ -61,6 +424,12 @@ PYBIND11_MODULE(_superkmeans, m) {
             &skmeans::SuperKMeansConfig::use_blas_only,
             "Use GEMM-only computation without pruning (default: False)"
         )
+        .def_readwrite(
+            "quantizer_type",
+            &skmeans::SuperKMeansConfig::quantizer_type,
+            "Quantization method as a QuantizerType (default: none). Only used for the quantized "
+            "clustering path"
+        )
 
         .def_readwrite(
             "tol",
@@ -86,6 +455,12 @@ PYBIND11_MODULE(_superkmeans, m) {
             "objective_k",
             &skmeans::SuperKMeansConfig::objective_k,
             "Number of nearest neighbors for recall computation (default: 100)"
+        )
+
+        .def_readwrite(
+            "full_precision_final_centroids",
+            &skmeans::SuperKMeansConfig::full_precision_final_centroids,
+            "Recompute final centroids from raw float data (default: False)"
         )
 
         .def_readwrite(
@@ -155,228 +530,6 @@ PYBIND11_MODULE(_superkmeans, m) {
                    ", shift=" + std::to_string(stats.shift) + ">";
         });
 
-    py::class_<skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>>(
-        m, "SuperKMeans", "SuperKMeans clustering"
-    )
-        .def(
-            py::init([](size_t n_clusters,
-                        size_t dimensionality,
-                        const skmeans::SuperKMeansConfig& config) {
-                return new skmeans::SuperKMeans<
-                    skmeans::Quantization::f32,
-                    skmeans::DistanceFunction::l2>(n_clusters, dimensionality, config);
-            }),
-            py::arg("n_clusters"),
-            py::arg("dimensionality"),
-            py::arg("config"),
-            "Initialize SuperKMeans with configuration.\n\n"
-            "Args:\n"
-            "    n_clusters: Number of clusters to create\n"
-            "    dimensionality: Number of dimensions in the data\n"
-            "    config: Configuration parameters (SuperKMeansConfig)"
-        )
-
-        .def(
-            py::init([](size_t n_clusters, size_t dimensionality) {
-                return new skmeans::SuperKMeans<
-                    skmeans::Quantization::f32,
-                    skmeans::DistanceFunction::l2>(n_clusters, dimensionality);
-            }),
-            py::arg("n_clusters"),
-            py::arg("dimensionality"),
-            "Initialize SuperKMeans with default configuration.\n\n"
-            "Args:\n"
-            "    n_clusters: Number of clusters to create\n"
-            "    dimensionality: Number of dimensions in the data"
-        )
-
-        .def(
-            "train",
-            [](skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>&
-                   self,
-               py::array_t<float> data,
-               py::object queries_obj,
-               size_t n_queries) {
-                ValidatePyArray(data, "data", 2);
-                auto data_info = data.request();
-                size_t n = data_info.shape[0];
-                size_t d = data_info.shape[1];
-                const float* data_ptr = static_cast<const float*>(data_info.ptr);
-
-                const float* queries_ptr = nullptr;
-                if (!queries_obj.is_none()) {
-                    auto queries = queries_obj.cast<py::array_t<float>>();
-                    ValidatePyArray(queries, "queries", 2);
-                    auto queries_info = queries.request();
-
-                    if (queries_info.shape[1] != static_cast<ssize_t>(d)) {
-                        throw std::runtime_error("queries must have the same dimensionality as data"
-                        );
-                    }
-                    n_queries = queries_info.shape[0];
-                    queries_ptr = static_cast<const float*>(queries_info.ptr);
-                }
-
-                auto centroids_vec = self.Train(data_ptr, n, queries_ptr, n_queries);
-
-                size_t n_clusters = self.GetNClusters();
-                auto result = py::array_t<float>({n_clusters, d});
-                auto result_info = result.request();
-                float* result_ptr = static_cast<float*>(result_info.ptr);
-
-                // TODO(@lkuffo, high): I am not a fan of this memcpy. Can we do better?
-                std::memcpy(result_ptr, centroids_vec.data(), centroids_vec.size() * sizeof(float));
-
-                return result;
-            },
-            py::arg("data"),
-            py::arg("queries") = py::none(),
-            py::arg("n_queries") = 0,
-            "Run k-means clustering to determine centroids.\n\n"
-            "Args:\n"
-            "    data: NumPy array of shape (n, d) with dtype float32\n"
-            "    queries: Optional NumPy array of query vectors for recall computation\n"
-            "    n_queries: Number of query vectors (ignored if queries is provided)\n\n"
-            "Returns:\n"
-            "    NumPy array of shape (n_clusters, d) containing centroids"
-        )
-
-        .def(
-            "assign",
-            [](skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>&
-                   self,
-               py::array_t<float> vectors,
-               py::array_t<float> centroids) {
-                ValidatePyArray(vectors, "vectors", 2);
-                ValidatePyArray(centroids, "centroids", 2);
-
-                auto vectors_info = vectors.request();
-                auto centroids_info = centroids.request();
-
-                size_t n_vectors = vectors_info.shape[0];
-                size_t d_vectors = vectors_info.shape[1];
-                size_t n_centroids = centroids_info.shape[0];
-                size_t d_centroids = centroids_info.shape[1];
-
-                if (d_vectors != d_centroids) {
-                    throw std::runtime_error(
-                        "vectors and centroids must have the same dimensionality"
-                    );
-                }
-
-                const float* vectors_ptr = static_cast<const float*>(vectors_info.ptr);
-                const float* centroids_ptr = static_cast<const float*>(centroids_info.ptr);
-
-                auto assignments_vec =
-                    self.Assign(vectors_ptr, centroids_ptr, n_vectors, n_centroids);
-
-                auto result = py::array_t<uint32_t>(n_vectors);
-                auto result_info = result.request();
-                uint32_t* result_ptr = static_cast<uint32_t*>(result_info.ptr);
-
-                std::memcpy(
-                    result_ptr, assignments_vec.data(), assignments_vec.size() * sizeof(uint32_t)
-                );
-
-                return result;
-            },
-            py::arg("vectors"),
-            py::arg("centroids"),
-            "Assign vectors to their nearest centroid using brute force.\n\n"
-            "Works with any vectors, not just the training data.\n\n"
-            "Args:\n"
-            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32\n"
-            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
-            "Returns:\n"
-            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
-        )
-
-        .def(
-            "assign_training_points",
-            [](skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>&
-                   self,
-               py::array_t<float> vectors,
-               py::array_t<float> centroids) {
-                ValidatePyArray(vectors, "vectors", 2);
-                ValidatePyArray(centroids, "centroids", 2);
-
-                auto vectors_info = vectors.request();
-                auto centroids_info = centroids.request();
-
-                size_t n_vectors = vectors_info.shape[0];
-                size_t d_vectors = vectors_info.shape[1];
-                size_t n_centroids = centroids_info.shape[0];
-                size_t d_centroids = centroids_info.shape[1];
-
-                if (d_vectors != d_centroids) {
-                    throw std::runtime_error(
-                        "vectors and centroids must have the same dimensionality"
-                    );
-                }
-
-                const float* vectors_ptr = static_cast<const float*>(vectors_info.ptr);
-                const float* centroids_ptr = static_cast<const float*>(centroids_info.ptr);
-
-                auto assignments_vec =
-                    self.AssignTrainingPoints(vectors_ptr, centroids_ptr, n_vectors, n_centroids);
-
-                auto result = py::array_t<uint32_t>(n_vectors);
-                auto result_info = result.request();
-                uint32_t* result_ptr = static_cast<uint32_t*>(result_info.ptr);
-
-                std::memcpy(
-                    result_ptr, assignments_vec.data(), assignments_vec.size() * sizeof(uint32_t)
-                );
-
-                return result;
-            },
-            py::arg("vectors"),
-            py::arg("centroids"),
-            "Fast assignment using trained state. Requires that the vectors are the same\n"
-            "as those used in train(). Leverages training assignments for faster\n"
-            "assignment than brute force assign().\n\n"
-            "Args:\n"
-            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32 (must be training "
-            "data)\n"
-            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
-            "Returns:\n"
-            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
-        )
-
-        .def(
-            "get_n_clusters",
-            &skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-                GetNClusters,
-            "Get the number of clusters.\n\n"
-            "Returns:\n"
-            "    Number of clusters"
-        )
-
-        .def(
-            "is_trained",
-            &skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-                IsTrained,
-            "Check whether the model has been trained.\n\n"
-            "Returns:\n"
-            "    True if trained, False otherwise"
-        )
-
-        .def_readonly(
-            "iteration_stats",
-            &skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-                iteration_stats,
-            "List of statistics for each iteration (read-only)"
-        )
-
-        .def(
-            "__repr__",
-            [](const skmeans::
-                   SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>& self) {
-                return "<SuperKMeans: n_clusters=" + std::to_string(self.GetNClusters()) +
-                       ", trained=" + (self.IsTrained() ? "True" : "False") + ">";
-            }
-        );
-
     py::class_<skmeans::HierarchicalSuperKMeansConfig, skmeans::SuperKMeansConfig>(
         m,
         "HierarchicalSuperKMeansConfig",
@@ -430,242 +583,8 @@ PYBIND11_MODULE(_superkmeans, m) {
             "Statistics for refinement iterations"
         );
 
-    py::class_<skmeans::HierarchicalSuperKMeans<
-        skmeans::Quantization::f32,
-        skmeans::DistanceFunction::l2>>(
-        m, "HierarchicalSuperKMeans", "Hierarchical SuperKMeans clustering"
-    )
-        .def(
-            py::init([](size_t n_clusters,
-                        size_t dimensionality,
-                        const skmeans::HierarchicalSuperKMeansConfig& config) {
-                return new skmeans::HierarchicalSuperKMeans<
-                    skmeans::Quantization::f32,
-                    skmeans::DistanceFunction::l2>(n_clusters, dimensionality, config);
-            }),
-            py::arg("n_clusters"),
-            py::arg("dimensionality"),
-            py::arg("config"),
-            "Initialize HierarchicalSuperKMeans with configuration.\n\n"
-            "Args:\n"
-            "    n_clusters: Number of clusters to create\n"
-            "    dimensionality: Number of dimensions in the data\n"
-            "    config: Configuration parameters (HierarchicalSuperKMeansConfig)"
-        )
-
-        .def(
-            py::init([](size_t n_clusters, size_t dimensionality) {
-                return new skmeans::HierarchicalSuperKMeans<
-                    skmeans::Quantization::f32,
-                    skmeans::DistanceFunction::l2>(n_clusters, dimensionality);
-            }),
-            py::arg("n_clusters"),
-            py::arg("dimensionality"),
-            "Initialize HierarchicalSuperKMeans with default configuration.\n\n"
-            "Args:\n"
-            "    n_clusters: Number of clusters to create\n"
-            "    dimensionality: Number of dimensions in the data"
-        )
-
-        .def(
-            "train",
-            [](skmeans::HierarchicalSuperKMeans<
-                   skmeans::Quantization::f32,
-                   skmeans::DistanceFunction::l2>& self,
-               py::array_t<float> data,
-               py::object queries_obj,
-               size_t n_queries) {
-                ValidatePyArray(data, "data", 2);
-                auto data_info = data.request();
-                size_t n = data_info.shape[0];
-                size_t d = data_info.shape[1];
-                const float* data_ptr = static_cast<const float*>(data_info.ptr);
-
-                const float* queries_ptr = nullptr;
-                if (!queries_obj.is_none()) {
-                    auto queries = queries_obj.cast<py::array_t<float>>();
-                    ValidatePyArray(queries, "queries", 2);
-                    auto queries_info = queries.request();
-
-                    if (queries_info.shape[1] != static_cast<ssize_t>(d)) {
-                        throw std::runtime_error("queries must have the same dimensionality as data"
-                        );
-                    }
-                    n_queries = queries_info.shape[0];
-                    queries_ptr = static_cast<const float*>(queries_info.ptr);
-                }
-
-                auto centroids_vec = self.Train(data_ptr, n, queries_ptr, n_queries);
-
-                size_t n_clusters = self.GetNClusters();
-                auto result = py::array_t<float>({n_clusters, d});
-                auto result_info = result.request();
-                float* result_ptr = static_cast<float*>(result_info.ptr);
-
-                std::memcpy(result_ptr, centroids_vec.data(), centroids_vec.size() * sizeof(float));
-
-                return result;
-            },
-            py::arg("data"),
-            py::arg("queries") = py::none(),
-            py::arg("n_queries") = 0,
-            "Run hierarchical k-means clustering to determine centroids.\n\n"
-            "Args:\n"
-            "    data: NumPy array of shape (n, d) with dtype float32\n"
-            "    queries: Optional NumPy array of query vectors for recall computation\n"
-            "    n_queries: Number of query vectors (ignored if queries is provided)\n\n"
-            "Returns:\n"
-            "    NumPy array of shape (n_clusters, d) containing centroids"
-        )
-
-        .def(
-            "assign",
-            [](skmeans::HierarchicalSuperKMeans<
-                   skmeans::Quantization::f32,
-                   skmeans::DistanceFunction::l2>& self,
-               py::array_t<float> vectors,
-               py::array_t<float> centroids) {
-                ValidatePyArray(vectors, "vectors", 2);
-                ValidatePyArray(centroids, "centroids", 2);
-
-                auto vectors_info = vectors.request();
-                auto centroids_info = centroids.request();
-
-                size_t n_vectors = vectors_info.shape[0];
-                size_t d_vectors = vectors_info.shape[1];
-                size_t n_centroids = centroids_info.shape[0];
-                size_t d_centroids = centroids_info.shape[1];
-
-                if (d_vectors != d_centroids) {
-                    throw std::runtime_error(
-                        "vectors and centroids must have the same dimensionality"
-                    );
-                }
-
-                const float* vectors_ptr = static_cast<const float*>(vectors_info.ptr);
-                const float* centroids_ptr = static_cast<const float*>(centroids_info.ptr);
-
-                auto assignments_vec =
-                    self.Assign(vectors_ptr, centroids_ptr, n_vectors, n_centroids);
-
-                auto result = py::array_t<uint32_t>(n_vectors);
-                auto result_info = result.request();
-                uint32_t* result_ptr = static_cast<uint32_t*>(result_info.ptr);
-
-                std::memcpy(
-                    result_ptr, assignments_vec.data(), assignments_vec.size() * sizeof(uint32_t)
-                );
-
-                return result;
-            },
-            py::arg("vectors"),
-            py::arg("centroids"),
-            "Assign vectors to their nearest centroid using brute force.\n\n"
-            "Works with any vectors, not just the training data.\n\n"
-            "Args:\n"
-            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32\n"
-            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
-            "Returns:\n"
-            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
-        )
-
-        .def(
-            "assign_training_points",
-            [](skmeans::HierarchicalSuperKMeans<
-                   skmeans::Quantization::f32,
-                   skmeans::DistanceFunction::l2>& self,
-               py::array_t<float> vectors,
-               py::array_t<float> centroids) {
-                ValidatePyArray(vectors, "vectors", 2);
-                ValidatePyArray(centroids, "centroids", 2);
-
-                auto vectors_info = vectors.request();
-                auto centroids_info = centroids.request();
-
-                size_t n_vectors = vectors_info.shape[0];
-                size_t d_vectors = vectors_info.shape[1];
-                size_t n_centroids = centroids_info.shape[0];
-                size_t d_centroids = centroids_info.shape[1];
-
-                if (d_vectors != d_centroids) {
-                    throw std::runtime_error(
-                        "vectors and centroids must have the same dimensionality"
-                    );
-                }
-
-                const float* vectors_ptr = static_cast<const float*>(vectors_info.ptr);
-                const float* centroids_ptr = static_cast<const float*>(centroids_info.ptr);
-
-                auto assignments_vec =
-                    self.AssignTrainingPoints(vectors_ptr, centroids_ptr, n_vectors, n_centroids);
-
-                auto result = py::array_t<uint32_t>(n_vectors);
-                auto result_info = result.request();
-                uint32_t* result_ptr = static_cast<uint32_t*>(result_info.ptr);
-
-                std::memcpy(
-                    result_ptr, assignments_vec.data(), assignments_vec.size() * sizeof(uint32_t)
-                );
-
-                return result;
-            },
-            py::arg("vectors"),
-            py::arg("centroids"),
-            "Fast assignment using trained state. Requires that the vectors are the same\n"
-            "as those used in train(). Leverages training assignments for faster\n"
-            "assignment than brute force assign().\n\n"
-            "Args:\n"
-            "    vectors: NumPy array of shape (n_vectors, d) with dtype float32 (must be training "
-            "data)\n"
-            "    centroids: NumPy array of shape (n_centroids, d) with dtype float32\n\n"
-            "Returns:\n"
-            "    NumPy array of shape (n_vectors,) with dtype uint32 containing cluster indices"
-        )
-
-        .def(
-            "get_n_clusters",
-            &skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>::GetNClusters,
-            "Get the number of clusters.\n\n"
-            "Returns:\n"
-            "    Number of clusters"
-        )
-
-        .def(
-            "is_trained",
-            [](const skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>& self) { return self.IsTrained(); },
-            "Check whether the model has been trained.\n\n"
-            "Returns:\n"
-            "    True if trained, False otherwise"
-        )
-
-        .def_readonly(
-            "iteration_stats",
-            &skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>::iteration_stats,
-            "List of statistics for each iteration (read-only)"
-        )
-
-        .def_readonly(
-            "hierarchical_iteration_stats",
-            &skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>::hierarchical_iteration_stats,
-            "Hierarchical iteration statistics (read-only)"
-        )
-
-        .def(
-            "__repr__",
-            [](const skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>& self) {
-                return "<HierarchicalSuperKMeans: n_clusters=" +
-                       std::to_string(self.GetNClusters()) +
-                       ", trained=" + (self.IsTrained() ? "True" : "False") + ">";
-            }
-        );
+    BindSuperKMeans<Quantization::f32>(m, "SuperKMeans");
+    BindSuperKMeans<Quantization::u8>(m, "QuantizedSuperKMeans");
+    BindHierarchicalSuperKMeans<Quantization::f32>(m, "HierarchicalSuperKMeans");
+    BindHierarchicalSuperKMeans<Quantization::u8>(m, "QuantizedHierarchicalSuperKMeans");
 }

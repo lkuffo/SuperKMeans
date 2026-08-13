@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "recall_utils.h"
 #include "superkmeans/common.h"
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/superkmeans.h"
@@ -42,7 +43,8 @@ TEST_F(SuperKMeansTest, AllClustersUsed) {
     const size_t d = 128;
     const size_t n_clusters = 50;
 
-    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters);
+    std::vector<float> data =
+        skm_test::LoadTestDataSubdim(CMAKE_SOURCE_DIR "/tests/test_data.bin", n, 1024, d);
 
     skmeans::SuperKMeansConfig config;
     config.iters = 25;
@@ -86,6 +88,19 @@ TEST_F(SuperKMeansTest, PerformAssignments_PopulatesAssignments) {
         EXPECT_LT(assignments[i], n_clusters)
             << "Assignment " << i << " has invalid cluster index: " << assignments[i];
     }
+}
+
+TEST_F(SuperKMeansTest, FlatRejectsQuantizerType) {
+    EXPECT_THROW(
+        ([&]() {
+            skmeans::SuperKMeansConfig config;
+            config.quantizer_type = skmeans::QuantizerType::sq8;
+            skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+                10, 64, config
+            );
+        }()),
+        std::invalid_argument
+    );
 }
 
 TEST_F(SuperKMeansTest, InvalidInputs_ThrowExceptions) {
@@ -404,4 +419,158 @@ TEST_F(SuperKMeansTest, AngularMode_Normalizes) {
         EXPECT_NEAR(norm, 1.0f, 1e-5f)
             << "Centroid " << c << " should be normalized in angular mode (norm=" << norm << ")";
     }
+}
+
+namespace {
+using skm_f32 = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>;
+
+std::vector<uint32_t> AssignmentsFromClusterSizes(const std::vector<size_t>& sizes) {
+    std::vector<uint32_t> assignments;
+    for (uint32_t c = 0; c < sizes.size(); ++c) {
+        for (size_t i = 0; i < sizes[c]; ++i) {
+            assignments.push_back(c);
+        }
+    }
+    return assignments;
+}
+} // namespace
+
+TEST_F(SuperKMeansTest, ClusterBalanceStats_MatchesHandComputed_Moments) {
+    const std::vector<size_t> sizes = {0, 5, 5, 5, 5};
+    auto assignments = AssignmentsFromClusterSizes(sizes);
+    auto s = skm_f32::GetClustersBalanceStats(assignments.data(), assignments.size(), sizes.size());
+
+    EXPECT_NEAR(s.mean, 4.0f, 1e-5f);
+    EXPECT_NEAR(s.geometric_mean, 5.0f, 1e-4f);
+    EXPECT_NEAR(s.stdev, 2.0f, 1e-5f);
+    EXPECT_NEAR(s.cv, 0.5f, 1e-5f);
+    EXPECT_EQ(s.min, 0u);
+    EXPECT_EQ(s.max, 5u);
+    EXPECT_EQ(s.n_empty, 1u);
+    EXPECT_NEAR(s.skewness, -1.5f, 1e-4f);
+    EXPECT_NEAR(s.kurtosis, 0.25f, 1e-4f);
+    EXPECT_NEAR(s.iqr, 0.0f, 1e-5f);
+    EXPECT_NEAR(s.percentiles[6], 5.0f, 1e-5f);
+    EXPECT_NEAR(s.whisker_low, 5.0f, 1e-5f);
+    EXPECT_NEAR(s.whisker_high, 5.0f, 1e-5f);
+}
+
+TEST_F(SuperKMeansTest, ClusterBalanceStats_MatchesHandComputed_Percentiles) {
+    const std::vector<size_t> sizes = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+    auto assignments = AssignmentsFromClusterSizes(sizes);
+    auto s = skm_f32::GetClustersBalanceStats(assignments.data(), assignments.size(), sizes.size());
+
+    EXPECT_NEAR(s.mean, 50.0f, 1e-4f);
+    EXPECT_EQ(s.min, 0u);
+    EXPECT_EQ(s.max, 100u);
+    EXPECT_EQ(s.n_empty, 1u);
+    EXPECT_NEAR(s.percentiles[0], 5.0f, 1e-4f);   // P5
+    EXPECT_NEAR(s.percentiles[1], 10.0f, 1e-4f);  // P10
+    EXPECT_NEAR(s.percentiles[3], 25.0f, 1e-4f);  // P25
+    EXPECT_NEAR(s.percentiles[6], 50.0f, 1e-4f);  // P50
+    EXPECT_NEAR(s.percentiles[9], 75.0f, 1e-4f);  // P75
+    EXPECT_NEAR(s.percentiles[11], 90.0f, 1e-4f); // P90
+    EXPECT_NEAR(s.percentiles[13], 99.0f, 1e-3f); // P99
+    EXPECT_NEAR(s.iqr, 50.0f, 1e-4f);
+    EXPECT_NEAR(s.whisker_low, 0.0f, 1e-5f);
+    EXPECT_NEAR(s.whisker_high, 100.0f, 1e-4f);
+}
+
+TEST_F(SuperKMeansTest, DegenerateData_AllIdenticalPoints_NoCrash) {
+    const size_t n = 2000;
+    const size_t d = 32;
+    const size_t n_clusters = 16;
+
+    std::vector<float> data(n * d);
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < d; ++j) {
+            data[i * d + j] = static_cast<float>((j % 5) + 1);
+        }
+    }
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = 10;
+    config.seed = 42;
+    config.sampling_fraction = 1.0f;
+
+    auto kmeans = skm_f32(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), n);
+
+    ASSERT_EQ(centroids.size(), n_clusters * d);
+    for (float v : centroids) {
+        EXPECT_TRUE(std::isfinite(v)) << "non-finite centroid on all-identical data";
+    }
+
+    auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    ASSERT_EQ(assignments.size(), n);
+    for (size_t i = 0; i < n; ++i) {
+        EXPECT_LT(assignments[i], n_clusters);
+    }
+}
+
+TEST_F(SuperKMeansTest, EdgeCase_SingleCluster) {
+    const size_t n = 500, d = 16, n_clusters = 1;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, 5, false, 1.0f, 10.0f, 42);
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = 10;
+    config.seed = 42;
+    config.sampling_fraction = 1.0f;
+
+    auto kmeans = skm_f32(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), n);
+
+    ASSERT_EQ(centroids.size(), n_clusters * d);
+    for (float v : centroids)
+        EXPECT_TRUE(std::isfinite(v));
+
+    auto a = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    ASSERT_EQ(a.size(), n);
+    for (size_t i = 0; i < n; ++i)
+        EXPECT_EQ(a[i], 0u);
+}
+
+TEST_F(SuperKMeansTest, EdgeCase_ClustersEqualPoints) {
+    const size_t n = 128, d = 16, n_clusters = 128;
+    std::vector<float> data = skmeans::MakeBlobs(n, d, 16, false, 1.0f, 10.0f, 42);
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = 10;
+    config.seed = 42;
+    config.sampling_fraction = 1.0f;
+
+    auto kmeans = skm_f32(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), n);
+
+    ASSERT_EQ(centroids.size(), n_clusters * d);
+    for (float v : centroids)
+        EXPECT_TRUE(std::isfinite(v));
+
+    auto a = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    ASSERT_EQ(a.size(), n);
+    for (size_t i = 0; i < n; ++i)
+        EXPECT_LT(a[i], n_clusters);
+}
+
+TEST_F(SuperKMeansTest, EdgeCase_SinglePoint) {
+    const size_t n = 1, d = 16, n_clusters = 1;
+    std::vector<float> data(d);
+    for (size_t j = 0; j < d; ++j)
+        data[j] = static_cast<float>(j) * 0.1f + 0.5f;
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = 10;
+    config.seed = 42;
+    config.sampling_fraction = 1.0f;
+
+    auto kmeans = skm_f32(n_clusters, d, config);
+    auto centroids = kmeans.Train(data.data(), n);
+
+    ASSERT_EQ(centroids.size(), n_clusters * d);
+    for (float v : centroids)
+        EXPECT_TRUE(std::isfinite(v));
+
+    auto a = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
+    ASSERT_EQ(a.size(), n);
+    EXPECT_EQ(a[0], 0u);
 }
