@@ -85,6 +85,14 @@ TEST_P(QuantizedIntegrationTest, Recall_MatchesGroundTruth) {
     EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at(GetParam().name) - skm_test::RECALL_TOL);
 }
 
+TEST_P(QuantizedIntegrationTest, TrainInPlace_RecallMatchesTrain) {
+    const char* path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
+    float recall = skm_test::ClusteringRecall<Quantization::u8>(GetParam().type, path);
+    float recall_in_place =
+        skm_test::ClusteringRecall<Quantization::u8, true>(GetParam().type, path);
+    EXPECT_NEAR(recall_in_place, recall, skm_test::RECALL_TOL);
+}
+
 TEST_P(QuantizedIntegrationTest, QuantizedCentroidUpdate_Converges) {
     const size_t n = 3000, d = 64, n_clusters = 10;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);

@@ -325,4 +325,15 @@ TEST(RecallGroundTruthTest, F32_MatchesGroundTruth) {
     EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at("f32") - skm_test::RECALL_TOL);
 }
 
+TEST(RecallGroundTruthTest, F32_TrainInPlace_RecallMatchesTrain) {
+    omp_set_num_threads(1);
+    const char* path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
+    float recall =
+        skm_test::ClusteringRecall<skmeans::Quantization::f32>(skmeans::QuantizerType::none, path);
+    float recall_in_place = skm_test::ClusteringRecall<skmeans::Quantization::f32, true>(
+        skmeans::QuantizerType::none, path
+    );
+    EXPECT_NEAR(recall_in_place, recall, skm_test::RECALL_TOL);
+}
+
 } // anonymous namespace

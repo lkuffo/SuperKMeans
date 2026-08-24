@@ -78,6 +78,10 @@ class SuperKMeans:
         Whether to print progress information during training.
     angular : bool, optional (default=False)
         Whether to use spherical k-means (normalize centroids).
+    unrotate_centroids : bool, optional (default=True)
+        Whether to map the centroids back to the input domain before returning them.
+        Forced to False by train(overwrite_input=True), which leaves the data rotated and so
+        must return centroids in that same domain.
 
     Attributes
     ----------
@@ -118,6 +122,7 @@ class SuperKMeans:
         # Other parameters
         verbose: bool = False,
         angular: bool = False,
+        unrotate_centroids: bool = True,
     ):
         if n_clusters <= 0:
             raise ValueError("n_clusters must be positive")
@@ -156,6 +161,7 @@ class SuperKMeans:
             'objective_k': objective_k,
             'verbose': verbose,
             'angular': angular,
+            'unrotate_centroids': unrotate_centroids,
         }
 
     @staticmethod
@@ -163,9 +169,16 @@ class SuperKMeans:
         data: np.ndarray,
         name: str,
         expected_dimensionality: Optional[int] = None,
+        overwrite: bool = False,
     ) -> np.ndarray:
-        """Validate a 2D float32 array and ensure it is C-contiguous."""
+        """Validate a 2D float32 array and ensure it is C-contiguous.
+
+        With overwrite=True the array is returned as-is or rejected: silently substituting a
+        contiguous copy would defeat the point of overwriting the caller's buffer.
+        """
         if not isinstance(data, np.ndarray):
+            if overwrite:
+                raise ValueError(f"{name} must be a NumPy array to be overwritten in place")
             data = np.asarray(data, dtype=np.float32)
         if data.dtype != np.float32:
             raise ValueError(f"{name} must have dtype float32, got {data.dtype}")
@@ -177,13 +190,21 @@ class SuperKMeans:
                 f"got {data.shape[1]}"
             )
         if not data.flags["C_CONTIGUOUS"]:
+            if overwrite:
+                raise ValueError(
+                    f"{name} must be C-contiguous to be overwritten in place; pass "
+                    f"np.ascontiguousarray({name}) if an extra copy is acceptable"
+                )
             data = np.ascontiguousarray(data)
+        if overwrite and not data.flags["WRITEABLE"]:
+            raise ValueError(f"{name} must be writeable to be overwritten in place")
         return data
 
     def train(
         self,
         data: NDArray[np.float32],
         queries: Optional[NDArray[np.float32]] = None,
+        overwrite_input: bool = False,
     ) -> NDArray[np.float32]:
         """
         Run k-means clustering to determine centroids.
@@ -195,6 +216,16 @@ class SuperKMeans:
         queries : ndarray of shape (n_queries, dimensionality), dtype=float32, optional
             Query vectors for recall-based quality monitoring.
             If provided, enables early termination by recall
+        overwrite_input : bool, optional (default=False)
+            Rotate `data` in place instead of allocating a rotated copy, halving peak memory.
+            `data` is overwritten with its rotated form and is not restored, so it must be a
+            writeable, C-contiguous float32 array (no conversion is performed; a mismatch
+            raises rather than silently copying). Requires sampling_fraction == 1.0, which is
+            otherwise applied with a warning.
+
+            The returned centroids are rotated too: `unrotate_centroids` is forced to False so
+            that data and centroids stay in the same domain and remain directly comparable, so
+            both `assign()` and `assign_training_points()` work as usual.
 
         Returns
         -------
@@ -208,7 +239,9 @@ class SuperKMeans:
         RuntimeError
             If the model has already been trained.
         """
-        data = self.validate_numpy_array(data, "data", self._dimensionality)
+        data = self.validate_numpy_array(
+            data, "data", self._dimensionality, overwrite=overwrite_input
+        )
         n_samples = data.shape[0]
 
         # Determine hierarchical mode if not explicitly set
@@ -240,6 +273,7 @@ class SuperKMeans:
             config.objective_k = self._config_params['objective_k']
             config.verbose = self._config_params['verbose']
             config.angular = self._config_params['angular']
+            config.unrotate_centroids = self._config_params['unrotate_centroids']
 
             quantized = self._quantizer != "f32"
             if quantized:
@@ -264,6 +298,8 @@ class SuperKMeans:
             queries = self.validate_numpy_array(queries, "queries", self._dimensionality)
             n_queries = queries.shape[0]
 
+        if overwrite_input:
+            return self._cpp_skmeans_obj.train_in_place(data, queries, n_queries)
         return self._cpp_skmeans_obj.train(data, queries, n_queries)
 
     def _assign_engine(self):

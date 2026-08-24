@@ -13,6 +13,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -50,6 +51,22 @@ inline std::string GetQueryPath(const std::string& dataset) {
 
 inline std::string GetGroundTruthPath(const std::string& dataset) {
     return GROUND_TRUTH_DIR + "/" + dataset + ".json";
+}
+
+/**
+ * @brief Peak resident set size of this process, in GiB.
+ *
+ * macOS reports ru_maxrss in bytes, Linux in KiB. Note that on macOS the memory compressor makes
+ * this under-report; "peak memory footprint" from /usr/bin/time -l is the reliable figure there.
+ */
+inline double PeakRSSGiB() {
+    rusage usage{};
+    getrusage(RUSAGE_SELF, &usage);
+#ifdef __APPLE__
+    return static_cast<double>(usage.ru_maxrss) / (1024.0 * 1024.0 * 1024.0);
+#else
+    return static_cast<double>(usage.ru_maxrss) / (1024.0 * 1024.0);
+#endif
 }
 
 class TicToc {

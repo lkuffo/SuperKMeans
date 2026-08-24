@@ -312,7 +312,10 @@ class SuperKMeans {
             std::cout << "Sampling data..." << std::endl;
         }
 
-        std::unique_ptr<float[]> data_samples_buffer(new float[n_samples * d]);
+        std::unique_ptr<float[]> data_samples_buffer;
+        if (n_samples < n || !config.data_already_rotated) {
+            data_samples_buffer.reset(new float[n_samples * d]);
+        }
         auto data_to_cluster = SampleAndRotateVectors(
             data_p, data_samples_buffer.get(), n, n_samples, !config.data_already_rotated
         );
@@ -495,6 +498,36 @@ class SuperKMeans {
             Profiler::Get().PrintHierarchical();
         }
         return output_centroids;
+    }
+
+    /**
+     * @brief Run k-means clustering to determine centroids.
+     *
+     * Transformations (rotation and/or quantization) are done in place using the caller's buffer.
+     * `data` is overwritten with its rotated form and is NOT restored, so on return the caller
+     * holds rotated vectors. The returned centroids are rotated too: unrotate_centroids is forced
+     * to false, so that data and centroids stay in the same domain and remain directly comparable
+     * (Assign(data, centroids) is valid). AssignTrainingPoints()/QuantizedAssign() take the
+     * rotated buffer as usual. Call Unrotate() to map back to the original domain.
+     *
+     * Requires sampling_fraction == 1.0; a smaller value is overridden (with a warning) since
+     * sampling gathers scattered rows and cannot be done in place.
+     *
+     * @param data Pointer to the data matrix (row-major, n × d). Overwritten with rotated data.
+     * @param n Number of points (rows) in the data matrix
+     * @param queries Optional pointer to query vectors for recall computation
+     * @param n_queries Number of query vectors
+     *
+     * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids (in the rotated domain)
+     */
+    std::vector<skmeans_centroid_value_t<q>> TrainInPlace(
+        float* SKM_RESTRICT data,
+        const size_t n,
+        const float* SKM_RESTRICT queries = nullptr,
+        const size_t n_queries = 0
+    ) {
+        ConfigInPlaceTraining(data, n);
+        return Train(data, n, queries, n_queries);
     }
 
     /**
@@ -1754,6 +1787,37 @@ class SuperKMeans {
                 horizontal_centroids_p_i[j] *= norm;
             }
         }
+    }
+
+    /**
+     * @brief Rotates the caller's buffer in place and reconfigures for in-place training.
+     *
+     * Once the buffer holds rotated vectors, data_already_rotated is set so that every downstream
+     * path (centroid generation, sampling, the assign family) treats it as such, and
+     * unrotate_centroids is cleared so the returned centroids stay in the same domain as the
+     * caller's buffer.
+     *
+     * @param data Data matrix to rotate in place (row-major, n × d)
+     * @param n Number of vectors
+     */
+    void ConfigInPlaceTraining(float* SKM_RESTRICT data, const size_t n) {
+        if (config.sampling_fraction != 1.0f) {
+            if (!config.suppress_warnings) {
+                std::cout << "WARNING: in-place training requires sampling_fraction == 1.0, "
+                             "overriding it (was "
+                          << config.sampling_fraction << ")" << std::endl;
+            }
+            config.sampling_fraction = 1.0f;
+        }
+        if (config.data_already_rotated) {
+            return;
+        }
+        {
+            SKM_PROFILE_SCOPE("rotator");
+            pruner->template Rotate<true>(data, data, static_cast<uint32_t>(n));
+        }
+        config.data_already_rotated = true;
+        config.unrotate_centroids = false;
     }
 
     /**

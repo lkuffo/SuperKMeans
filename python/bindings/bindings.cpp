@@ -11,8 +11,12 @@ namespace py = pybind11;
 using skmeans::DistanceFunction;
 using skmeans::Quantization;
 
-template <typename T>
-void ValidatePyArray(py::array_t<T> arr, const std::string& name, size_t expected_ndim) {
+template <typename T, int Flags>
+void ValidatePyArray(
+    const py::array_t<T, Flags>& arr,
+    const std::string& name,
+    size_t expected_ndim
+) {
     auto info = arr.request();
     if (info.ndim != expected_ndim) {
         throw std::runtime_error(
@@ -94,6 +98,45 @@ py::array_t<float> TrainToArray(
     return result;
 }
 
+// Shared body for train_in_place(): rotate `data` in place and return the centroids. The array is
+// declared without py::array::forcecast so pybind refuses a dtype/layout conversion instead of
+// silently rotating a temporary copy; writeability is checked explicitly since pybind does not.
+template <typename KMeans>
+py::array_t<float> TrainInPlaceToArray(
+    KMeans& self,
+    py::array_t<float, py::array::c_style> data,
+    py::object queries_obj,
+    size_t n_queries
+) {
+    ValidatePyArray(data, "data", 2);
+    if (!data.writeable()) {
+        throw std::runtime_error("data must be writeable to train in place");
+    }
+    auto data_info = data.request();
+    size_t n = data_info.shape[0];
+    size_t d = data_info.shape[1];
+    float* data_ptr = static_cast<float*>(data_info.ptr);
+
+    const float* queries_ptr = nullptr;
+    if (!queries_obj.is_none()) {
+        auto queries = queries_obj.cast<py::array_t<float>>();
+        ValidatePyArray(queries, "queries", 2);
+        auto queries_info = queries.request();
+        if (queries_info.shape[1] != static_cast<ssize_t>(d)) {
+            throw std::runtime_error("queries must have the same dimensionality as data");
+        }
+        n_queries = queries_info.shape[0];
+        queries_ptr = static_cast<const float*>(queries_info.ptr);
+    }
+
+    auto centroids_vec = self.TrainInPlace(data_ptr, n, queries_ptr, n_queries);
+
+    size_t n_clusters = self.GetNClusters();
+    auto result = py::array_t<float>({n_clusters, d});
+    std::memcpy(result.request().ptr, centroids_vec.data(), centroids_vec.size() * sizeof(float));
+    return result;
+}
+
 template <Quantization q>
 void BindSuperKMeans(py::module& m, const char* name) {
     using KMeans = skmeans::SuperKMeans<q, DistanceFunction::l2>;
@@ -138,6 +181,31 @@ void BindSuperKMeans(py::module& m, const char* name) {
             "Run k-means clustering to determine centroids.\n\n"
             "Args:\n"
             "    data: NumPy array of shape (n, d) with dtype float32\n"
+            "    queries: Optional NumPy array of query vectors for recall computation\n"
+            "    n_queries: Number of query vectors (ignored if queries is provided)\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_clusters, d) containing centroids"
+        )
+
+        .def(
+            "train_in_place",
+            [](KMeans& self,
+               py::array_t<float, py::array::c_style> data,
+               py::object queries_obj,
+               size_t n_queries) {
+                return TrainInPlaceToArray(self, data, queries_obj, n_queries);
+            },
+            py::arg("data"),
+            py::arg("queries") = py::none(),
+            py::arg("n_queries") = 0,
+            "Run k-means clustering, rotating `data` in place instead of allocating a rotated "
+            "copy.\n\n"
+            "Halves peak memory. `data` is overwritten with its rotated form and is not restored, "
+            "so it must be a writeable, C-contiguous float32 array (no dtype conversion is "
+            "performed). The returned centroids are rotated too (unrotate_centroids is forced to "
+            "False), so data and centroids stay in the same domain.\n\n"
+            "Args:\n"
+            "    data: NumPy array of shape (n, d) with dtype float32. Overwritten.\n"
             "    queries: Optional NumPy array of query vectors for recall computation\n"
             "    n_queries: Number of query vectors (ignored if queries is provided)\n\n"
             "Returns:\n"
@@ -278,6 +346,31 @@ void BindHierarchicalSuperKMeans(py::module& m, const char* name) {
             "Run hierarchical k-means clustering to determine centroids.\n\n"
             "Args:\n"
             "    data: NumPy array of shape (n, d) with dtype float32\n"
+            "    queries: Optional NumPy array of query vectors for recall computation\n"
+            "    n_queries: Number of query vectors (ignored if queries is provided)\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n_clusters, d) containing centroids"
+        )
+
+        .def(
+            "train_in_place",
+            [](KMeans& self,
+               py::array_t<float, py::array::c_style> data,
+               py::object queries_obj,
+               size_t n_queries) {
+                return TrainInPlaceToArray(self, data, queries_obj, n_queries);
+            },
+            py::arg("data"),
+            py::arg("queries") = py::none(),
+            py::arg("n_queries") = 0,
+            "Run hierarchical k-means clustering, rotating `data` in place instead of allocating a "
+            "rotated copy.\n\n"
+            "Halves peak memory. `data` is overwritten with its rotated form and is not restored, "
+            "so it must be a writeable, C-contiguous float32 array (no dtype conversion is "
+            "performed). The returned centroids are rotated too (unrotate_centroids is forced to "
+            "False), so data and centroids stay in the same domain.\n\n"
+            "Args:\n"
+            "    data: NumPy array of shape (n, d) with dtype float32. Overwritten.\n"
             "    queries: Optional NumPy array of query vectors for recall computation\n"
             "    n_queries: Number of query vectors (ignored if queries is provided)\n\n"
             "Returns:\n"
@@ -445,6 +538,13 @@ PYBIND11_MODULE(_superkmeans, m) {
             "early_termination",
             &skmeans::SuperKMeansConfig::early_termination,
             "Whether to stop early on convergence (default: True)"
+        )
+        .def_readwrite(
+            "unrotate_centroids",
+            &skmeans::SuperKMeansConfig::unrotate_centroids,
+            "Whether to map the centroids back to the input domain before returning them "
+            "(default: True). Forced to False by train_in_place(), which leaves the data rotated "
+            "and so must return centroids in that same domain"
         )
         .def_readwrite(
             "sample_queries",

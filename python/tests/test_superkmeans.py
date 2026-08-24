@@ -204,6 +204,31 @@ class TestSuperKMeans:
         with pytest.raises(ValueError, match="same dimensionality"):
             kmeans.assign_training_points(wrong_dim, centroids)
 
+    def test_overwrite_input_rejects_non_contiguous(self):
+        data = np.random.randn(100, 64).astype(np.float32)[:, ::2]
+        kmeans = SuperKMeans(n_clusters=10, dimensionality=32)
+        with pytest.raises(ValueError, match="C-contiguous"):
+            kmeans.train(data, overwrite_input=True)
+
+    def test_overwrite_input_rejects_read_only(self):
+        data = np.random.randn(100, 32).astype(np.float32)
+        data.setflags(write=False)
+        kmeans = SuperKMeans(n_clusters=10, dimensionality=32)
+        with pytest.raises(ValueError, match="writeable"):
+            kmeans.train(data, overwrite_input=True)
+
+    def test_overwrite_input_rejects_wrong_dtype(self):
+        data = np.random.randn(100, 32).astype(np.float64)
+        kmeans = SuperKMeans(n_clusters=10, dimensionality=32)
+        with pytest.raises(ValueError, match="dtype float32"):
+            kmeans.train(data, overwrite_input=True)
+
+    def test_overwrite_input_rejects_non_array(self):
+        data = np.random.randn(100, 32).astype(np.float32).tolist()
+        kmeans = SuperKMeans(n_clusters=10, dimensionality=32)
+        with pytest.raises(ValueError, match="NumPy array"):
+            kmeans.train(data, overwrite_input=True)
+
     def test_non_contiguous_arrays(self):
         np.random.seed(42)
         n = 100

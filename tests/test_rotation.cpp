@@ -465,4 +465,110 @@ TEST_F(RotationTest, SuperKMeansWithPreRotatedDataProducesIdenticalResults) {
         << "Average absolute error between centroids should be very small. Got: " << avg_abs_error;
 }
 
+// ── In-place rotation ──
+
+void ExpectInPlaceRotationMatchesOutOfPlace(const size_t n, const size_t d) {
+    auto original = skmeans::GenerateRandomVectors(n, d, -1.0f, 1.0f, 42);
+
+    skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 1.5f, 42);
+
+    std::vector<float> out_of_place(n * d);
+    pruner.Rotate(original.data(), out_of_place.data(), n);
+
+    std::vector<float> in_place(original);
+    pruner.Rotate<true>(in_place.data(), in_place.data(), n);
+
+    double max_error = 0.0;
+    for (size_t i = 0; i < n * d; ++i) {
+        max_error = std::max(max_error, std::abs(double(in_place[i]) - double(out_of_place[i])));
+    }
+    EXPECT_LT(max_error, 1e-4) << "d=" << d << " (" << GetRotationMethod(d)
+                               << "), max error: " << max_error;
+}
+
+TEST_F(RotationTest, RotateInPlaceMatchesOutOfPlace_MatrixPath) {
+    ExpectInPlaceRotationMatchesOutOfPlace(100, 128);
+}
+
+TEST_F(RotationTest, RotateInPlaceMatchesOutOfPlace_MatrixPathMultipleBlocks) {
+    ExpectInPlaceRotationMatchesOutOfPlace(skmeans::INPLACE_ROTATION_BLOCK_ROWS * 2 + 137, 128);
+}
+
+TEST_F(RotationTest, RotateInPlaceMatchesOutOfPlace_DCTPath) {
+    ExpectInPlaceRotationMatchesOutOfPlace(5000, 1024);
+}
+
+TEST_F(RotationTest, TrainInPlaceMatchesTrainOnPreRotatedData) {
+    const size_t n = 10000;
+    const size_t d = 256;
+    const size_t k = 100;
+    const uint32_t seed = 42;
+
+    auto data = skmeans::MakeBlobs(n, d, k, false, 1.0f, 10.0f, seed);
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = 10;
+    config.seed = seed;
+    config.verbose = false;
+    config.unrotate_centroids = false;
+    config.sampling_fraction = 1.0f;
+
+    skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(d, 1.5f, seed);
+    std::vector<float> pre_rotated(n * d);
+    pruner.Rotate(data.data(), pre_rotated.data(), n);
+
+    auto reference_config = config;
+    reference_config.data_already_rotated = true;
+    auto reference =
+        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+            k, d, reference_config
+        );
+    auto reference_centroids = reference.Train(pre_rotated.data(), n);
+
+    std::vector<float> in_place(data);
+    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        k, d, config
+    );
+    auto centroids = kmeans.TrainInPlace(in_place.data(), n);
+
+    ASSERT_EQ(centroids.size(), reference_centroids.size());
+    double max_error = 0.0;
+    for (size_t i = 0; i < centroids.size(); ++i) {
+        max_error =
+            std::max(max_error, std::abs(double(centroids[i]) - double(reference_centroids[i])));
+    }
+    EXPECT_LT(max_error, 1e-3) << "max error: " << max_error;
+
+    for (size_t i = 0; i < n * d; ++i) {
+        ASSERT_NEAR(in_place[i], pre_rotated[i], 1e-4) << "at " << i;
+    }
+}
+
+TEST_F(RotationTest, TrainInPlaceOverridesSamplingFraction) {
+    const size_t n = 5000;
+    const size_t d = 128;
+    const size_t k = 50;
+
+    auto data = skmeans::MakeBlobs(n, d, k, false, 1.0f, 10.0f, 42);
+
+    skmeans::SuperKMeansConfig config;
+    config.iters = 5;
+    config.seed = 42;
+    config.verbose = false;
+    config.suppress_warnings = true;
+    config.sampling_fraction = 0.3f;
+
+    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
+        k, d, config
+    );
+    std::vector<float> in_place(data);
+    auto centroids = kmeans.TrainInPlace(in_place.data(), n);
+
+    EXPECT_TRUE(kmeans.IsTrained());
+    EXPECT_EQ(centroids.size(), k * d);
+
+    auto assignments = kmeans.AssignTrainingPoints(in_place.data(), centroids.data(), n, k);
+    EXPECT_EQ(assignments.size(), n);
+}
+
 } // anonymous namespace

@@ -78,17 +78,40 @@ assignments = kmeans.quantized_assign(data, centroids)
 - `objective_k` (int, default=100): Number of neighbors for recall
 - `verbose` (bool, default=False): Print progress information
 - `angular` (bool, default=False): Use spherical k-means
+- `unrotate_centroids` (bool, default=True): Map centroids back to the input domain before returning them. Forced to `False` by `train(overwrite_input=True)`
 
 #### Methods
 
-**`train(data, queries=None)`**
+**`train(data, queries=None, overwrite_input=False)`**
 
 Run k-means clustering to compute centroids.
 
 - **Parameters:**
   - `data` (ndarray): Shape (n_samples, dimensionality), dtype float32
   - `queries` (ndarray, optional): Shape (n_queries, dimensionality), dtype float32
+  - `overwrite_input` (bool, default=False): Rotate `data` in place instead of allocating a
+    rotated copy, halving peak memory. See below.
 - **Returns:** `centroids` (ndarray): Shape (n_clusters, dimensionality), dtype float32
+
+##### Reducing peak memory with `overwrite_input`
+
+Training rotates the data before clustering. By default that rotation goes into a fresh
+`n × d` float32 buffer, so peak memory is roughly twice the input. `overwrite_input=True`
+rotates the caller's array in place instead:
+
+```python
+centroids = kmeans.train(data, overwrite_input=True)   # data is now rotated
+labels = kmeans.assign_training_points(data, centroids)
+```
+
+`data` is overwritten and is **not** restored, so it must be a writeable, C-contiguous float32
+array — no conversion is performed, and a mismatch raises rather than silently copying (which
+would defeat the purpose). It also requires `sampling_fraction == 1.0`, which is otherwise
+applied with a warning, since sampling gathers scattered rows and cannot be done in place.
+
+The returned centroids are rotated too — `unrotate_centroids` is forced to `False` — so data and
+centroids stay in the same domain and remain directly comparable. Both `assign()` and
+`assign_training_points()` work as usual on the rotated buffer.
 
 **`assign(vectors, centroids)`**
 

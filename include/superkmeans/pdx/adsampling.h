@@ -2,6 +2,9 @@
 
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/pdx/utils.h"
+#include <algorithm>
+#include <cstring>
+#include <memory>
 #include <omp.h>
 #include <random>
 
@@ -172,15 +175,17 @@ class ADSamplingPruner {
      * For DCT path: applies sign flipping followed by DCT-II transform.
      * For matrix path: computes out = vectors * matrix^T.
      *
+     * With IN_PLACE, callers pass the same pointer for vectors and out_buffer. The DCT path
+     * already transforms out_buffer in place. The matrix path cannot alias its GEMM operands,
+     * so it walks blocks of INPLACE_ROTATION_BLOCK_ROWS through a scratch buffer.
+     *
+     * @tparam IN_PLACE Whether vectors and out_buffer are the same buffer
      * @param vectors Input vectors (row-major, n × num_dimensions)
      * @param out_buffer Output buffer for rotated vectors (n × num_dimensions)
      * @param n Number of vectors to rotate
      */
-    void Rotate(
-        const float* SKM_RESTRICT vectors,
-        float* SKM_RESTRICT out_buffer,
-        const uint32_t n
-    ) {
+    template <bool IN_PLACE = false>
+    void Rotate(const float* vectors, float* out_buffer, const uint32_t n) {
         Eigen::Map<MatrixR> out(out_buffer, n, num_dimensions);
 #ifdef HAS_FFTW
 #ifdef __AVX2__
@@ -211,6 +216,32 @@ class ADSamplingPruner {
             return;
         }
 #endif
+        if constexpr (IN_PLACE) {
+            const size_t n_block_rows = std::min<size_t>(INPLACE_ROTATION_BLOCK_ROWS, n);
+            std::unique_ptr<float[]> tmp_block(new float[n_block_rows * num_dimensions]);
+            for (size_t i = 0; i < n; i += n_block_rows) {
+                const size_t n_rows = std::min(n_block_rows, static_cast<size_t>(n) - i);
+                float* dst = out_buffer + i * num_dimensions;
+                std::memcpy(tmp_block.get(), dst, n_rows * num_dimensions * sizeof(float));
+                RotateImpl(tmp_block.get(), dst, static_cast<uint32_t>(n_rows));
+            }
+        } else {
+            RotateImpl(vectors, out_buffer, n);
+        }
+    }
+
+    /**
+     * @brief Computes out = vectors * matrix^T. Operands must not alias.
+     *
+     * @param vectors Input vectors (row-major, n × num_dimensions)
+     * @param out_buffer Output buffer for rotated vectors (n × num_dimensions)
+     * @param n Number of vectors to rotate
+     */
+    void RotateImpl(
+        const float* SKM_RESTRICT vectors,
+        float* SKM_RESTRICT out_buffer,
+        const uint32_t n
+    ) {
         const char trans_a = 'T';
         const char trans_b = 'N';
         int m = static_cast<int>(num_dimensions);

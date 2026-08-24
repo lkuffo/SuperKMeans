@@ -90,6 +90,7 @@ namespace skmeans {
 static inline constexpr float PROPORTION_HORIZONTAL_DIM = 0.75;
 static inline constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;
 static inline constexpr size_t H_DIM_SIZE = 64;
+static inline constexpr size_t INPLACE_ROTATION_BLOCK_ROWS = 4096;
 
 // Below 32, GEMM stops accelerating
 static inline constexpr uint32_t MIN_PARTIAL_D = 32;

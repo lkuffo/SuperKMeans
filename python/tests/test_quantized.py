@@ -159,6 +159,85 @@ class TestQuantizedSuperKMeans:
         km = SuperKMeans(n_clusters=10, dimensionality=128, quantizer=quantizer)
         assert f"quantizer={quantizer!r}" in repr(km)
 
+    @staticmethod
+    def _assert_same_clustering(data, run):
+        """train() and train(overwrite_input=True) express the same clustering in different
+        domains, so compare the clustering itself: the assignments, plus the centroid norms
+        (invariant under an orthonormal rotation)."""
+        buf, centroids = run(data.copy(), False)
+        buf_in_place, centroids_in_place = run(data.copy(), True)
+
+        assert centroids_in_place.shape == centroids.shape
+        np.testing.assert_allclose(
+            np.sort(np.linalg.norm(centroids_in_place, axis=1)),
+            np.sort(np.linalg.norm(centroids, axis=1)),
+            rtol=1e-3,
+        )
+        engine = SuperKMeans(n_clusters=centroids.shape[0], dimensionality=centroids.shape[1])
+        agreement = np.mean(
+            engine.assign(buf_in_place, centroids_in_place) == engine.assign(buf, centroids)
+        )
+        assert agreement > 0.95, f"assignment agreement {agreement:.4f}"
+
+    @pytest.mark.parametrize("quantizer", QUANTIZERS + ["f32"])
+    def test_overwrite_input_same_clustering_as_train(self, quantizer):
+        n, d, k = 5000, 128, 300
+        data = load_test_data(n, d)
+
+        def run(buf, overwrite_input):
+            km = SuperKMeans(
+                n_clusters=k, dimensionality=d, quantizer=quantizer,
+                iters=10, sampling_fraction=1.0,
+            )
+            return buf, km.train(buf, overwrite_input=overwrite_input)
+
+        self._assert_same_clustering(data, run)
+
+    @pytest.mark.parametrize("quantizer", QUANTIZERS + ["f32"])
+    def test_overwrite_input_hierarchical_same_clustering_as_train(self, quantizer):
+        n, d, k = 8000, 128, 64
+        data = load_test_data(n, d)
+
+        def run(buf, overwrite_input):
+            km = SuperKMeans(
+                n_clusters=k, dimensionality=d, quantizer=quantizer, hierarchical=True,
+                iters_mesoclustering=3, iters_fineclustering=3, iters_refinement=1,
+            )
+            return buf, km.train(buf, overwrite_input=overwrite_input)
+
+        self._assert_same_clustering(data, run)
+
+    def test_overwrite_input_rotates_the_caller_buffer(self):
+        n, d, k = 5000, 128, 300
+        data = load_test_data(n, d)
+        overwritten = data.copy()
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, iters=5, sampling_fraction=1.0,
+        )
+        km.train(overwritten, overwrite_input=True)
+
+        assert not np.allclose(overwritten, data)
+        np.testing.assert_allclose(
+            np.linalg.norm(overwritten, axis=1), np.linalg.norm(data, axis=1), rtol=1e-4
+        )
+
+    def test_overwrite_input_leaves_data_and_centroids_in_one_domain(self):
+        """unrotate_centroids is forced off, so the rotated buffer and the returned centroids
+        are directly comparable and assign() is valid without any extra step."""
+        n, d, k = 5000, 128, 300
+        data = load_test_data(n, d)
+        rotated = data.copy()
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, iters=5, sampling_fraction=1.0,
+        )
+        centroids = km.train(rotated, overwrite_input=True)
+
+        exact = km.assign(rotated, centroids)
+        reuse = km.assign_training_points(rotated, centroids)
+        assert np.mean(reuse == exact) > 0.5
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

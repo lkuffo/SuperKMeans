@@ -153,7 +153,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             std::cout << "Sampling data..." << std::endl;
         }
         // Samples for both mesoclustering and fineclustering
-        std::unique_ptr<float[]> data_samples_buffer(new float[this->n_samples * this->d]);
+        std::unique_ptr<float[]> data_samples_buffer;
+        if (this->n_samples < n || !this->hierarchical_config.data_already_rotated) {
+            data_samples_buffer.reset(new float[this->n_samples * this->d]);
+        }
         auto data_to_cluster = this->SampleAndRotateVectors(
             data_p,
             data_samples_buffer.get(),
@@ -655,6 +658,35 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             Profiler::Get().PrintHierarchical();
         }
         return output_centroids;
+    }
+
+    /**
+     * @brief Run hierarchical k-means clustering to determine centroids.
+     *
+     * Transformations (rotation and/or quantization) are done in place using the caller's buffer.
+     * `data` is overwritten with its rotated form and is NOT restored, so on return the caller
+     * holds rotated vectors. The returned centroids are rotated too: unrotate_centroids is forced
+     * to false, so that data and centroids stay in the same domain and remain directly comparable
+     * (Assign(data, centroids) is valid). AssignTrainingPoints()/QuantizedAssign() take the
+     * rotated buffer as usual. Call Unrotate() to map back to the original domain.
+     *
+     * Requires sampling_fraction == 1.0; a smaller value is overridden (with a warning) since
+     * sampling gathers scattered rows and cannot be done in place.
+     *
+     * @param data Pointer to the data matrix (row-major, n × d). Overwritten with rotated data.
+     * @param n Number of points (rows) in the data matrix
+     *
+     * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
+     */
+    std::vector<skmeans_centroid_value_t<q>> TrainInPlace(
+        float* SKM_RESTRICT data,
+        const size_t n,
+        const float* SKM_RESTRICT queries = nullptr,
+        const size_t n_queries = 0
+    ) {
+        this->ConfigInPlaceTraining(data, n);
+        static_cast<SuperKMeansConfig&>(hierarchical_config) = this->config;
+        return Train(data, n, queries, n_queries);
     }
 
     /**

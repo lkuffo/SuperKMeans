@@ -130,7 +130,9 @@ inline float RecallAtFraction(
 
 // Train n_clusters centroids on the first RECALL_N rows of data_path, then return
 // average recall@RECALL_KNN at RECALL_FRAC. Defaults reproduce the ground-truth config.
-template <skmeans::Quantization Q>
+// With IN_PLACE, training rotates the data buffer in place and leaves both data and centroids in
+// the rotated domain. Rotation is orthonormal, so recall is comparable to the default path.
+template <skmeans::Quantization Q, bool IN_PLACE = false>
 inline float ClusteringRecall(
     skmeans::QuantizerType qt,
     const std::string& data_path,
@@ -153,7 +155,12 @@ inline float ClusteringRecall(
     config.use_blas_only = !pruning;
 
     auto kmeans = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>(n_clusters, d, config);
-    auto centroids = kmeans.Train(data.data(), RECALL_N);
+    std::vector<skmeans::skmeans_centroid_value_t<Q>> centroids;
+    if constexpr (IN_PLACE) {
+        centroids = kmeans.TrainInPlace(data.data(), RECALL_N);
+    } else {
+        centroids = kmeans.Train(data.data(), RECALL_N);
+    }
     auto assign = kmeans.Assign(data.data(), centroids.data(), RECALL_N, n_clusters);
     return RecallAtFraction(
         gt,
@@ -168,7 +175,7 @@ inline float ClusteringRecall(
     );
 }
 
-template <skmeans::Quantization Q>
+template <skmeans::Quantization Q, bool IN_PLACE = false>
 inline float HierarchicalClusteringRecall(skmeans::QuantizerType qt, const std::string& data_path) {
     auto data = LoadTestDataSubdim(data_path, RECALL_N, RECALL_D, RECALL_D);
     auto gt = BuildGroundTruthNN(data.data(), RECALL_N, RECALL_D, RECALL_N_QUERIES, RECALL_KNN);
@@ -188,7 +195,12 @@ inline float HierarchicalClusteringRecall(skmeans::QuantizerType qt, const std::
     auto kmeans = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>(
         RECALL_N_CLUSTERS, RECALL_D, config
     );
-    auto centroids = kmeans.Train(data.data(), RECALL_N);
+    std::vector<skmeans::skmeans_centroid_value_t<Q>> centroids;
+    if constexpr (IN_PLACE) {
+        centroids = kmeans.TrainInPlace(data.data(), RECALL_N);
+    } else {
+        centroids = kmeans.Train(data.data(), RECALL_N);
+    }
     auto assign = kmeans.Assign(data.data(), centroids.data(), RECALL_N, RECALL_N_CLUSTERS);
     return RecallAtFraction(
         gt,

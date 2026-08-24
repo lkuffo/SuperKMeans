@@ -151,6 +151,19 @@ rotation → valid only on rotated data). sq8/lvq4 may skip rotation **only on a
 path**. Encoding in the wrong domain, or pruning on un-rotated data ⇒ **silently bad params /
 invalid bounds** (no crash, just recall loss).
 
+**`TrainInPlace(float* data, …)`** — memory-halving twin of `Train`, in both `SuperKMeans` and
+`HierarchicalSuperKMeans`. It rotates the **caller's** buffer via `ConfigInPlaceTraining` (forces
+`sampling_fraction = 1.0` with a warning, then `pruner->Rotate<true>`) and sets
+`config.data_already_rotated = true`, so the shared `Train` body then skips rotation and uses `data`
+directly as `data_to_cluster` — no `n × d` samples buffer is allocated at all (it is now allocated
+only `if (n_samples < n || !data_already_rotated)`, which also fixes a pre-existing waste for
+`data_already_rotated` users). It also forces `unrotate_centroids = false`: the caller's buffer is
+now in the rotated domain, so the centroids must be too, otherwise `Assign(data, centroids)` would
+silently compare across domains. `Rotate<IN_PLACE>` in
+`adsampling.h`: the DCT path is already in-place (`FlipSign` is elementwise, FFTW plans out→out), the
+matrix path can't alias its GEMM operands so it blocks through a scratch buffer of
+`INPLACE_ROTATION_BLOCK_ROWS` rows via `RotateImpl`.
+
 **Assign family (3 methods):**
 - **`Assign`** — exact f32 brute force. Standalone, no trained state. Ground-truth reference.
 - **`QuantizedAssign`** — standalone quantized analog: fits a *fresh* quantizer on the input, no
@@ -188,3 +201,11 @@ kmeans = SuperKMeans(n_clusters=k, dimensionality=d, quantizer="rabitq")  # or f
 centroids   = kmeans.train(data)               # float32 centroids (k×d)
 assignments = kmeans.assign(data, centroids)   # exact; quantized_assign(...) needs train() first
 ```
+`train(data, overwrite_input=True)` is the `TrainInPlace` path (name follows SciPy's
+`overwrite_x`/`overwrite_a`). It dispatches to a **separate** `train_in_place` binding declared
+`py::array_t<float, py::array::c_style>` — **no `forcecast`** — so pybind raises instead of
+converting; otherwise a float64/F-order/sliced input would be silently rotated as a temporary while
+the caller's array stayed untouched. `writeable()` is checked explicitly (pybind does not), and
+`validate_numpy_array(..., overwrite=True)` refuses rather than substituting an
+`ascontiguousarray` copy. `unrotate_centroids` is exposed for the normal path, and forced to False
+on the in-place one.
