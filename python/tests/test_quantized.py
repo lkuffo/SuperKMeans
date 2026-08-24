@@ -222,6 +222,159 @@ class TestQuantizedSuperKMeans:
             np.linalg.norm(overwritten, axis=1), np.linalg.norm(data, axis=1), rtol=1e-4
         )
 
+    @pytest.mark.parametrize("quantizer", QUANTIZERS)
+    def test_state_exposes_quantized_buffer(self, quantizer):
+        n, d, k = 5000, 128, 300
+        data = load_test_data(n, d)
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, quantizer=quantizer,
+            iters=5, sampling_fraction=1.0,
+        )
+        assert km.state is None
+        assert km.quantization_params is None
+        assert km.quantized_data is None
+
+        km.train(data)
+
+        state = km.state
+        assert state.trained
+        assert state.n_encoded == n
+        assert state.code_size > 0
+
+        codes = km.quantized_data
+        assert codes.shape == (state.n_encoded, state.code_size)
+        assert codes.dtype == np.uint8
+        assert not codes.flags["WRITEABLE"]
+        assert not codes.flags["OWNDATA"], "must be a view, not a copy"
+        assert codes.base is not None, "view must keep the owning model alive"
+
+    def test_rabitq_params_expose_centroid_and_binary_bytes(self):
+        n, d, k = 3000, 128, 300
+        data = load_test_data(n, d)
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, quantizer="rabitq",
+            iters=3, sampling_fraction=1.0,
+        )
+        rotated = data.copy()
+        km.train(rotated, overwrite_input=True)
+
+        params = km.quantization_params
+        assert set(params) == {"centroid", "binary_bytes"}
+        assert params["binary_bytes"] == (d + 7) // 8
+        assert km.state.code_size == params["binary_bytes"] + 8
+
+        # Fit runs on the rotated training data, so the centroid is its column mean
+        centroid = params["centroid"]
+        assert centroid.shape == (d,)
+        assert centroid.dtype == np.float32
+        np.testing.assert_allclose(centroid, rotated.mean(axis=0), atol=1e-4)
+
+    def test_lvq4_has_no_global_params(self):
+        n, d, k = 3000, 128, 300
+        data = load_test_data(n, d)
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, quantizer="lvq4",
+            iters=3, sampling_fraction=1.0,
+        )
+        km.train(data)
+
+        # LVQ4 keeps scale and bias per vector, inside each code
+        assert km.quantization_params == {}
+        assert km.state.code_size == d // 2 + 8
+
+    def test_lvq4_code_layout_is_as_documented(self):
+        n, d, k = 3000, 128, 300
+        data = load_test_data(n, d)
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, quantizer="lvq4",
+            iters=3, sampling_fraction=1.0,
+        )
+        km.train(data)
+
+        nibble_bytes = d // 2
+        codes = km.quantized_data
+        assert codes.shape == (n, nibble_bytes + 8)
+
+        # [d/2 packed u4x2 bytes] [float scale: 4B] [float bias: 4B]
+        trailer = np.ascontiguousarray(codes[:, nibble_bytes:]).view(np.float32)
+        scale, bias = trailer[:, 0], trailer[:, 1]
+        assert np.all(scale > 0)
+        assert np.all(np.isfinite(bias))
+
+        # even dims are the low nibble, odd dims the high nibble
+        packed = codes[:, :nibble_bytes]
+        nibbles = np.empty((n, d), dtype=np.float32)
+        nibbles[:, 0::2] = packed & 0x0F
+        nibbles[:, 1::2] = packed >> 4
+        reconstructed = nibbles * scale[:, None] + bias[:, None]
+
+        # the codes encode the rotated vectors, and each is within one of its own scale steps
+        rotated = km.rotate(data)
+        assert np.all(np.abs(reconstructed - rotated) <= scale[:, None] + 1e-5)
+
+    def test_f32_has_no_quantized_buffer(self):
+        n, d, k = 3000, 128, 300
+        data = load_test_data(n, d)
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, quantizer="f32",
+            iters=3, sampling_fraction=1.0,
+        )
+        km.train(data)
+
+        assert km.quantized_data is None
+        assert km.quantization_params == {}
+        assert km.state.trained
+
+    def test_sq8_params_decode_the_exposed_codes(self):
+        n, d, k = 3000, 128, 300
+        data = load_test_data(n, d)
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, quantizer="sq8",
+            iters=3, sampling_fraction=1.0,
+        )
+        km.train(data)
+
+        params = km.quantization_params
+        assert set(params) == {"base", "scale", "inv_scale"}
+
+        rotated = km.rotate(data)
+        decoded = km.quantized_data.astype(np.float32) * params["inv_scale"] + params["base"]
+        assert np.abs(decoded - rotated).max() <= params["inv_scale"]
+
+    def test_sampled_indices_map_encoded_rows_to_original_rows(self):
+        n, d, k = 5000, 128, 300
+        data = load_test_data(n, d)
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, quantizer="sq8",
+            iters=3, sampling_fraction=0.5, max_points_per_cluster=99999,
+        )
+        km.train(data)
+
+        indices = km.sampled_indices
+        assert km.state.n_encoded < n
+        assert indices.shape == (km.state.n_encoded,)
+        assert not indices.flags["WRITEABLE"]
+        assert len(np.unique(indices)) == indices.size
+        assert indices.max() < n
+
+    def test_sampled_indices_none_without_sampling(self):
+        n, d, k = 3000, 128, 300
+        data = load_test_data(n, d)
+
+        km = SuperKMeans(
+            n_clusters=k, dimensionality=d, quantizer="sq8",
+            iters=3, sampling_fraction=1.0,
+        )
+        km.train(data)
+        assert km.sampled_indices is None
+
     def test_overwrite_input_leaves_data_and_centroids_in_one_domain(self):
         """unrotate_centroids is forced off, so the rotated buffer and the returned centroids
         are directly comparable and assign() is valid without any extra step."""

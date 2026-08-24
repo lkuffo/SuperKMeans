@@ -18,11 +18,7 @@
 
 using namespace skmeans;
 
-namespace {
-
-using skm_u8 = SuperKMeans<Quantization::u8, DistanceFunction::l2>;
-
-} // namespace
+namespace {} // namespace
 
 // LVQ4Quantizer unit tests
 
@@ -183,9 +179,54 @@ TEST_F(SuperKMeansLVQ4Test, SmallestEvenDimension) {
 
     SuperKMeansConfig config;
     config.iters = 10;
-    config.quantizer_type = QuantizerType::lvq4;
 
-    auto kmeans = skm_u8(n_clusters, d, config);
+    auto kmeans = SuperKMeansLVQ4(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
     EXPECT_EQ(centroids.size(), n_clusters * d);
+}
+
+// LVQ4 has no global parameters, so the documented code layout is the contract:
+//   [d/2 packed u4x2 bytes] [float scale: 4B] [float bias: 4B]
+TEST(LVQ4CodeLayout, ScaleAndBiasSitAtTheDocumentedOffsets) {
+    const size_t n = 3000, d = 128, n_clusters = 300;
+    auto data = skm_test::LoadTestDataSubdim(
+        CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d
+    );
+
+    SuperKMeansConfig config;
+    config.iters = 3;
+    config.seed = 42;
+    config.n_threads = 1;
+    config.sampling_fraction = 1.0f;
+    config.max_points_per_cluster = 99999;
+    config.suppress_warnings = true;
+
+    auto kmeans = SuperKMeansLVQ4(n_clusters, d, config);
+    kmeans.Train(data.data(), n);
+
+    const auto* quantizer = kmeans.GetQuantizer();
+    ASSERT_NE(quantizer, nullptr);
+    const uint8_t* codes = kmeans.GetQuantizedData();
+    ASSERT_NE(codes, nullptr);
+
+    const size_t nibble_bytes = d / 2;
+    const size_t code_size = kmeans.GetState().code_size;
+    ASSERT_EQ(code_size, nibble_bytes + 2 * sizeof(float));
+
+    std::vector<float> decoded(n * d);
+    quantizer->Decode(codes, decoded.data(), n, d);
+
+    for (size_t i = 0; i < n; i += 293) {
+        const uint8_t* code = codes + i * code_size;
+        float scale = 0.0f;
+        float bias = 0.0f;
+        std::memcpy(&scale, code + nibble_bytes, sizeof(float));
+        std::memcpy(&bias, code + nibble_bytes + sizeof(float), sizeof(float));
+        for (size_t j = 0; j < d; ++j) {
+            const uint8_t byte = code[j / 2];
+            const uint8_t nibble = (j % 2 == 0) ? (byte & 0x0F) : (byte >> 4);
+            ASSERT_NEAR(decoded[i * d + j], scale * static_cast<float>(nibble) + bias, 1e-4f)
+                << "at " << i << "," << j;
+        }
+    }
 }

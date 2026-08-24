@@ -13,22 +13,9 @@
 #include "superkmeans/common.h"
 #include "superkmeans/superkmeans.h"
 
-int main(int argc, char* argv[]) {
-    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
-    std::string quantizer = (argc > 2) ? std::string(argv[2]) : std::string("sq8");
-    bool blas_only = !(argc > 3 && std::string(argv[3]) == "pruning");
-
-    const std::map<std::string, skmeans::QuantizerType> quantizers = {
-        {"sq8", skmeans::QuantizerType::sq8},
-        {"lvq4", skmeans::QuantizerType::lvq4},
-        {"rabitq", skmeans::QuantizerType::rabitq},
-    };
-    auto qit = quantizers.find(quantizer);
-    if (qit == quantizers.end()) {
-        std::cerr << "Unknown quantizer '" << quantizer << "' (use sq8|lvq4|rabitq)\n";
-        return 1;
-    }
-    const std::string algorithm = "superkmeans_" + quantizer;
+template <skmeans::Quantization Q>
+int RunBenchmark(const std::string& dataset, const bool blas_only) {
+    const std::string algorithm = std::string("superkmeans_") + skmeans::QuantizationName(Q);
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -88,7 +75,6 @@ int main(int argc, char* argv[]) {
     config.early_termination = false;
     config.sampling_fraction = sampling_fraction;
     config.tol = 1e-3f;
-    config.quantizer_type = qit->second;
     config.use_blas_only = blas_only;
     config.quantized_centroid_update = true;
     if (blas_only) {
@@ -103,9 +89,7 @@ int main(int argc, char* argv[]) {
         config.angular = true;
     }
 
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
+    auto kmeans = skmeans::SuperKMeans<Q>(n_clusters, d, config);
     bench_utils::TicToc timer;
     timer.Tic();
     std::vector<float> centroids = kmeans.Train(data.data(), n);
@@ -123,7 +107,7 @@ int main(int argc, char* argv[]) {
     auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
     auto q_assignments = kmeans.QuantizedAssign(data.data(), centroids.data(), n, n_clusters);
 
-    using SKM = skmeans::SuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>;
+    using SKM = skmeans::SuperKMeans<Q>;
     double wcss_assign = SKM::ComputeWCSS(data.data(), centroids.data(), assignments.data(), n, d);
     double wcss_q_assign =
         SKM::ComputeWCSS(data.data(), centroids.data(), q_assignments.data(), n, d);
@@ -133,15 +117,11 @@ int main(int argc, char* argv[]) {
               << wcss_q_assign << std::endl;
 
     std::cout << "\n--- Assign() cluster balance ---" << std::endl;
-    auto balance_stats =
-        skmeans::SuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>::
-            GetClustersBalanceStats(assignments.data(), n, n_clusters);
+    auto balance_stats = SKM::GetClustersBalanceStats(assignments.data(), n, n_clusters);
     balance_stats.print();
 
     std::cout << "--- QuantizedAssign() cluster balance ---" << std::endl;
-    auto q_balance_stats =
-        skmeans::SuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>::
-            GetClustersBalanceStats(q_assignments.data(), n, n_clusters);
+    auto q_balance_stats = SKM::GetClustersBalanceStats(q_assignments.data(), n, n_clusters);
     q_balance_stats.print();
 
     // Compute recall if ground truth file exists
@@ -191,4 +171,23 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "Skipping CSV output (recall computation requires ground truth)" << std::endl;
     }
+    return 0;
+}
+
+int main(int argc, char* argv[]) {
+    std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
+    std::string quantizer = (argc > 2) ? std::string(argv[2]) : std::string("sq8");
+    bool blas_only = !(argc > 3 && std::string(argv[3]) == "pruning");
+
+    if (quantizer == "sq8") {
+        return RunBenchmark<skmeans::Quantization::sq8>(dataset, blas_only);
+    }
+    if (quantizer == "lvq4") {
+        return RunBenchmark<skmeans::Quantization::lvq4>(dataset, blas_only);
+    }
+    if (quantizer == "rabitq") {
+        return RunBenchmark<skmeans::Quantization::rabitq>(dataset, blas_only);
+    }
+    std::cerr << "Unknown quantizer '" << quantizer << "' (use sq8|lvq4|rabitq)\n";
+    return 1;
 }

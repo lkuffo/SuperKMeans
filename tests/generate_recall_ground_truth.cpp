@@ -9,24 +9,14 @@ int main() {
     using namespace skm_test;
     const std::string path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
 
-    const float f32 =
-        ClusteringRecall<skmeans::Quantization::f32>(skmeans::QuantizerType::none, path);
-    const float sq8 =
-        ClusteringRecall<skmeans::Quantization::u8>(skmeans::QuantizerType::sq8, path);
-    const float lvq4 =
-        ClusteringRecall<skmeans::Quantization::u8>(skmeans::QuantizerType::lvq4, path);
-    const float rabitq =
-        ClusteringRecall<skmeans::Quantization::u8>(skmeans::QuantizerType::rabitq, path);
-    const float hier_f32 = HierarchicalClusteringRecall<skmeans::Quantization::f32>(
-        skmeans::QuantizerType::none, path
-    );
-    const float hier_sq8 =
-        HierarchicalClusteringRecall<skmeans::Quantization::u8>(skmeans::QuantizerType::sq8, path);
-    const float hier_lvq4 =
-        HierarchicalClusteringRecall<skmeans::Quantization::u8>(skmeans::QuantizerType::lvq4, path);
-    const float hier_rabitq = HierarchicalClusteringRecall<skmeans::Quantization::u8>(
-        skmeans::QuantizerType::rabitq, path
-    );
+    const float f32 = ClusteringRecall<skmeans::Quantization::f32>(path);
+    const float sq8 = ClusteringRecall<skmeans::Quantization::sq8>(path);
+    const float lvq4 = ClusteringRecall<skmeans::Quantization::lvq4>(path);
+    const float rabitq = ClusteringRecall<skmeans::Quantization::rabitq>(path);
+    const float hier_f32 = HierarchicalClusteringRecall<skmeans::Quantization::f32>(path);
+    const float hier_sq8 = HierarchicalClusteringRecall<skmeans::Quantization::sq8>(path);
+    const float hier_lvq4 = HierarchicalClusteringRecall<skmeans::Quantization::lvq4>(path);
+    const float hier_rabitq = HierarchicalClusteringRecall<skmeans::Quantization::rabitq>(path);
 
     std::fprintf(
         stderr,

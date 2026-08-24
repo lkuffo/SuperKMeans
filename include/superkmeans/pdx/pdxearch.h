@@ -24,23 +24,19 @@ namespace skmeans {
  * The only boundary where conversion to real dimensions is needed is GetPruningThreshold,
  * since the ADSampling pruner's ratios array is indexed by real dimension count.
  *
- * @tparam q Quantization type (f32, u8, or u4)
+ * @tparam q Quantizer type (f32, sq8, or sq4)
  * @tparam Index
- * @tparam alpha Distance function (l2 or dp)
  */
-template <
-    Quantization q = Quantization::f32,
-    class Index = IndexPDXIVF<q>,
-    DistanceFunction alpha = DistanceFunction::l2>
+template <Quantization q = Quantization::f32, class Index = IndexPDXIVF<q>>
 class PDXearch {
   public:
     using DISTANCES_TYPE = pdx_distance_t<q>;
     using DATA_TYPE = skmeans_value_t<q>;
     using INDEX_TYPE = Index;
     using CLUSTER_TYPE = Cluster<q>;
-    using KNNCandidate_t = KNNCandidate<q>;
-    using VectorComparator_t = VectorComparator<q>;
-    using Pruner = ADSamplingPruner<Quantization::f32>;
+    using KNNCandidate_t = KNNCandidate;
+    using VectorComparator_t = VectorComparator;
+    using Pruner = ADSamplingPruner;
 
     Pruner& pruner;
     INDEX_TYPE& pdx_data;
@@ -59,25 +55,24 @@ class PDXearch {
      */
     template <Quantization Q = q>
     void GetPruningThreshold(
-        KNNCandidate<Q>& best_candidate,
+        KNNCandidate& best_candidate,
         DISTANCES_TYPE& pruning_threshold,
         uint32_t current_dimension_idx
     ) {
         // For u4, PDX operates in packed bytes (d/2). The pruner expects real
         // dimension indices, so convert back to real 4-bit dimension count.
         const uint32_t pruner_dim_idx =
-            (Q == Quantization::u4) ? current_dimension_idx * 2 : current_dimension_idx;
-        if constexpr (Q == Quantization::u8 || Q == Quantization::u4) {
+            (Q == Quantization::sq4) ? current_dimension_idx * 2 : current_dimension_idx;
+        if constexpr (Q == Quantization::sq8 || Q == Quantization::sq4) {
             const float float_threshold =
-                pruner.template GetPruningThreshold<Q>(best_candidate, pruner_dim_idx);
+                pruner.GetPruningThreshold(best_candidate, pruner_dim_idx);
             const float scaled = float_threshold * pdx_data.quantization_scale_squared;
             pruning_threshold =
                 scaled >= static_cast<float>(std::numeric_limits<DISTANCES_TYPE>::max())
                     ? std::numeric_limits<DISTANCES_TYPE>::max()
                     : static_cast<DISTANCES_TYPE>(scaled);
         } else {
-            pruning_threshold =
-                pruner.template GetPruningThreshold<Q>(best_candidate, current_dimension_idx);
+            pruning_threshold = pruner.GetPruningThreshold(best_candidate, current_dimension_idx);
         }
     }
 
@@ -119,7 +114,7 @@ class PDXearch {
     /**
      * @brief Prune phase: iteratively eliminates vectors using remaining dimensions.
      *
-     * @tparam Q Quantization type
+     * @tparam Q Quantizer type
      * @param query Query vector
      * @param data PDX-formatted cluster data
      * @param n_vectors Number of vectors in the cluster
@@ -143,7 +138,7 @@ class PDXearch {
         uint32_t* pruning_positions,
         DISTANCES_TYPE* pruning_distances,
         DISTANCES_TYPE& pruning_threshold,
-        KNNCandidate<Q>& best_candidate,
+        KNNCandidate& best_candidate,
         size_t& n_vectors_not_pruned,
         uint32_t& current_dimension_idx,
         const uint32_t* vector_indices,
@@ -181,7 +176,7 @@ class PDXearch {
             for (size_t vector_idx = 0; vector_idx < n_vectors_not_pruned; vector_idx++) {
                 size_t v_idx = pruning_positions[vector_idx];
                 size_t data_pos = offset_data + (v_idx * H_DIM_SIZE);
-                pruning_distances[v_idx] += DistanceComputer<alpha, Q>::Horizontal(
+                pruning_distances[v_idx] += DistanceComputer<DistanceFunction::l2, Q>::Horizontal(
                     query + offset_query, data + data_pos, H_DIM_SIZE
                 );
             }
@@ -217,7 +212,7 @@ class PDXearch {
                 auto data_pos = aux_vertical_dimensions_in_horizontal_layout +
                                 (v_idx * pdx_data.num_vertical_dimensions) +
                                 current_vertical_dimension;
-                pruning_distances[v_idx] += DistanceComputer<alpha, Q>::Horizontal(
+                pruning_distances[v_idx] += DistanceComputer<DistanceFunction::l2, Q>::Horizontal(
                     query + offset_query, data_pos, dimensions_left
                 );
             }
@@ -246,12 +241,12 @@ class PDXearch {
         size_t n_vectors,
         const uint32_t* pruning_positions,
         const DISTANCES_TYPE* pruning_distances,
-        KNNCandidate<Q>& best_candidate
+        KNNCandidate& best_candidate
     ) {
         for (size_t position_idx = 0; position_idx < n_vectors; ++position_idx) {
             size_t index = pruning_positions[position_idx];
             DISTANCES_TYPE current_distance = pruning_distances[index];
-            if constexpr (Q == Quantization::u8 || Q == Quantization::u4) {
+            if constexpr (Q == Quantization::sq8 || Q == Quantization::sq4) {
                 float real_distance =
                     static_cast<float>(current_distance) * pdx_data.inverse_scale_factor_squared;
                 if (real_distance < best_candidate.distance) {
@@ -298,7 +293,7 @@ class PDXearch {
         size_t current_cluster = 0;
 
         // Setup previous top1: convert float threshold to DISTANCES_TYPE domain
-        if constexpr (q == Quantization::u8 || q == Quantization::u4) {
+        if constexpr (q == Quantization::sq8 || q == Quantization::sq4) {
             const float scaled = prev_pruning_threshold * pdx_data.quantization_scale_squared;
             pruning_threshold =
                 scaled >= static_cast<float>(std::numeric_limits<DISTANCES_TYPE>::max())
@@ -307,7 +302,7 @@ class PDXearch {
         } else {
             pruning_threshold = prev_pruning_threshold;
         }
-        auto top_embedding = KNNCandidate<q>{};
+        auto top_embedding = KNNCandidate{};
         top_embedding.index = prev_top_1;
         top_embedding.distance = prev_pruning_threshold;
 

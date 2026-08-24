@@ -7,7 +7,7 @@
 namespace skmeans {
 
 // Forward declaration for pruning interface
-template <Quantization q, DistanceFunction alpha>
+template <Quantization q>
 class PDXLayout;
 
 /**
@@ -17,7 +17,7 @@ class PDXLayout;
  * computation kernel. This lets different quantizers (e.g. product
  * quantization) ship a custom GEMM without touching BatchComputer.
  *
- * @tparam q Quantization enum that determines the quantized data type
+ * @tparam q Quantizer type that determines the quantized data type
  */
 template <Quantization q>
 class IQuantizer {
@@ -283,7 +283,7 @@ class IQuantizer {
         size_t d,
         uint32_t* out_knn,
         float* out_distances,
-        PDXLayout<q, DistanceFunction::l2>& pdx_centroids,
+        PDXLayout<q>& pdx_centroids,
         uint32_t partial_d,
         size_t* out_not_pruned_counts
     ) const {

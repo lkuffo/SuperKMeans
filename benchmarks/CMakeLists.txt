@@ -104,6 +104,9 @@ add_custom_target(benchmarks
         ad_hoc_hierarchical_superkmeans.out
         ad_hoc_assign.out
         ad_hoc_superkmeans_quantized.out
+        ad_hoc_hierarchical_superkmeans_quantized.out
+        accelerators.out
+        scalability.out
         sweet_pruning_spot_superkmeans.out
         microbenchmark_init_positions_array.out
         microbenchmark_flip_sign.out

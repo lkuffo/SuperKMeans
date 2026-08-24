@@ -10,21 +10,25 @@ except Exception:
 
 from ._superkmeans import (
     SuperKMeans as _SuperKMeansCpp,
-    QuantizedSuperKMeans as _QuantizedSuperKMeansCpp,
+    SuperKMeansSQ8 as _SuperKMeansSQ8Cpp,
+    SuperKMeansLVQ4 as _SuperKMeansLVQ4Cpp,
+    SuperKMeansRabitQ as _SuperKMeansRabitQCpp,
     SuperKMeansConfig as _SuperKMeansConfigCpp,
     SuperKMeansIterationStats,
     HierarchicalSuperKMeans as _HierarchicalSuperKMeansCpp,
-    QuantizedHierarchicalSuperKMeans as _QuantizedHierarchicalSuperKMeansCpp,
+    HierarchicalSuperKMeansSQ8 as _HierarchicalSuperKMeansSQ8Cpp,
+    HierarchicalSuperKMeansLVQ4 as _HierarchicalSuperKMeansLVQ4Cpp,
+    HierarchicalSuperKMeansRabitQ as _HierarchicalSuperKMeansRabitQCpp,
     HierarchicalSuperKMeansConfig as _HierarchicalSuperKMeansConfigCpp,
     HierarchicalSuperKMeansIterationStats,
-    QuantizerType,
 )
 
 _QUANTIZERS = ("f32", "sq8", "lvq4", "rabitq")
 _QUANTIZER_MAP = {
-    "sq8": QuantizerType.sq8,
-    "lvq4": QuantizerType.lvq4,
-    "rabitq": QuantizerType.rabitq,
+    "f32": (_SuperKMeansCpp, _HierarchicalSuperKMeansCpp),
+    "sq8": (_SuperKMeansSQ8Cpp, _HierarchicalSuperKMeansSQ8Cpp),
+    "lvq4": (_SuperKMeansLVQ4Cpp, _HierarchicalSuperKMeansLVQ4Cpp),
+    "rabitq": (_SuperKMeansRabitQCpp, _HierarchicalSuperKMeansRabitQCpp),
 }
 
 
@@ -275,20 +279,12 @@ class SuperKMeans:
             config.angular = self._config_params['angular']
             config.unrotate_centroids = self._config_params['unrotate_centroids']
 
-            quantized = self._quantizer != "f32"
-            if quantized:
-                config.quantizer_type = _QUANTIZER_MAP[self._quantizer]
+            if self._quantizer != "f32":
                 config.full_precision_final_centroids = (
                     self._config_params['full_precision_final_centroids']
                 )
 
-            if self._hierarchical:
-                cpp_cls = (
-                    _QuantizedHierarchicalSuperKMeansCpp if quantized
-                    else _HierarchicalSuperKMeansCpp
-                )
-            else:
-                cpp_cls = _QuantizedSuperKMeansCpp if quantized else _SuperKMeansCpp
+            cpp_cls = _QUANTIZER_MAP[self._quantizer][1 if self._hierarchical else 0]
             self._cpp_skmeans_obj = cpp_cls(
                 self._n_clusters, self._dimensionality, config
             )
@@ -330,9 +326,8 @@ class SuperKMeans:
             return self._assign_engine()
         if self._quantized_assign_only_obj is None:
             config = _SuperKMeansConfigCpp()
-            config.quantizer_type = _QUANTIZER_MAP[self._quantizer]
             config.seed = self._config_params['seed']
-            self._quantized_assign_only_obj = _QuantizedSuperKMeansCpp(
+            self._quantized_assign_only_obj = _QUANTIZER_MAP[self._quantizer][0](
                 self._n_clusters, self._dimensionality, config
             )
         return self._quantized_assign_only_obj
@@ -494,6 +489,73 @@ class SuperKMeans:
         if self._cpp_skmeans_obj is None:
             return []
         return self._cpp_skmeans_obj.iteration_stats
+
+    @property
+    def state(self):
+        """How training was carried out, or None before training (read-only)."""
+        if self._cpp_skmeans_obj is None:
+            return None
+        return self._cpp_skmeans_obj.state
+
+    @property
+    def quantization_params(self) -> Optional[dict]:
+        """Global parameters of the fitted quantizer, or None before training.
+
+        Keys depend on the scheme: "sq8" gives {"base", "scale", "inv_scale"}. Schemes without
+        global parameters (e.g. "lvq4", which is per-vector) give an empty dict.
+        """
+        if self._cpp_skmeans_obj is None:
+            return None
+        return self._cpp_skmeans_obj.quantization_params
+
+    @property
+    def quantized_data(self) -> Optional[NDArray[np.uint8]]:
+        """Read-only view of the encoded training vectors, shape (n_encoded, code_size).
+
+        None before training, and None for quantizer="f32", which clusters the training data
+        directly instead of encoding a copy. This is a view into the model's own buffer, not a
+        copy, so it stays valid only while the model is alive.
+        """
+        if self._cpp_skmeans_obj is None:
+            return None
+        codes = self._cpp_skmeans_obj.quantized_data
+        if codes is None:
+            return None
+        codes.setflags(write=False)
+        return codes
+
+    @property
+    def sampled_indices(self) -> Optional[NDArray[np.uint64]]:
+        """Read-only view mapping encoded row i to original row sampled_indices[i].
+
+        None when no sampling was applied (sampling_fraction == 1.0), where encoded row i is
+        simply original row i.
+        """
+        if self._cpp_skmeans_obj is None:
+            return None
+        indices = self._cpp_skmeans_obj.sampled_indices
+        if indices is None:
+            return None
+        indices.setflags(write=False)
+        return indices
+
+    def rotate(self, vectors: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Apply the trained rotation, bringing vectors into the model's domain.
+
+        Useful for query vectors: after train(overwrite_input=True) the data and centroids live in
+        the rotated domain, so new vectors must be rotated before being compared against them.
+        """
+        if self._cpp_skmeans_obj is None:
+            raise RuntimeError("rotate() requires a trained model")
+        vectors = self.validate_numpy_array(vectors, "vectors", self._dimensionality)
+        return self._cpp_skmeans_obj.rotate(vectors)
+
+    def unrotate(self, vectors: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Undo the trained rotation, bringing vectors back to the input domain."""
+        if self._cpp_skmeans_obj is None:
+            raise RuntimeError("unrotate() requires a trained model")
+        vectors = self.validate_numpy_array(vectors, "vectors", self._dimensionality)
+        return self._cpp_skmeans_obj.unrotate(vectors)
 
     @property
     def hierarchical_iteration_stats(self):

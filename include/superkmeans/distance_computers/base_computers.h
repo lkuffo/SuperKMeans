@@ -36,11 +36,11 @@ class DistanceComputer<DistanceFunction::l2, Quantization::f32> {
 };
 
 template <>
-class DistanceComputer<DistanceFunction::l2, Quantization::u8> {
+class DistanceComputer<DistanceFunction::l2, Quantization::sq8> {
 #if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
-    using computer = ScalarComputer<DistanceFunction::l2, Quantization::u8>;
+    using computer = ScalarComputer<DistanceFunction::l2, Quantization::sq8>;
 #else
-    using computer = SIMDComputer<DistanceFunction::l2, Quantization::u8>;
+    using computer = SIMDComputer<DistanceFunction::l2, Quantization::sq8>;
 #endif
 
   public:
@@ -48,11 +48,11 @@ class DistanceComputer<DistanceFunction::l2, Quantization::u8> {
 };
 
 template <>
-class DistanceComputer<DistanceFunction::l2, Quantization::u4> {
+class DistanceComputer<DistanceFunction::l2, Quantization::sq4> {
 #if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
-    using computer = ScalarComputer<DistanceFunction::l2, Quantization::u4>;
+    using computer = ScalarComputer<DistanceFunction::l2, Quantization::sq4>;
 #else
-    using computer = SIMDComputer<DistanceFunction::l2, Quantization::u4>;
+    using computer = SIMDComputer<DistanceFunction::l2, Quantization::sq4>;
 #endif
 
   public:
@@ -60,11 +60,11 @@ class DistanceComputer<DistanceFunction::l2, Quantization::u4> {
 };
 
 template <>
-class DistanceComputer<DistanceFunction::l2, Quantization::b8> {
+class DistanceComputer<DistanceFunction::l2, Quantization::rabitq> {
 #if !defined(__ARM_NEON) && !defined(__AVX2__) && !defined(__AVX512F__)
-    using computer = ScalarComputer<DistanceFunction::l2, Quantization::b8>;
+    using computer = ScalarComputer<DistanceFunction::l2, Quantization::rabitq>;
 #else
-    using computer = SIMDComputer<DistanceFunction::l2, Quantization::b8>;
+    using computer = SIMDComputer<DistanceFunction::l2, Quantization::rabitq>;
 #endif
 
   public:

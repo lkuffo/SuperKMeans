@@ -92,10 +92,7 @@ int main(int argc, char* argv[]) {
         config.angular = true;
     }
 
-    auto kmeans_state =
-        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans_state = skmeans::SuperKMeans(n_clusters, d, config);
     const double rss_after_load = bench_utils::PeakRSSGiB();
     std::cout << "Peak RSS after loading data: " << std::fixed << std::setprecision(2)
               << rss_after_load << " GiB" << std::endl;
@@ -124,13 +121,12 @@ int main(int argc, char* argv[]) {
     auto assignments =
         kmeans_state.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
 
-    using SKM = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>;
+    using SKM = skmeans::SuperKMeans<>;
     double wcss_f32 = SKM::ComputeWCSS(data.data(), centroids.data(), assignments.data(), n, d);
     std::cout << "WCSS (f32): " << std::fixed << std::setprecision(2) << wcss_f32 << std::endl;
 
     auto balance_stats =
-        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-            GetClustersBalanceStats(assignments.data(), n, n_clusters);
+        skmeans::SuperKMeans<>::GetClustersBalanceStats(assignments.data(), n, n_clusters);
     balance_stats.print();
 
     // Compute top-k distances for a random sample of points
@@ -167,9 +163,7 @@ int main(int argc, char* argv[]) {
         std::vector<float> rotated_queries;
         const float* queries_p = queries.data();
         if (in_place) {
-            skmeans::ADSamplingPruner<skmeans::Quantization::f32> pruner(
-                d, skmeans::PRUNER_INITIAL_THRESHOLD, config.seed
-            );
+            skmeans::ADSamplingPruner pruner(d, skmeans::PRUNER_INITIAL_THRESHOLD, config.seed);
             rotated_queries.resize(n_queries * d);
             pruner.Rotate(queries.data(), rotated_queries.data(), n_queries);
             queries_p = rotated_queries.data();

@@ -8,7 +8,6 @@
 
 namespace py = pybind11;
 
-using skmeans::DistanceFunction;
 using skmeans::Quantization;
 
 template <typename T, int Flags>
@@ -137,9 +136,104 @@ py::array_t<float> TrainInPlaceToArray(
     return result;
 }
 
+// Shared body for rotate()/unrotate(): applies the trained rotation, or its inverse, to a copy of
+// `vectors`. The rotation is only known after training.
+template <bool INVERSE, typename KMeans>
+py::array_t<float> RotateToArray(const KMeans& self, py::array_t<float> vectors) {
+    ValidatePyArray(vectors, "vectors", 2);
+    const auto* rotator = self.GetState().rotator;
+    if (rotator == nullptr) {
+        throw std::runtime_error("rotate/unrotate requires a trained model");
+    }
+    auto info = vectors.request();
+    const size_t n = info.shape[0];
+    const size_t d = info.shape[1];
+    if (d != rotator->num_dimensions) {
+        throw std::runtime_error("vectors must have the same dimensionality as the model");
+    }
+
+    auto result = py::array_t<float>({n, d});
+    const auto* in = static_cast<const float*>(info.ptr);
+    auto* out = static_cast<float*>(result.request().ptr);
+    if constexpr (INVERSE) {
+        rotator->Unrotate(in, out, static_cast<uint32_t>(n));
+    } else {
+        rotator->Rotate(in, out, static_cast<uint32_t>(n));
+    }
+    return result;
+}
+
+// Global parameters of the fitted quantizer, keyed per quantizer type. Empty for quantizers with
+// no global parameters (f32; LVQ4 is per-vector), None before training.
+inline py::dict QuantizerParams(const skmeans::F32Quantizer&, size_t) {
+    return {};
+}
+
+inline py::dict QuantizerParams(const skmeans::LVQ4Quantizer&, size_t) {
+    return {};
+}
+
+inline py::dict QuantizerParams(const skmeans::SQ8Quantizer& quantizer, size_t) {
+    const auto& p = quantizer.GetParams();
+    py::dict params;
+    params["base"] = p.quantization_base;
+    params["scale"] = p.quantization_scale;
+    params["inv_scale"] = p.inv_quantization_scale;
+    return params;
+}
+
+inline py::dict QuantizerParams(const skmeans::RaBitQQuantizer& quantizer, size_t d) {
+    const auto p = quantizer.GetParams();
+    auto centroid = py::array_t<float>(static_cast<py::ssize_t>(d));
+    std::memcpy(centroid.request().ptr, p.centroid, d * sizeof(float));
+    py::dict params;
+    params["centroid"] = std::move(centroid);
+    params["binary_bytes"] = p.binary_bytes;
+    return params;
+}
+
+template <typename KMeans>
+py::object QuantizationParamsDict(const KMeans& self) {
+    const auto* quantizer = self.GetQuantizer();
+    if (quantizer == nullptr) {
+        return py::none();
+    }
+    return QuantizerParams(*quantizer, self.GetDimensionality());
+}
+
+// Zero-copy view over a buffer owned by the estimator. `owner` becomes the array's base, so the
+// buffer cannot be freed while the view is alive.
+template <typename T>
+py::array_t<T> BufferView(py::object owner, const T* data, size_t rows, size_t cols) {
+    return py::array_t<T>({rows, cols}, {cols * sizeof(T), sizeof(T)}, data, std::move(owner));
+}
+
+template <typename KMeans>
+py::object QuantizedDataView(py::object self_obj) {
+    const auto& self = self_obj.cast<const KMeans&>();
+    const auto* codes = self.GetQuantizedData();
+    if (codes == nullptr) {
+        return py::none();
+    }
+    const auto& state = self.GetState();
+    return BufferView(std::move(self_obj), codes, state.n_encoded, state.code_size);
+}
+
+template <typename KMeans>
+py::object SampledIndicesView(py::object self_obj) {
+    const auto& self = self_obj.cast<const KMeans&>();
+    if (self.sampled_indices == nullptr) {
+        return py::none();
+    }
+    const size_t n_encoded = self.GetState().n_encoded;
+    return py::array_t<size_t>(
+        {n_encoded}, {sizeof(size_t)}, self.sampled_indices.get(), std::move(self_obj)
+    );
+}
+
 template <Quantization q>
 void BindSuperKMeans(py::module& m, const char* name) {
-    using KMeans = skmeans::SuperKMeans<q, DistanceFunction::l2>;
+    using KMeans = skmeans::SuperKMeans<q>;
 
     py::class_<KMeans>(m, name, "SuperKMeans clustering")
         .def(
@@ -296,6 +390,55 @@ void BindSuperKMeans(py::module& m, const char* name) {
             "List of statistics for each iteration (read-only)"
         )
 
+        .def_property_readonly(
+            "state",
+            [](const KMeans& self) { return self.GetState(); },
+            "How training was carried out (see SuperKMeansState)"
+        )
+
+        .def(
+            "rotate",
+            &RotateToArray<false, KMeans>,
+            py::arg("vectors"),
+            "Apply the trained rotation, bringing vectors into the domain the model was trained "
+            "in.\n\nArgs:\n"
+            "    vectors: NumPy array of shape (n, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n, d) with the rotated vectors"
+        )
+
+        .def(
+            "unrotate",
+            &RotateToArray<true, KMeans>,
+            py::arg("vectors"),
+            "Undo the trained rotation, bringing vectors back to the input domain.\n\n"
+            "Args:\n"
+            "    vectors: NumPy array of shape (n, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n, d) with the unrotated vectors"
+        )
+
+        .def_property_readonly(
+            "quantization_params",
+            &QuantizationParamsDict<KMeans>,
+            "Global parameters of the fitted quantizer as a dict, or None before training. Empty "
+            "for schemes without global parameters"
+        )
+
+        .def_property_readonly(
+            "quantized_data",
+            &QuantizedDataView<KMeans>,
+            "Zero-copy view of the encoded training vectors, shape (n_encoded, code_size), or "
+            "None when there is no separate encoded buffer (f32)"
+        )
+
+        .def_property_readonly(
+            "sampled_indices",
+            &SampledIndicesView<KMeans>,
+            "Zero-copy view mapping encoded row i to original row sampled_indices[i], or None "
+            "when no sampling was applied"
+        )
+
         .def("__repr__", [name](const KMeans& self) {
             return std::string("<") + name + ": n_clusters=" + std::to_string(self.GetNClusters()) +
                    ", trained=" + (self.IsTrained() ? "True" : "False") + ">";
@@ -304,7 +447,7 @@ void BindSuperKMeans(py::module& m, const char* name) {
 
 template <Quantization q>
 void BindHierarchicalSuperKMeans(py::module& m, const char* name) {
-    using KMeans = skmeans::HierarchicalSuperKMeans<q, DistanceFunction::l2>;
+    using KMeans = skmeans::HierarchicalSuperKMeans<q>;
 
     py::class_<KMeans>(m, name, "Hierarchical SuperKMeans clustering")
         .def(
@@ -460,6 +603,55 @@ void BindHierarchicalSuperKMeans(py::module& m, const char* name) {
             "List of statistics for each iteration (read-only)"
         )
 
+        .def_property_readonly(
+            "state",
+            [](const KMeans& self) { return self.GetState(); },
+            "How training was carried out (see SuperKMeansState)"
+        )
+
+        .def(
+            "rotate",
+            &RotateToArray<false, KMeans>,
+            py::arg("vectors"),
+            "Apply the trained rotation, bringing vectors into the domain the model was trained "
+            "in.\n\nArgs:\n"
+            "    vectors: NumPy array of shape (n, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n, d) with the rotated vectors"
+        )
+
+        .def(
+            "unrotate",
+            &RotateToArray<true, KMeans>,
+            py::arg("vectors"),
+            "Undo the trained rotation, bringing vectors back to the input domain.\n\n"
+            "Args:\n"
+            "    vectors: NumPy array of shape (n, d) with dtype float32\n\n"
+            "Returns:\n"
+            "    NumPy array of shape (n, d) with the unrotated vectors"
+        )
+
+        .def_property_readonly(
+            "quantization_params",
+            &QuantizationParamsDict<KMeans>,
+            "Global parameters of the fitted quantizer as a dict, or None before training. Empty "
+            "for schemes without global parameters"
+        )
+
+        .def_property_readonly(
+            "quantized_data",
+            &QuantizedDataView<KMeans>,
+            "Zero-copy view of the encoded training vectors, shape (n_encoded, code_size), or "
+            "None when there is no separate encoded buffer (f32)"
+        )
+
+        .def_property_readonly(
+            "sampled_indices",
+            &SampledIndicesView<KMeans>,
+            "Zero-copy view mapping encoded row i to original row sampled_indices[i], or None "
+            "when no sampling was applied"
+        )
+
         .def_readonly(
             "hierarchical_iteration_stats",
             &KMeans::hierarchical_iteration_stats,
@@ -475,12 +667,6 @@ void BindHierarchicalSuperKMeans(py::module& m, const char* name) {
 PYBIND11_MODULE(_superkmeans, m) {
     m.doc() =
         "A Super fast K-Means library for High-Dimensional vectors on CPUs (x86, ARM) and GPUs";
-
-    py::enum_<skmeans::QuantizerType>(m, "QuantizerType", "Quantization scheme for SuperKMeans")
-        .value("none", skmeans::QuantizerType::none)
-        .value("sq8", skmeans::QuantizerType::sq8)
-        .value("rabitq", skmeans::QuantizerType::rabitq)
-        .value("lvq4", skmeans::QuantizerType::lvq4);
 
     py::class_<skmeans::SuperKMeansConfig>(
         m, "SuperKMeansConfig", "Configuration parameters for SuperKMeans clustering."
@@ -517,13 +703,6 @@ PYBIND11_MODULE(_superkmeans, m) {
             &skmeans::SuperKMeansConfig::use_blas_only,
             "Use GEMM-only computation without pruning (default: False)"
         )
-        .def_readwrite(
-            "quantizer_type",
-            &skmeans::SuperKMeansConfig::quantizer_type,
-            "Quantization method as a QuantizerType (default: none). Only used for the quantized "
-            "clustering path"
-        )
-
         .def_readwrite(
             "tol",
             &skmeans::SuperKMeansConfig::tol,
@@ -578,6 +757,36 @@ PYBIND11_MODULE(_superkmeans, m) {
             return "<SuperKMeansConfig: iters=" + std::to_string(config.iters) +
                    ", sampling_fraction=" + std::to_string(config.sampling_fraction) +
                    ", n_threads=" + std::to_string(config.n_threads) + ">";
+        });
+
+    py::class_<skmeans::SuperKMeansState>(
+        m, "SuperKMeansState", "How training was carried out (read-only)."
+    )
+        .def_readonly("trained", &skmeans::SuperKMeansState::trained, "Whether training completed")
+        .def_readonly(
+            "trained_in_place",
+            &skmeans::SuperKMeansState::trained_in_place,
+            "Whether training rotated the caller's buffer instead of a copy"
+        )
+        .def_readonly(
+            "training_data_rotated",
+            &skmeans::SuperKMeansState::training_data_rotated,
+            "Whether the training data is in the rotated domain"
+        )
+        .def_readonly(
+            "code_size",
+            &skmeans::SuperKMeansState::code_size,
+            "Elements per encoded vector (bytes for the quantized schemes)"
+        )
+        .def_readonly(
+            "n_encoded", &skmeans::SuperKMeansState::n_encoded, "Number of encoded vectors"
+        )
+        .def("__repr__", [](const skmeans::SuperKMeansState& state) {
+            return std::string("<SuperKMeansState: trained=") + (state.trained ? "True" : "False") +
+                   ", trained_in_place=" + (state.trained_in_place ? "True" : "False") +
+                   ", training_data_rotated=" + (state.training_data_rotated ? "True" : "False") +
+                   ", code_size=" + std::to_string(state.code_size) +
+                   ", n_encoded=" + std::to_string(state.n_encoded) + ">";
         });
 
     py::class_<skmeans::SuperKMeansIterationStats>(
@@ -684,7 +893,11 @@ PYBIND11_MODULE(_superkmeans, m) {
         );
 
     BindSuperKMeans<Quantization::f32>(m, "SuperKMeans");
-    BindSuperKMeans<Quantization::u8>(m, "QuantizedSuperKMeans");
+    BindSuperKMeans<Quantization::sq8>(m, "SuperKMeansSQ8");
+    BindSuperKMeans<Quantization::lvq4>(m, "SuperKMeansLVQ4");
+    BindSuperKMeans<Quantization::rabitq>(m, "SuperKMeansRabitQ");
     BindHierarchicalSuperKMeans<Quantization::f32>(m, "HierarchicalSuperKMeans");
-    BindHierarchicalSuperKMeans<Quantization::u8>(m, "QuantizedHierarchicalSuperKMeans");
+    BindHierarchicalSuperKMeans<Quantization::sq8>(m, "HierarchicalSuperKMeansSQ8");
+    BindHierarchicalSuperKMeans<Quantization::lvq4>(m, "HierarchicalSuperKMeansLVQ4");
+    BindHierarchicalSuperKMeans<Quantization::rabitq>(m, "HierarchicalSuperKMeansRabitQ");
 }

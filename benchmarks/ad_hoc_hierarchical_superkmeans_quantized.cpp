@@ -12,8 +12,9 @@
 #include "superkmeans/hierarchical_superkmeans.h"
 
 template <skmeans::Quantization Q>
-void RunBenchmark(const std::string& dataset, const std::string& quantizer_name, bool blas_only) {
-    using HSKM = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>;
+void RunBenchmark(const std::string& dataset, bool blas_only) {
+    using HSKM = skmeans::HierarchicalSuperKMeans<Q>;
+    const std::string quantizer_name = skmeans::QuantizationName(Q);
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -69,14 +70,6 @@ void RunBenchmark(const std::string& dataset, const std::string& quantizer_name,
     config.iters_mesoclustering = 3;
     config.iters_fineclustering = 5;
     config.iters_refinement = 0;
-
-    // Set quantizer type
-    if (quantizer_name == "sq8")
-        config.quantizer_type = skmeans::QuantizerType::sq8;
-    else if (quantizer_name == "lvq4")
-        config.quantizer_type = skmeans::QuantizerType::lvq4;
-    else if (quantizer_name == "rabitq")
-        config.quantizer_type = skmeans::QuantizerType::rabitq;
 
     if (blas_only) {
         std::cout << "BLAS-only mode (no pruning)" << std::endl;
@@ -192,8 +185,12 @@ int main(int argc, char* argv[]) {
     if (argc > 3)
         blas_only = std::string(argv[3]) != "pruning";
 
-    if (quantizer == "sq8" || quantizer == "lvq4" || quantizer == "rabitq") {
-        RunBenchmark<skmeans::Quantization::u8>(dataset, quantizer, blas_only);
+    if (quantizer == "sq8") {
+        RunBenchmark<skmeans::Quantization::sq8>(dataset, blas_only);
+    } else if (quantizer == "lvq4") {
+        RunBenchmark<skmeans::Quantization::lvq4>(dataset, blas_only);
+    } else if (quantizer == "rabitq") {
+        RunBenchmark<skmeans::Quantization::rabitq>(dataset, blas_only);
     } else {
         std::cerr << "Invalid quantizer: " << quantizer << " (expected: sq8, lvq4, rabitq)\n";
         return 1;

@@ -19,22 +19,13 @@ template <DistanceFunction alpha, Quantization q>
 class BatchComputer {};
 
 template <>
-class BatchComputer<DistanceFunction::l2, Quantization::u8> {};
-
-template <>
-class BatchComputer<DistanceFunction::l2, Quantization::u4> {};
-
-template <>
-class BatchComputer<DistanceFunction::l2, Quantization::b8> {};
-
-template <>
 class BatchComputer<DistanceFunction::l2, Quantization::f32> {
 
-    using distance_t = skmeans_distance_t<Quantization::f32>;
+    using distance_t = skmeans_distance_t;
     using data_t = skmeans_value_t<Quantization::f32>;
     using norms_t = skmeans_value_t<Quantization::f32>;
-    using knn_candidate_t = KNNCandidate<Quantization::f32>;
-    using layout_t = PDXLayout<Quantization::f32, DistanceFunction::l2>;
+    using knn_candidate_t = KNNCandidate;
+    using layout_t = PDXLayout<Quantization::f32>;
     using MatrixR = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
     using MatrixC = Eigen::Matrix<distance_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 

@@ -69,10 +69,7 @@ int main() {
     std::cout << "n_clusters=" << n_clusters << " sampling_fraction=" << config.sampling_fraction
               << "\n";
 
-    auto kmeans_state =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans_state = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
 
     bench_utils::TicToc timer;
     timer.Tic();
@@ -98,9 +95,9 @@ int main() {
     double assignment_time_ms = timer.GetMilliseconds();
     std::cout << "Fast Assignment completed in " << assignment_time_ms << " ms" << std::endl;
 
-    auto balance_stats = skmeans::HierarchicalSuperKMeans<
-        skmeans::Quantization::f32,
-        skmeans::DistanceFunction::l2>::GetClustersBalanceStats(assignments.data(), n, n_clusters);
+    auto balance_stats = skmeans::HierarchicalSuperKMeans<>::GetClustersBalanceStats(
+        assignments.data(), n, n_clusters
+    );
     balance_stats.print();
 
     // Compute recall if ground truth file exists

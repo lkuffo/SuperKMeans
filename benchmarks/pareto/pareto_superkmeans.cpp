@@ -92,10 +92,7 @@ int main(int argc, char* argv[]) {
                 config.angular = true;
             }
 
-            auto kmeans_state =
-                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                    n_clusters, d, config
-                );
+            auto kmeans_state = skmeans::SuperKMeans(n_clusters, d, config);
 
             bench_utils::TicToc timer;
             timer.Tic();
@@ -127,9 +124,9 @@ int main(int argc, char* argv[]) {
                     kmeans_state.Assign(data.data(), centroids.data(), n, n_clusters);
 
                 // Compute cluster balance statistics
-                auto balance_stats = skmeans::
-                    SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-                        GetClustersBalanceStats(assignments.data(), n, n_clusters);
+                auto balance_stats = skmeans::SuperKMeans<>::GetClustersBalanceStats(
+                    assignments.data(), n, n_clusters
+                );
                 balance_stats.print();
 
                 auto results_knn_10 = bench_utils::ComputeRecall(

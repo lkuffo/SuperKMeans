@@ -16,12 +16,12 @@
 #include "superkmeans/hierarchical_superkmeans.h"
 #include "superkmeans/superkmeans.h"
 
-using SKM_f32 = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>;
+using SKM_f32 = skmeans::SuperKMeans<>;
 
 // Cluster counts (k) to sweep for the scalability study.
 static const std::vector<size_t> SCALABILITY_K_VALUES = {10000, 50000, 100000, 200000};
 
-// Quantizers to sweep. f32 uses Quantization::f32; the rest use Quantization::u8.
+// Quantizers to sweep.
 static const std::vector<std::string> SCALABILITY_QUANTIZERS = {"f32", "sq8", "rabitq", "lvq4"};
 
 static std::unordered_map<std::string, std::string> BuildConfigDict(
@@ -51,7 +51,6 @@ static std::unordered_map<std::string, std::string> BuildConfigDict(
 template <skmeans::Quantization Q>
 static void RunHierarchical(
     const std::string& dataset,
-    const std::string& quantizer_name,
     size_t n,
     size_t d,
     const float* data,
@@ -62,7 +61,8 @@ static void RunHierarchical(
     bool has_gt,
     const std::unordered_map<int, std::vector<int>>& gt_map
 ) {
-    using HSKM = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>;
+    using HSKM = skmeans::HierarchicalSuperKMeans<Q>;
+    const std::string quantizer_name = skmeans::QuantizationName(Q);
 
     skmeans::Profiler::Get().Reset();
 
@@ -71,7 +71,7 @@ static void RunHierarchical(
     const size_t THREADS = omp_get_max_threads();
     omp_set_num_threads(THREADS);
 
-    const bool has_quantizer = (quantizer_name != "f32");
+    const bool has_quantizer = (Q != skmeans::Quantization::f32);
     const std::string experiment_name = "scalability";
     const std::string algorithm = "hierarchical_superkmeans";
 
@@ -91,12 +91,6 @@ static void RunHierarchical(
     config.use_blas_only = use_blas_only;
     if (has_quantizer) {
         config.quantized_centroid_update = true;
-        if (quantizer_name == "sq8")
-            config.quantizer_type = skmeans::QuantizerType::sq8;
-        else if (quantizer_name == "rabitq")
-            config.quantizer_type = skmeans::QuantizerType::rabitq;
-        else if (quantizer_name == "lvq4")
-            config.quantizer_type = skmeans::QuantizerType::lvq4;
     }
     config.angular = is_angular;
     if (is_angular)
@@ -274,34 +268,28 @@ int main(int argc, char* argv[]) {
                     std::cout << "Skipping k=" << k << " (> n=" << n << ")" << std::endl;
                     continue;
                 }
+                const auto run = [&](auto tag) {
+                    RunHierarchical<decltype(tag)::value>(
+                        dataset,
+                        n,
+                        d,
+                        data.data(),
+                        queries.data(),
+                        k,
+                        use_blas_only,
+                        is_angular,
+                        has_gt,
+                        gt_map
+                    );
+                };
                 if (quantizer == "f32") {
-                    RunHierarchical<skmeans::Quantization::f32>(
-                        dataset,
-                        quantizer,
-                        n,
-                        d,
-                        data.data(),
-                        queries.data(),
-                        k,
-                        use_blas_only,
-                        is_angular,
-                        has_gt,
-                        gt_map
-                    );
+                    run(skmeans::QuantizationTag<skmeans::Quantization::f32>{});
+                } else if (quantizer == "sq8") {
+                    run(skmeans::QuantizationTag<skmeans::Quantization::sq8>{});
+                } else if (quantizer == "lvq4") {
+                    run(skmeans::QuantizationTag<skmeans::Quantization::lvq4>{});
                 } else {
-                    RunHierarchical<skmeans::Quantization::u8>(
-                        dataset,
-                        quantizer,
-                        n,
-                        d,
-                        data.data(),
-                        queries.data(),
-                        k,
-                        use_blas_only,
-                        is_angular,
-                        has_gt,
-                        gt_map
-                    );
+                    run(skmeans::QuantizationTag<skmeans::Quantization::rabitq>{});
                 }
             }
         }

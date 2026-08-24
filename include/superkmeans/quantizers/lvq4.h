@@ -41,6 +41,7 @@ inline void AccumulateNibbles(const uint8_t* code, size_t nbytes, uint32_t& sum,
  * Code layout per vector:
  *   [d/2 packed u4x2 bytes] [float scale: 4B] [float bias: 4B]
  *   CodeSize(d) = d/2 + 8
+ * scale and bias are per-vector, so there are no global parameters and hence no GetParams().
  *
  * Distance formula between LVQ4 vectors x_i, y_j:
  *   L2(x_i, y_j) = s_i*Scx + s_j*Scy - 2*s_i*s_j*<cx,cy>
@@ -50,11 +51,12 @@ inline void AccumulateNibbles(const uint8_t* code, size_t nbytes, uint32_t& sum,
  * Uses NumKong u4 GEMM (nk_dots_packed_u4) for bulk dot products and
  * u4 Horizontal SIMD kernels for per-pair distance in pruning survivors.
  */
-class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
+class LVQ4Quantizer : public IQuantizer<Quantization::lvq4> {
   public:
     using quantized_t = IQuantizer::quantized_t;
-    using u4_computer = DistanceComputer<DistanceFunction::l2, Quantization::u4>;
-    using u4_utils = UtilsComputer<Quantization::u4>;
+    // The 4-bit nibble kernels are tagged sq4 (they predate lvq4)
+    using u4_computer = DistanceComputer<DistanceFunction::l2, Quantization::sq4>;
+    using u4_utils = UtilsComputer<Quantization::sq4>;
     using f32_utils = UtilsComputer<Quantization::f32>;
 
     LVQ4Quantizer() : has_amx(DetectAMX()) {}
@@ -346,7 +348,7 @@ class LVQ4Quantizer : public IQuantizer<Quantization::u8> {
         size_t d,
         uint32_t* out_knn,
         float* out_distances,
-        PDXLayout<Quantization::u8, DistanceFunction::l2>& /*pdx_centroids*/,
+        PDXLayout<Quantization::lvq4>& /*pdx_centroids*/,
         uint32_t partial_d,
         size_t* out_not_pruned_counts
     ) const override {

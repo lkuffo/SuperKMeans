@@ -43,10 +43,7 @@ void PrintFlatWCSS(const std::string& data_file) {
             config.angular = false;
             config.n_threads = 1;
 
-            auto kmeans =
-                skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                    k, d, config
-                );
+            auto kmeans = skmeans::SuperKMeans(k, d, config);
             kmeans.Train(data.data(), N_SAMPLES);
             const float wcss = kmeans.iteration_stats.back().objective;
             std::cout << "    {{" << k << ", " << d << "}, " << wcss << "f},\n";
@@ -78,9 +75,7 @@ void PrintHierarchicalWCSS(const std::string& data_file) {
             config.angular = false;
             config.n_threads = 1;
 
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(k, d, config);
+            auto kmeans = skmeans::HierarchicalSuperKMeans(k, d, config);
             kmeans.Train(data.data(), N_SAMPLES);
 
             const auto& hstats = kmeans.hierarchical_iteration_stats;

@@ -21,7 +21,7 @@
 #include <faiss/VectorTransform.h>
 
 using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-using SKM_f32 = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>;
+using SKM_f32 = skmeans::SuperKMeans<>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -128,7 +128,7 @@ void RunPipeline(
     bool full_precision_final_centroids,
     bool use_blas_only
 ) {
-    using SKM = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>;
+    using SKM = skmeans::SuperKMeans<Q>;
 
     skmeans::Profiler::Get().Reset();
 
@@ -442,13 +442,6 @@ void RunPipeline(
         config.quantized_centroid_update = quantized_centroid_update;
         config.full_precision_final_centroids = full_precision_final_centroids;
 
-        if (quantizer_name == "sq8")
-            config.quantizer_type = skmeans::QuantizerType::sq8;
-        else if (quantizer_name == "rabitq")
-            config.quantizer_type = skmeans::QuantizerType::rabitq;
-        else if (quantizer_name == "lvq4")
-            config.quantizer_type = skmeans::QuantizerType::lvq4;
-
         if (is_angular) {
             std::cout << "Using spherical k-means" << std::endl;
             config.angular = true;
@@ -549,7 +542,6 @@ void RunPipeline(
                     refit_cfg.n_threads = THREADS;
                     refit_cfg.use_blas_only = true;
                     refit_cfg.verbose = false;
-                    refit_cfg.quantizer_type = config.quantizer_type;
                     refit_cfg.data_already_rotated =
                         true; // skip rotation so quantizer fits unrotated data
                     refit_cfg.sampling_fraction = 1.0f; // use all data for quantizer fitting
@@ -715,7 +707,7 @@ void RunHierarchicalPipeline(
     const std::string& quantizer_name,
     bool use_blas_only
 ) {
-    using HSKM = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>;
+    using HSKM = skmeans::HierarchicalSuperKMeans<Q>;
 
     skmeans::Profiler::Get().Reset();
 
@@ -782,12 +774,6 @@ void RunHierarchicalPipeline(
     config.use_blas_only = use_blas_only;
     if (has_quantizer) {
         config.quantized_centroid_update = true;
-        if (quantizer_name == "sq8")
-            config.quantizer_type = skmeans::QuantizerType::sq8;
-        else if (quantizer_name == "rabitq")
-            config.quantizer_type = skmeans::QuantizerType::rabitq;
-        else if (quantizer_name == "lvq4")
-            config.quantizer_type = skmeans::QuantizerType::lvq4;
     }
     config.angular = is_angular;
     if (is_angular)
@@ -966,8 +952,14 @@ int main(int argc, char* argv[]) {
     if (dim_reduction == "hsk") {
         if (quantizer == "f32") {
             RunHierarchicalPipeline<skmeans::Quantization::f32>(dataset, quantizer, use_blas_only);
-        } else if (quantizer == "sq8" || quantizer == "rabitq" || quantizer == "lvq4") {
-            RunHierarchicalPipeline<skmeans::Quantization::u8>(dataset, quantizer, use_blas_only);
+        } else if (quantizer == "sq8") {
+            RunHierarchicalPipeline<skmeans::Quantization::sq8>(dataset, quantizer, use_blas_only);
+        } else if (quantizer == "rabitq") {
+            RunHierarchicalPipeline<skmeans::Quantization::rabitq>(
+                dataset, quantizer, use_blas_only
+            );
+        } else if (quantizer == "lvq4") {
+            RunHierarchicalPipeline<skmeans::Quantization::lvq4>(dataset, quantizer, use_blas_only);
         } else {
             std::cerr << "Invalid quantizer: " << quantizer
                       << " (expected: f32, sq8, rabitq, lvq4)\n";
@@ -977,24 +969,24 @@ int main(int argc, char* argv[]) {
     }
 
     // Validate quantizer and dispatch to correct template instantiation
+    const auto run = [&](auto tag) {
+        RunPipeline<decltype(tag)::value>(
+            dataset,
+            dim_reduction,
+            quantizer,
+            quantized_centroid_update,
+            full_precision_final_centroids,
+            use_blas_only
+        );
+    };
     if (quantizer == "f32") {
-        RunPipeline<skmeans::Quantization::f32>(
-            dataset,
-            dim_reduction,
-            quantizer,
-            quantized_centroid_update,
-            full_precision_final_centroids,
-            use_blas_only
-        );
-    } else if (quantizer == "sq8" || quantizer == "rabitq" || quantizer == "lvq4") {
-        RunPipeline<skmeans::Quantization::u8>(
-            dataset,
-            dim_reduction,
-            quantizer,
-            quantized_centroid_update,
-            full_precision_final_centroids,
-            use_blas_only
-        );
+        run(skmeans::QuantizationTag<skmeans::Quantization::f32>{});
+    } else if (quantizer == "sq8") {
+        run(skmeans::QuantizationTag<skmeans::Quantization::sq8>{});
+    } else if (quantizer == "rabitq") {
+        run(skmeans::QuantizationTag<skmeans::Quantization::rabitq>{});
+    } else if (quantizer == "lvq4") {
+        run(skmeans::QuantizationTag<skmeans::Quantization::lvq4>{});
     } else {
         std::cerr << "Invalid quantizer: " << quantizer << " (expected: f32, sq8, rabitq, lvq4)\n";
         return 1;

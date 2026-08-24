@@ -12,6 +12,7 @@
 #include "superkmeans/common.h"
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/distance_computers/batch_computers.h"
+#include "superkmeans/pdx/adsampling.h"
 #include "superkmeans/pdx/pdxearch.h"
 #include "superkmeans/pdx/utils.h"
 #include "superkmeans/profiler.h"
@@ -38,7 +39,6 @@ struct SuperKMeansConfig {
     uint32_t n_threads = 0;     // Number of CPU threads (0 = max)
     uint32_t seed = 42;         // Random seed for reproducibility
     bool use_blas_only = false; // Use BLAS-only computation for all iterations
-    QuantizerType quantizer_type = QuantizerType::none; // Quantization method
 
     // Convergence parameters
     float tol = 1e-4f;                  // Tolerance for shift-based early termination
@@ -63,6 +63,18 @@ struct SuperKMeansConfig {
     bool data_already_rotated = false;     // Whether input data is already rotated (skip rotation)
     bool quantized_centroid_update = true; // Accumulate centroids in quantized domain (u8 only)
     bool full_precision_final_centroids = false; // Recompute final centroids from raw float data
+};
+
+/**
+ * @brief Observable state of a SuperKMeans instance. Records how training was carried out.
+ */
+struct SuperKMeansState {
+    bool trained = false;
+    bool trained_in_place = false;
+    bool training_data_rotated = false;
+    const ADSamplingPruner* rotator = nullptr;
+    size_t code_size = 0;
+    size_t n_encoded = 0;
 };
 
 /**
@@ -170,22 +182,23 @@ struct ClusterBalanceStats {
     }
 };
 
-template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
+template <Quantization q = Quantization::f32>
 class SuperKMeans {
+    static_assert(q != Quantization::sq4, "sq4 is not implemented as a quantizer");
+
   public:
     virtual ~SuperKMeans() = default;
 
   protected:
-    using centroid_value_t = skmeans_centroid_value_t<q>;
+    using centroid_value_t = skmeans_centroid_value_t;
     using vector_value_t = skmeans_value_t<q>;
-    using input_t = skmeans_input_t<q>; // always float (user provides float data)
     // Pruner always operates on float data (rotation/unrotation are float-space operations)
-    using pruner_t = ADSamplingPruner<Quantization::f32>;
-    using layout_t = PDXLayout<q, alpha>;
-    using distance_t = skmeans_distance_t<q>;
+    using pruner_t = ADSamplingPruner;
+    using layout_t = PDXLayout<q>;
+    using distance_t = skmeans_distance_t;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
     using VectorR = Eigen::VectorXf;
-    using batch_computer = BatchComputer<alpha, q>;
+    using batch_computer = BatchComputer<DistanceFunction::l2, q>;
 
     /**
      * @brief Converts a real dimension count to the packed dimension count used for PDX.
@@ -216,20 +229,6 @@ class SuperKMeans {
                 std::to_string(dimensionality)
             );
         }
-        if constexpr (q == Quantization::f32) {
-            if (config.quantizer_type != QuantizerType::none) {
-                throw std::invalid_argument(
-                    "SuperKMeans<f32> requires quantizer_type == none; use SuperKMeans<u8> for "
-                    "sq8/lvq4/rabitq"
-                );
-            }
-        } else {
-            if (config.quantizer_type == QuantizerType::none) {
-                throw std::invalid_argument(
-                    "quantized SuperKMeans requires quantizer_type sq8, lvq4, or rabitq (got none)"
-                );
-            }
-        }
         n_threads = (config.n_threads == 0) ? omp_get_max_threads() : config.n_threads;
         g_n_threads = n_threads;
         pruner = std::make_unique<pruner_t>(dimensionality, PRUNER_INITIAL_THRESHOLD, config.seed);
@@ -258,16 +257,16 @@ class SuperKMeans {
      * @param n_queries Number of query vectors (ignored if queries is nullptr and sample_queries is
      * false)
      *
-     * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
+     * @return std::vector<skmeans_centroid_value_t> Trained centroids
      */
-    std::vector<skmeans_centroid_value_t<q>> Train(
+    std::vector<skmeans_centroid_value_t> Train(
         const float* SKM_RESTRICT data,
         const size_t n,
         const float* SKM_RESTRICT queries = nullptr,
         const size_t n_queries = 0
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
-        if (trained) {
+        if (state.trained) {
             throw std::runtime_error("The clustering has already been trained");
         }
         iteration_stats.clear();
@@ -284,6 +283,8 @@ class SuperKMeans {
         const float* SKM_RESTRICT data_p = data;
         n_samples = GetNVectorsToSample(n, n_clusters);
         n_train = n;
+        state.training_data_rotated = config.data_already_rotated;
+        state.rotator = pruner.get();
         if (n_samples < n_clusters) {
             throw std::runtime_error(
                 "Not enough samples to train. Try increasing the sampling_fraction or "
@@ -303,7 +304,7 @@ class SuperKMeans {
         }
         std::unique_ptr<size_t[]> not_pruned_counts(new size_t[n_samples]);
         EnsureTmpDistancesBuffer();
-        vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(PDXDim(d)).vertical_d;
+        vertical_d = PDXLayout<q>::GetDimensionSplit(PDXDim(d)).vertical_d;
         partial_horizontal_centroids.reset(new centroid_value_t[n_clusters * vertical_d]);
 
         auto centroids_pdx_wrapper =
@@ -330,6 +331,8 @@ class SuperKMeans {
         quantizer = CreateQuantizer();
         quantizer->Fit(data_to_cluster, n_samples, d);
         code_size = quantizer->CodeSize(d);
+        state.code_size = code_size;
+        state.n_encoded = n_samples;
 
         // Compute partial_d: non-PDX quantizers must override vertical_d to full d
         if (quantizer->SupportsPruning() && !quantizer->NeedsPDXLayout()) {
@@ -366,7 +369,7 @@ class SuperKMeans {
                 partial_hor_quantized_centroids.reset(
                     new vector_value_t[n_clusters * PDXDim(vertical_d)]
                 );
-                PDXLayout<q, alpha>::template PDXify<false>(
+                PDXLayout<q>::template PDXify<false>(
                     quantized_centroids.get(),
                     pdxified_quantized_centroids.get(),
                     n_clusters,
@@ -467,7 +470,7 @@ class SuperKMeans {
             }
         }
 
-        trained = true;
+        state.trained = true;
 
         // When quantized centroid update was used but we want full-precision final centroids,
         // recompute by averaging the raw (rotated) float training data using final assignments.
@@ -518,9 +521,9 @@ class SuperKMeans {
      * @param queries Optional pointer to query vectors for recall computation
      * @param n_queries Number of query vectors
      *
-     * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids (in the rotated domain)
+     * @return std::vector<skmeans_centroid_value_t> Trained centroids (in the rotated domain)
      */
-    std::vector<skmeans_centroid_value_t<q>> TrainInPlace(
+    std::vector<skmeans_centroid_value_t> TrainInPlace(
         float* SKM_RESTRICT data,
         const size_t n,
         const float* SKM_RESTRICT queries = nullptr,
@@ -549,7 +552,7 @@ class SuperKMeans {
         const size_t n_centroids
     ) {
         SKM_PROFILE_SCOPE("assign");
-        using f32_batch_computer = BatchComputer<alpha, Quantization::f32>;
+        using f32_batch_computer = BatchComputer<DistanceFunction::l2, Quantization::f32>;
         EnsureTmpDistancesBuffer();
 
         std::vector<uint32_t> result_assignments(n_vectors);
@@ -611,8 +614,7 @@ class SuperKMeans {
         const float* encode_centroids = centroids;
         std::unique_ptr<float[]> rotated_vectors_buf;
         std::unique_ptr<float[]> rotated_centroids_buf;
-        const bool rotate =
-            !config.data_already_rotated && config.quantizer_type == QuantizerType::rabitq;
+        const bool rotate = !config.data_already_rotated && q == Quantization::rabitq;
         if (rotate) {
             rotated_vectors_buf.reset(new float[n_vectors * d]);
             rotated_centroids_buf.reset(new float[n_centroids * d]);
@@ -677,7 +679,7 @@ class SuperKMeans {
         const size_t n_centroids
     ) {
         SKM_PROFILE_SCOPE("assign_training_points");
-        if (!trained) {
+        if (!state.trained) {
             throw std::runtime_error("AssignTrainingPoints requires SuperKMeans to be trained first"
             );
         }
@@ -788,7 +790,7 @@ class SuperKMeans {
             std::fill(not_pruned_counts.get(), not_pruned_counts.get() + n_vectors, 0);
             std::unique_ptr<float[]> data_buffer;
             const float* data_p;
-            if (config.data_already_rotated) {
+            if (state.training_data_rotated) {
                 data_p = vectors;
             } else {
                 data_buffer.reset(new float[n_vectors * d]);
@@ -800,7 +802,7 @@ class SuperKMeans {
             );
 
             // Consolidate ran at the end of the last RunIteration, so centroids are final.
-            auto pdx_centroids = PDXLayout<q, alpha>(
+            auto pdx_centroids = PDXLayout<q>(
                 this->centroids.get(), *pruner, n_clusters, d, partial_horizontal_centroids.get()
             );
 
@@ -865,7 +867,7 @@ class SuperKMeans {
                 tmp_config.suppress_warnings = config.suppress_warnings;
                 tmp_config.seed = config.seed;
                 tmp_config.angular = config.angular;
-                tmp_config.data_already_rotated = config.data_already_rotated;
+                tmp_config.data_already_rotated = state.training_data_rotated;
                 auto new_n_centroids = static_cast<size_t>(std::sqrt(n_centroids));
                 SuperKMeans tmp_kmeans(new_n_centroids, d, tmp_config);
                 auto meso_centroids = tmp_kmeans.Train(centroids, n_centroids);
@@ -913,8 +915,31 @@ class SuperKMeans {
     /** @brief Returns the number of clusters. */
     [[nodiscard]] size_t GetNClusters() const noexcept { return n_clusters; }
 
+    /** @brief Returns the dimensionality of the vectors. */
+    [[nodiscard]] size_t GetDimensionality() const noexcept { return d; }
+
     /** @brief Returns whether the model has been trained. */
-    [[nodiscard]] bool IsTrained() const noexcept { return trained; }
+    [[nodiscard]] bool IsTrained() const noexcept { return state.trained; }
+
+    /** @brief Returns how training was carried out (see SuperKMeansState). */
+    [[nodiscard]] const SuperKMeansState& GetState() const noexcept { return state; }
+
+    /**
+     * @brief Returns the fitted quantizer, or nullptr before training.
+     */
+    [[nodiscard]] const skmeans_quantizer_t<q>* GetQuantizer() const noexcept {
+        return quantizer.get();
+    }
+
+    /**
+     * @brief Returns the encoded training vectors, laid out as n_encoded rows of code_size
+     * elements (bytes for the u8 quantizers).
+     *
+     * nullptr for f32, which clusters the training data directly instead of encoding a copy.
+     */
+    [[nodiscard]] const vector_value_t* GetQuantizedData() const noexcept {
+        return quantized_data.get();
+    }
 
     /** @brief Returns the sampling fraction used during training. */
     [[nodiscard]] float GetSamplingFraction() const noexcept { return config.sampling_fraction; }
@@ -1324,7 +1349,7 @@ class SuperKMeans {
         if (quantizer->SupportsPruning()) {
             SKM_PROFILE_SCOPE("consolidate/pdxify");
             if constexpr (q == Quantization::f32) {
-                PDXLayout<q, alpha>::template PDXify<false>(
+                PDXLayout<q>::template PDXify<false>(
                     horizontal_centroids.get(), centroids.get(), n_clusters, d
                 );
                 CentroidsToAuxiliaryHorizontal(n_clusters);
@@ -1333,7 +1358,7 @@ class SuperKMeans {
                     horizontal_centroids.get(), quantized_centroids.get(), n_clusters, d
                 );
                 if (quantizer->NeedsPDXLayout()) {
-                    PDXLayout<q, alpha>::template PDXify<false>(
+                    PDXLayout<q>::template PDXify<false>(
                         quantized_centroids.get(),
                         pdxified_quantized_centroids.get(),
                         n_clusters,
@@ -1476,7 +1501,7 @@ class SuperKMeans {
      * @param rotate Wheter to rotate the sampled centroids
      * @return PDXLayout wrapper for the centroids
      */
-    PDXLayout<q, alpha> GenerateCentroids(
+    PDXLayout<q> GenerateCentroids(
         const float* SKM_RESTRICT data,
         const size_t n_points,
         const size_t n_clusters,
@@ -1507,7 +1532,7 @@ class SuperKMeans {
         if constexpr (q == Quantization::f32) {
             {
                 SKM_PROFILE_SCOPE("consolidate/pdxify");
-                PDXLayout<q, alpha>::template PDXify<false>(
+                PDXLayout<q>::template PDXify<false>(
                     rotated_centroids.data(), centroids.get(), n_clusters, d
                 );
             }
@@ -1515,7 +1540,7 @@ class SuperKMeans {
             //! Any updates to these objects is reflected in the PDXLayout
             //! partial_horizontal_centroids are not filled until ConsolidateCentroids is called()
             // after the first iteration
-            return PDXLayout<q, alpha>(
+            return PDXLayout<q>(
                 centroids.get(), *pruner, n_clusters, d, partial_horizontal_centroids.get()
             );
         }
@@ -1557,19 +1582,8 @@ class SuperKMeans {
         }
     }
 
-    std::unique_ptr<IQuantizer<q>> CreateQuantizer() const {
-        if constexpr (q == Quantization::f32) {
-            return std::make_unique<F32Quantizer>();
-        } else {
-            if (config.quantizer_type == QuantizerType::sq8) {
-                return std::make_unique<SQ8Quantizer>();
-            } else if (config.quantizer_type == QuantizerType::lvq4) {
-                return std::make_unique<LVQ4Quantizer>();
-            } else if (config.quantizer_type == QuantizerType::rabitq) {
-                return std::make_unique<RaBitQQuantizer>();
-            }
-            throw std::invalid_argument("Unsupported quantizer type for non-f32 quantization");
-        }
+    std::unique_ptr<skmeans_quantizer_t<q>> CreateQuantizer() const {
+        return std::make_unique<skmeans_quantizer_t<q>>();
     }
 
     /**
@@ -1818,6 +1832,7 @@ class SuperKMeans {
         }
         config.data_already_rotated = true;
         config.unrotate_centroids = false;
+        state.trained_in_place = true;
     }
 
     /**
@@ -1902,7 +1917,7 @@ class SuperKMeans {
     uint32_t partial_d = 0; // d'
 
     // Iteration state
-    bool trained = false;
+    SuperKMeansState state;
     size_t n_split = 0;
     size_t centroids_to_explore = 0;
     uint32_t vertical_d = 0;
@@ -1928,10 +1943,9 @@ class SuperKMeans {
     std::unique_ptr<uint32_t[]> cluster_sizes;
     std::unique_ptr<float[]> data_norms;
     std::unique_ptr<float[]> centroid_norms;
-    std::unique_ptr<size_t[]> sampled_indices;
 
     // Quantization state
-    std::unique_ptr<IQuantizer<q>> quantizer;
+    std::unique_ptr<skmeans_quantizer_t<q>> quantizer;
     size_t code_size = 0; // bytes per encoded vector (= d for SQ8, variable for RaBitQ)
     std::unique_ptr<vector_value_t[]> quantized_data;
     std::unique_ptr<vector_value_t[]> quantized_centroids;
@@ -1948,38 +1962,11 @@ class SuperKMeans {
 
   public:
     std::unique_ptr<uint32_t[]> assignments;
+    std::unique_ptr<size_t[]> sampled_indices;
     std::vector<SuperKMeansIterationStats> iteration_stats;
 };
 
-template <QuantizerType scheme, typename Config>
-Config WithForcedQuantizer(Config config) {
-    static_assert(scheme != QuantizerType::none, "Wrapper must fix a real quantizer scheme");
-    if (config.quantizer_type != QuantizerType::none && config.quantizer_type != scheme) {
-        std::cout << "[SuperKMeans] Warning: ignoring config.quantizer_type="
-                  << QuantizerTypeName(config.quantizer_type) << ", forcing "
-                  << QuantizerTypeName(scheme) << " (fixed by the wrapper class)" << std::endl;
-    }
-    config.quantizer_type = scheme;
-    return config;
-}
-
-template <QuantizerType scheme, DistanceFunction alpha = DistanceFunction::l2>
-class QuantizedSuperKMeans : public SuperKMeans<Quantization::u8, alpha> {
-    static_assert(
-        scheme != QuantizerType::none,
-        "QuantizedSuperKMeans requires sq8, lvq4, or rabitq"
-    );
-
-  public:
-    QuantizedSuperKMeans(size_t n_clusters, size_t dimensionality, SuperKMeansConfig config = {})
-        : SuperKMeans<Quantization::u8, alpha>(
-              n_clusters,
-              dimensionality,
-              WithForcedQuantizer<scheme>(config)
-          ) {}
-};
-
-using SuperKMeansSQ8 = QuantizedSuperKMeans<QuantizerType::sq8>;
-using SuperKMeansLVQ4 = QuantizedSuperKMeans<QuantizerType::lvq4>;
-using SuperKMeansRabitQ = QuantizedSuperKMeans<QuantizerType::rabitq>;
+using SuperKMeansSQ8 = SuperKMeans<Quantization::sq8>;
+using SuperKMeansLVQ4 = SuperKMeans<Quantization::lvq4>;
+using SuperKMeansRabitQ = SuperKMeans<Quantization::rabitq>;
 } // namespace skmeans

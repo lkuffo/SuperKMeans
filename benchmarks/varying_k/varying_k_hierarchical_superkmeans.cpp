@@ -93,9 +93,7 @@ int main(int argc, char* argv[]) {
             config.angular = true;
         }
 
-        auto kmeans_state = skmeans::HierarchicalSuperKMeans<
-            skmeans::Quantization::f32,
-            skmeans::DistanceFunction::l2>(n_clusters, d, config);
+        auto kmeans_state = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
 
         bench_utils::TicToc timer;
         timer.Tic();

@@ -15,10 +15,10 @@ template <DistanceFunction alpha, Quantization q>
 class SIMDComputer {};
 
 template <>
-class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u8> {
+class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::sq8> {
   public:
-    using distance_t = pdx_distance_t<skmeans::Quantization::u8>;
-    using data_t = skmeans_value_t<skmeans::Quantization::u8>;
+    using distance_t = pdx_distance_t<skmeans::Quantization::sq8>;
+    using data_t = skmeans_value_t<skmeans::Quantization::sq8>;
 
     static distance_t Horizontal(
         const data_t* SKM_RESTRICT vector1,
@@ -57,7 +57,7 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u8> {
 template <>
 class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32> {
   public:
-    using distance_t = skmeans_distance_t<skmeans::Quantization::f32>;
+    using distance_t = skmeans_distance_t;
     using data_t = skmeans_value_t<skmeans::Quantization::f32>;
     using scalar_computer =
         ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32>;
@@ -121,7 +121,7 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::f32> {
 template <>
 class SIMDComputer<skmeans::DistanceFunction::dp, skmeans::Quantization::f32> {
   public:
-    using distance_t = skmeans_distance_t<skmeans::Quantization::f32>;
+    using distance_t = skmeans_distance_t;
     using data_t = skmeans_value_t<skmeans::Quantization::f32>;
 
     /**
@@ -177,10 +177,10 @@ class SIMDComputer<skmeans::DistanceFunction::dp, skmeans::Quantization::f32> {
 };
 
 template <>
-class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u4> {
+class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::sq4> {
   public:
-    using distance_t = pdx_distance_t<skmeans::Quantization::u4>;
-    using data_t = skmeans_value_t<skmeans::Quantization::u4>;
+    using distance_t = pdx_distance_t<skmeans::Quantization::sq4>;
+    using data_t = skmeans_value_t<skmeans::Quantization::sq4>;
 
     /**
      * @brief Computes L2² distance between two packed u4x2 vectors using AVX2.
@@ -241,10 +241,10 @@ class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u4> {
 };
 
 template <>
-class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8> {
+class SIMDComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::rabitq> {
   public:
-    using distance_t = pdx_distance_t<skmeans::Quantization::b8>;
-    using data_t = skmeans_value_t<skmeans::Quantization::b8>;
+    using distance_t = pdx_distance_t<skmeans::Quantization::rabitq>;
+    using data_t = skmeans_value_t<skmeans::Quantization::rabitq>;
 
     /**
      * @brief Computes popcount(a AND b) — binary inner product using AVX2.
@@ -481,10 +481,10 @@ class SIMDUtilsComputer<skmeans::Quantization::f32> {
 };
 
 template <>
-class SIMDUtilsComputer<skmeans::Quantization::u4> {
+class SIMDUtilsComputer<skmeans::Quantization::sq4> {
   public:
-    using data_t = skmeans_value_t<skmeans::Quantization::u4>;
-    using pdx_dist_t = pdx_distance_t<skmeans::Quantization::u4>;
+    using data_t = skmeans_value_t<skmeans::Quantization::sq4>;
+    using pdx_dist_t = pdx_distance_t<skmeans::Quantization::sq4>;
 
     static void FlipSign(const data_t*, data_t*, const uint32_t*, size_t) {
         assert(false && "FlipSign not supported for u4");

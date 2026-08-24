@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Generating " << n << " vectors with d=" << d << std::endl;
     std::vector<float> data = skmeans::MakeBlobs(n, d, 100, true);
 
-    // Or: SuperKMeansLVQ4, SuperKMeansRaBitQ
+    // Or: SuperKMeansLVQ4, SuperKMeansRabitQ
     auto kmeans = skmeans::SuperKMeansSQ8(k, d);
 
     // Run the clustering

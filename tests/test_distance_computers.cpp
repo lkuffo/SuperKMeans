@@ -375,12 +375,12 @@ TEST_F(DistanceComputerTest, SIMD_MatchesScalar_L2_U8) {
             const uint8_t* v2 = vectors2.data() + i * d;
 
             uint32_t scalar_dist =
-                skmeans::ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u8>::
+                skmeans::ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::sq8>::
                     Horizontal(v1, v2, d);
 
             uint32_t simd_dist = skmeans::DistanceComputer<
                 skmeans::DistanceFunction::l2,
-                skmeans::Quantization::u8>::Horizontal(v1, v2, d);
+                skmeans::Quantization::sq8>::Horizontal(v1, v2, d);
 
             EXPECT_EQ(scalar_dist, simd_dist)
                 << "SIMD/Scalar mismatch at d=" << d << ", pair " << i;
@@ -413,12 +413,12 @@ TEST_F(DistanceComputerTest, SIMD_MatchesScalar_L2_U4) {
             const uint8_t* v2 = vectors2.data() + i * num_packed_bytes;
 
             uint32_t scalar_dist =
-                skmeans::ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::u4>::
+                skmeans::ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::sq4>::
                     Horizontal(v1, v2, num_packed_bytes);
 
             uint32_t simd_dist = skmeans::DistanceComputer<
                 skmeans::DistanceFunction::l2,
-                skmeans::Quantization::u4>::Horizontal(v1, v2, num_packed_bytes);
+                skmeans::Quantization::sq4>::Horizontal(v1, v2, num_packed_bytes);
 
             EXPECT_EQ(scalar_dist, simd_dist)
                 << "SIMD/Scalar mismatch at num_packed_bytes=" << num_packed_bytes << ", pair "
@@ -455,10 +455,10 @@ TEST_F(DistanceComputerTest, InitPositionsArray_SIMD_MatchesScalar_U4) {
             std::vector<uint32_t> scalar_positions(n), simd_positions(n);
             size_t scalar_count = 0, simd_count = 0;
 
-            skmeans::ScalarUtilsComputer<skmeans::Quantization::u4>::InitPositionsArray(
+            skmeans::ScalarUtilsComputer<skmeans::Quantization::sq4>::InitPositionsArray(
                 n, scalar_count, scalar_positions.data(), threshold, pruning_distances.data()
             );
-            skmeans::UtilsComputer<skmeans::Quantization::u4>::InitPositionsArray(
+            skmeans::UtilsComputer<skmeans::Quantization::sq4>::InitPositionsArray(
                 n, simd_count, simd_positions.data(), threshold, pruning_distances.data()
             );
 
@@ -491,13 +491,13 @@ TEST_F(DistanceComputerTest, PackU8ToU4x2_SIMD_MatchesScalar) {
 
         // Scalar reference
         std::vector<uint8_t> expected(count / 2);
-        skmeans::ScalarUtilsComputer<skmeans::Quantization::u4>::PackU8ToU4x2(
+        skmeans::ScalarUtilsComputer<skmeans::Quantization::sq4>::PackU8ToU4x2(
             src.data(), expected.data(), count
         );
 
         // SIMD kernel
         std::vector<uint8_t> actual(count / 2, 0xFF);
-        skmeans::UtilsComputer<skmeans::Quantization::u4>::PackU8ToU4x2(
+        skmeans::UtilsComputer<skmeans::Quantization::sq4>::PackU8ToU4x2(
             src.data(), actual.data(), count
         );
 
@@ -551,11 +551,11 @@ TEST_F(DistanceComputerTest, RabitQ_B8Horizontal_SIMD_MatchesScalar) {
             v = static_cast<uint8_t>(byte_dist(rng));
 
         auto expected =
-            skmeans::ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8>::
+            skmeans::ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::rabitq>::
                 Horizontal(v1.data(), v2.data(), num_bytes);
-        auto actual =
-            skmeans::DistanceComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8>::
-                Horizontal(v1.data(), v2.data(), num_bytes);
+        auto actual = skmeans::DistanceComputer<
+            skmeans::DistanceFunction::l2,
+            skmeans::Quantization::rabitq>::Horizontal(v1.data(), v2.data(), num_bytes);
         EXPECT_EQ(actual, expected);
     }
 }
@@ -577,10 +577,10 @@ TEST_F(DistanceComputerTest, RabitQ_HorizontalMultiPlane_SIMD_MatchesScalar) {
             v = static_cast<uint8_t>(byte_dist(rng));
 
         auto expected =
-            skmeans::ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8>::
+            skmeans::ScalarComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::rabitq>::
                 HorizontalMultiPlane(data.data(), planes.data(), num_bytes, qb);
-        auto actual =
-            skmeans::DistanceComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::b8>::
+        auto actual = skmeans::
+            DistanceComputer<skmeans::DistanceFunction::l2, skmeans::Quantization::rabitq>::
                 HorizontalMultiPlane(data.data(), planes.data(), num_bytes, qb);
         EXPECT_EQ(actual, expected);
     }

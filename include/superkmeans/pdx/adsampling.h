@@ -49,15 +49,8 @@ inline float ComputeADSamplingRatio(
  *
  * For high-dimensional data (>= D_THRESHOLD_FOR_DCT_ROTATION), uses DCT-based rotation
  * which is more efficient than full matrix multiplication.
- *
- * @tparam q Quantization type (f32 or u8)
  */
-template <Quantization q = Quantization::f32>
 class ADSamplingPruner {
-    using DISTANCES_TYPE = skmeans_distance_t<q>;
-    using value_t = skmeans_value_t<q>;
-    using KNNCandidate_t = KNNCandidate<q>;
-    using VectorComparator_t = VectorComparator<q>;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
   public:
@@ -136,16 +129,14 @@ class ADSamplingPruner {
     /**
      * @brief Computes the pruning threshold for a given number of visited dimensions.
      *
-     * @tparam Q Quantization type
      * @param best_candidate Current best candidate (threshold)
      * @param current_dimension_idx Number of dimensions visited so far
      * @return Pruning threshold - vectors with partial distance above this can be pruned
      */
-    template <Quantization Q = q>
-    skmeans_distance_t<Q> GetPruningThreshold(
-        const KNNCandidate<Q>& best_candidate,
+    skmeans_distance_t GetPruningThreshold(
+        const KNNCandidate& best_candidate,
         const uint32_t current_dimension_idx
-    ) {
+    ) const {
         return best_candidate.distance * ratios[current_dimension_idx];
     }
 
@@ -156,11 +147,11 @@ class ADSamplingPruner {
      * @param out Output vectors (row-major, n × num_dimensions)
      * @param n Number of vectors
      */
-    void FlipSign(const value_t* data, value_t* out, const size_t n) {
+    void FlipSign(const float* data, float* out, const size_t n) const {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const size_t offset = i * num_dimensions;
-            UtilsComputer<q>::FlipSign(
+            UtilsComputer<Quantization::f32>::FlipSign(
                 data + offset, out + offset, flip_masks.data(), num_dimensions
             );
         }
@@ -185,7 +176,7 @@ class ADSamplingPruner {
      * @param n Number of vectors to rotate
      */
     template <bool IN_PLACE = false>
-    void Rotate(const float* vectors, float* out_buffer, const uint32_t n) {
+    void Rotate(const float* vectors, float* out_buffer, const uint32_t n) const {
         Eigen::Map<MatrixR> out(out_buffer, n, num_dimensions);
 #ifdef HAS_FFTW
 #ifdef __AVX2__
@@ -241,7 +232,7 @@ class ADSamplingPruner {
         const float* SKM_RESTRICT vectors,
         float* SKM_RESTRICT out_buffer,
         const uint32_t n
-    ) {
+    ) const {
         const char trans_a = 'T';
         const char trans_b = 'N';
         int m = static_cast<int>(num_dimensions);
@@ -278,7 +269,7 @@ class ADSamplingPruner {
         const float* SKM_RESTRICT rotated_vectors,
         float* SKM_RESTRICT out_buffer,
         const uint32_t n
-    ) {
+    ) const {
         Eigen::Map<MatrixR> out(out_buffer, n, num_dimensions);
 #ifdef HAS_FFTW
 #ifdef __AVX2__

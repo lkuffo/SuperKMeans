@@ -140,6 +140,23 @@ Fast assignment of the training data, reusing state from `train()`. `vectors` mu
   - `centroids` (ndarray): Shape (n_centroids, dimensionality), dtype float32
 - **Returns:** `assignments` (ndarray): Shape (n_vectors,), dtype uint32
 
+**`rotate(vectors)` / `unrotate(vectors)`**
+
+Training rotates the data before clustering. `rotate()` brings vectors *into* that domain,
+`unrotate()` brings them back out. Both require a trained model and return a new array.
+
+`rotate()` is what you need for queries after `train(overwrite_input=True)`, since the data and
+centroids are left in the rotated domain:
+
+```python
+centroids = kmeans.train(data, overwrite_input=True)
+labels = kmeans.assign_training_points(data, centroids)
+hits = kmeans.assign(kmeans.rotate(queries), centroids)
+```
+
+- **Parameters:** `vectors` (ndarray): Shape (n, dimensionality), dtype float32
+- **Returns:** ndarray of the same shape
+
 #### Properties
 
 - `n_clusters_` (int): Number of clusters (read-only)
@@ -148,6 +165,50 @@ Fast assignment of the training data, reusing state from `train()`. `vectors` mu
 - `quantizer_` (str): Quantization scheme in use (read-only)
 - `iteration_stats` (list): List of `SuperKMeansIterationStats` objects
 - `hierarchical_iteration_stats` (`HierarchicalSuperKMeansIterationStats`): Per-phase statistics (hierarchical mode only)
+- `state` (`SuperKMeansState`): How training was carried out, or `None` before training
+- `quantization_params` (dict): Global parameters of the fitted quantizer, or `None` before
+  training — see the table below
+- `quantized_data` (ndarray): Read-only view of the encoded training vectors, shape
+  `(n_encoded, code_size)`, dtype uint8. `None` for `quantizer="f32"`, which clusters the data
+  directly instead of encoding a copy
+- `sampled_indices` (ndarray): Read-only view mapping encoded row `i` to original row
+  `sampled_indices[i]`. `None` when `sampling_fraction == 1.0`, where encoded row `i` *is* row `i`
+
+`quantized_data` and `sampled_indices` are **views into the model's own buffers, not copies** — so
+reading them is free regardless of size, but they stay valid only while the model is alive (the view
+holds a reference to it) and cannot be written to.
+
+##### Code layout per scheme
+
+Together with the layout below, `quantization_params` is enough to interpret `quantized_data`
+yourself. Note the codes encode the **rotated** vectors, so use `unrotate()` to get back to the
+input domain.
+
+| scheme | `code_size` | layout per vector | `quantization_params` |
+| --- | --- | --- | --- |
+| `f32` | — | no encoded buffer; the data is clustered directly | `{}` |
+| `sq8` | `d` | `[d u8 bytes]` | `{"base", "scale", "inv_scale"}` — global |
+| `lvq4` | `d/2 + 8` | `[d/2 packed u4x2][float scale][float bias]` | `{}` — scale/bias are **per-vector**, inside each code |
+| `rabitq` | `(d+7)//8 + 8` | `[(d+7)//8 sign bytes][float or_minus_c_l2sqr][float dp_multiplier]` | `{"centroid"` (d floats), `"binary_bytes"}` |
+
+For `lvq4` the nibbles are packed two per byte, even dimension in the low nibble and odd in the
+high one. Reconstructing from sq8, where the parameters are global:
+
+```python
+p = kmeans.quantization_params
+approx = kmeans.quantized_data.astype(np.float32) * p["inv_scale"] + p["base"]
+original = kmeans.unrotate(approx)
+```
+
+### SuperKMeansState Class
+
+Read-only record of how training was carried out.
+
+- `trained` (bool): Whether training completed
+- `trained_in_place` (bool): Whether training rotated the caller's buffer instead of a copy
+- `training_data_rotated` (bool): Whether the training data is in the rotated domain
+- `code_size` (int): Elements per encoded vector (bytes for the quantized schemes)
+- `n_encoded` (int): Number of encoded vectors
 
 ### SuperKMeansIterationStats Class
 

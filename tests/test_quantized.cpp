@@ -18,37 +18,33 @@ using namespace skmeans;
 
 namespace {
 
-using skm_u8 = SuperKMeans<Quantization::u8, DistanceFunction::l2>;
+using QuantizedTags = ::testing::Types<
+    skmeans::QuantizationTag<Quantization::sq8>,
+    skmeans::QuantizationTag<Quantization::lvq4>,
+    skmeans::QuantizationTag<Quantization::rabitq>>;
 
-struct QParam {
-    QuantizerType type;
-    const char* name;
+struct QuantizerNames {
+    template <typename T>
+    static std::string GetName(int) {
+        return QuantizationName(T::value);
+    }
 };
 
 } // namespace
 
-class QuantizedIntegrationTest : public ::testing::TestWithParam<QParam> {};
+template <typename T>
+class QuantizedIntegrationTest : public ::testing::Test {};
 
-INSTANTIATE_TEST_SUITE_P(
-    Quantizers,
-    QuantizedIntegrationTest,
-    ::testing::Values(
-        QParam{QuantizerType::sq8, "sq8"},
-        QParam{QuantizerType::lvq4, "lvq4"},
-        QParam{QuantizerType::rabitq, "rabitq"}
-    ),
-    [](const ::testing::TestParamInfo<QParam>& info) { return std::string(info.param.name); }
-);
+TYPED_TEST_SUITE(QuantizedIntegrationTest, QuantizedTags, QuantizerNames);
 
-TEST_P(QuantizedIntegrationTest, BasicTraining) {
+TYPED_TEST(QuantizedIntegrationTest, BasicTraining) {
     const size_t n = 2000, d = 64, n_clusters = 10;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);
 
     SuperKMeansConfig config;
     config.iters = 10;
-    config.quantizer_type = GetParam().type;
 
-    auto kmeans = skm_u8(n_clusters, d, config);
+    auto kmeans = SuperKMeans<TypeParam::value>(n_clusters, d, config);
     EXPECT_FALSE(kmeans.IsTrained());
     auto centroids = kmeans.Train(data.data(), n);
     EXPECT_TRUE(kmeans.IsTrained());
@@ -56,7 +52,7 @@ TEST_P(QuantizedIntegrationTest, BasicTraining) {
     EXPECT_EQ(kmeans.GetNClusters(), n_clusters);
 }
 
-TEST_P(QuantizedIntegrationTest, AllClustersUsed_AssignmentsValid) {
+TYPED_TEST(QuantizedIntegrationTest, AllClustersUsed_AssignmentsValid) {
     const size_t n = 5000, d = 128, n_clusters = 20;
     auto data = skm_test::LoadTestDataSubdim(
         CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d
@@ -64,9 +60,8 @@ TEST_P(QuantizedIntegrationTest, AllClustersUsed_AssignmentsValid) {
 
     SuperKMeansConfig config;
     config.iters = 15;
-    config.quantizer_type = GetParam().type;
 
-    auto kmeans = skm_u8(n_clusters, d, config);
+    auto kmeans = SuperKMeans<TypeParam::value>(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
     auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
 
@@ -78,31 +73,31 @@ TEST_P(QuantizedIntegrationTest, AllClustersUsed_AssignmentsValid) {
     EXPECT_EQ(used.size(), n_clusters);
 }
 
-TEST_P(QuantizedIntegrationTest, Recall_MatchesGroundTruth) {
-    float recall = skm_test::ClusteringRecall<Quantization::u8>(
-        GetParam().type, CMAKE_SOURCE_DIR "/tests/test_data.bin"
+TYPED_TEST(QuantizedIntegrationTest, Recall_MatchesGroundTruth) {
+    float recall =
+        skm_test::ClusteringRecall<TypeParam::value>(CMAKE_SOURCE_DIR "/tests/test_data.bin");
+    EXPECT_GE(
+        recall,
+        skm_test::RECALL_GROUND_TRUTH.at(QuantizationName(TypeParam::value)) - skm_test::RECALL_TOL
     );
-    EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at(GetParam().name) - skm_test::RECALL_TOL);
 }
 
-TEST_P(QuantizedIntegrationTest, TrainInPlace_RecallMatchesTrain) {
+TYPED_TEST(QuantizedIntegrationTest, TrainInPlace_RecallMatchesTrain) {
     const char* path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
-    float recall = skm_test::ClusteringRecall<Quantization::u8>(GetParam().type, path);
-    float recall_in_place =
-        skm_test::ClusteringRecall<Quantization::u8, true>(GetParam().type, path);
+    float recall = skm_test::ClusteringRecall<TypeParam::value>(path);
+    float recall_in_place = skm_test::ClusteringRecall<TypeParam::value, true>(path);
     EXPECT_NEAR(recall_in_place, recall, skm_test::RECALL_TOL);
 }
 
-TEST_P(QuantizedIntegrationTest, QuantizedCentroidUpdate_Converges) {
+TYPED_TEST(QuantizedIntegrationTest, QuantizedCentroidUpdate_Converges) {
     const size_t n = 3000, d = 64, n_clusters = 10;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);
 
     SuperKMeansConfig config;
     config.iters = 10;
-    config.quantizer_type = GetParam().type;
     config.quantized_centroid_update = true;
 
-    auto kmeans = skm_u8(n_clusters, d, config);
+    auto kmeans = SuperKMeans<TypeParam::value>(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
     EXPECT_EQ(centroids.size(), n_clusters * d);
 
@@ -111,16 +106,15 @@ TEST_P(QuantizedIntegrationTest, QuantizedCentroidUpdate_Converges) {
     EXPECT_LT(stats.back().objective, stats.front().objective);
 }
 
-TEST_P(QuantizedIntegrationTest, QuantizedAssign_MatchesAssign) {
+TYPED_TEST(QuantizedIntegrationTest, QuantizedAssign_MatchesAssign) {
     const size_t n = 3000, d = 128, n_clusters = 15;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);
 
     SuperKMeansConfig config;
     config.iters = 5;
-    config.quantizer_type = GetParam().type;
     config.sampling_fraction = 1.0f;
 
-    auto kmeans = skm_u8(n_clusters, d, config);
+    auto kmeans = SuperKMeans<TypeParam::value>(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
     auto assign_gt = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
@@ -141,16 +135,15 @@ TEST_P(QuantizedIntegrationTest, QuantizedAssign_MatchesAssign) {
     EXPECT_GT(static_cast<double>(agree) / n, 0.5);
 }
 
-TEST_P(QuantizedIntegrationTest, QuantizedAssign_RepeatedDifferentData) {
+TYPED_TEST(QuantizedIntegrationTest, QuantizedAssign_RepeatedDifferentData) {
     const size_t n = 3000, d = 64, n_clusters = 12;
     std::vector<float> dataA = MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 1);
     std::vector<float> dataB = MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 999);
 
     SuperKMeansConfig config;
     config.iters = 10;
-    config.quantizer_type = GetParam().type;
 
-    auto kmeans = skm_u8(n_clusters, d, config);
+    auto kmeans = SuperKMeans<TypeParam::value>(n_clusters, d, config);
     auto centroids = kmeans.Train(dataA.data(), n);
 
     (void) kmeans.QuantizedAssign(dataA.data(), centroids.data(), n, n_clusters);
@@ -167,9 +160,86 @@ TEST_P(QuantizedIntegrationTest, QuantizedAssign_RepeatedDifferentData) {
         << "QuantizedAssign did not reflect the second (different) dataset";
 }
 
-TEST(QuantizedConstruction, RequiresQuantizerType) {
+TYPED_TEST(QuantizedIntegrationTest, StateExposesQuantizerAndQuantizedBuffer) {
+    const size_t n = 5000, d = 128, n_clusters = 300;
+    auto data = skm_test::LoadTestDataSubdim(
+        CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d
+    );
+
     SuperKMeansConfig config;
-    EXPECT_THROW(skm_u8(10, 64, config), std::invalid_argument);
+    config.iters = 5;
+    config.seed = 42;
+    config.n_threads = 1;
+    config.sampling_fraction = 1.0f;
+    config.max_points_per_cluster = 99999;
+    config.suppress_warnings = true;
+
+    auto kmeans = SuperKMeans<TypeParam::value>(n_clusters, d, config);
+    EXPECT_EQ(kmeans.GetQuantizer(), nullptr);
+    EXPECT_EQ(kmeans.GetQuantizedData(), nullptr);
+
+    kmeans.Train(data.data(), n);
+
+    const auto* quantizer = kmeans.GetQuantizer();
+    ASSERT_NE(quantizer, nullptr);
+    EXPECT_TRUE(quantizer->IsFitted());
+    EXPECT_NE(kmeans.GetQuantizedData(), nullptr);
+
+    const auto& state = kmeans.GetState();
+    EXPECT_EQ(state.code_size, quantizer->CodeSize(d));
+    EXPECT_EQ(state.n_encoded, n);
+    EXPECT_NE(state.rotator, nullptr);
+    EXPECT_EQ(kmeans.sampled_indices, nullptr) << "no sampling at sampling_fraction == 1.0";
+}
+
+TEST(QuantizedState, F32HasNoQuantizedBuffer) {
+    const size_t n = 3000, d = 128, n_clusters = 300;
+    auto data = skm_test::LoadTestDataSubdim(
+        CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d
+    );
+
+    SuperKMeansConfig config;
+    config.iters = 5;
+    config.seed = 42;
+    config.n_threads = 1;
+    config.sampling_fraction = 1.0f;
+    config.max_points_per_cluster = 99999;
+    config.suppress_warnings = true;
+
+    auto kmeans = SuperKMeans(n_clusters, d, config);
+    kmeans.Train(data.data(), n);
+
+    EXPECT_NE(kmeans.GetQuantizer(), nullptr);
+    EXPECT_EQ(kmeans.GetQuantizedData(), nullptr) << "f32 clusters the training data directly";
+    EXPECT_NE(kmeans.GetState().rotator, nullptr);
+}
+
+TEST(QuantizedState, SampledIndicesMapEncodedRowsToOriginalRows) {
+    const size_t n = 5000, d = 128, n_clusters = 300;
+    auto data = skm_test::LoadTestDataSubdim(
+        CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d
+    );
+
+    SuperKMeansConfig config;
+    config.iters = 3;
+    config.seed = 42;
+    config.n_threads = 1;
+    config.sampling_fraction = 0.5f;
+    config.max_points_per_cluster = 99999;
+    config.suppress_warnings = true;
+
+    auto kmeans = SuperKMeansSQ8(n_clusters, d, config);
+    kmeans.Train(data.data(), n);
+
+    const auto& state = kmeans.GetState();
+    EXPECT_LT(state.n_encoded, n);
+    ASSERT_NE(kmeans.sampled_indices, nullptr);
+    std::unordered_set<size_t> seen;
+    for (size_t i = 0; i < state.n_encoded; ++i) {
+        const size_t original = kmeans.sampled_indices[i];
+        ASSERT_LT(original, n) << "at " << i;
+        EXPECT_TRUE(seen.insert(original).second) << "duplicate original row at " << i;
+    }
 }
 
 template <typename WrapperT>
@@ -178,7 +248,7 @@ class QuantizedWrapperTest : public ::testing::Test {};
 using WrapperTypes = ::testing::Types<SuperKMeansSQ8, SuperKMeansLVQ4, SuperKMeansRabitQ>;
 TYPED_TEST_SUITE(QuantizedWrapperTest, WrapperTypes);
 
-TYPED_TEST(QuantizedWrapperTest, DefaultConfigForcesSchemeAndTrains) {
+TYPED_TEST(QuantizedWrapperTest, AliasTrainsAndAssigns) {
     const size_t n = 3000, d = 128, n_clusters = 10;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);
 
@@ -194,34 +264,13 @@ TYPED_TEST(QuantizedWrapperTest, DefaultConfigForcesSchemeAndTrains) {
         EXPECT_LT(assignments[i], n_clusters) << "at " << i;
 }
 
-TEST(QuantizedWrapper, ForcesSchemeOverMismatchedConfig) {
-    const size_t n = 3000, d = 128, n_clusters = 10;
-    std::vector<float> data = MakeBlobs(n, d, n_clusters);
-
-    SuperKMeansConfig config;
-    config.iters = 10;
-    config.seed = 7;
-    config.n_threads = 1;
-    config.early_termination = false;
-    config.quantizer_type = QuantizerType::sq8;
-
-    auto wrapped = SuperKMeansLVQ4(n_clusters, d, config).Train(data.data(), n);
-
-    SuperKMeansConfig forced = config;
-    forced.quantizer_type = QuantizerType::lvq4;
-    auto direct = skm_u8(n_clusters, d, forced).Train(data.data(), n);
-
-    ASSERT_EQ(wrapped.size(), direct.size());
-    for (size_t i = 0; i < wrapped.size(); ++i)
-        EXPECT_FLOAT_EQ(wrapped[i], direct[i]) << "at " << i;
-}
-
-TEST_P(QuantizedIntegrationTest, InvalidInputs_Throw) {
+TYPED_TEST(QuantizedIntegrationTest, InvalidInputs_Throw) {
     const size_t n = 10000, d = 64, n_clusters = 10;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);
-    auto make = [&](const SuperKMeansConfig& c, size_t k, size_t dd) { return skm_u8(k, dd, c); };
+    auto make = [&](const SuperKMeansConfig& c, size_t k, size_t dd) {
+        return SuperKMeans<TypeParam::value>(k, dd, c);
+    };
     SuperKMeansConfig base;
-    base.quantizer_type = GetParam().type;
 
     EXPECT_THROW(
         ([&] {
@@ -276,7 +325,7 @@ TEST_P(QuantizedIntegrationTest, InvalidInputs_Throw) {
     );
 }
 
-TEST_P(QuantizedIntegrationTest, EarlyTermination) {
+TYPED_TEST(QuantizedIntegrationTest, EarlyTermination) {
     const size_t n = 10000, d = 64, n_clusters = 5, max_iters = 100;
     std::vector<float> data = MakeBlobs(n, d, n_clusters, false, 0.5f, 20.0f);
 
@@ -285,8 +334,7 @@ TEST_P(QuantizedIntegrationTest, EarlyTermination) {
     c_early.early_termination = true;
     c_early.tol = 1e-2f;
     c_early.sampling_fraction = 1.0f;
-    c_early.quantizer_type = GetParam().type;
-    auto km_early = skm_u8(n_clusters, d, c_early);
+    auto km_early = SuperKMeans<TypeParam::value>(n_clusters, d, c_early);
     km_early.Train(data.data(), n);
     size_t iters_early = km_early.iteration_stats.size();
 
@@ -294,8 +342,7 @@ TEST_P(QuantizedIntegrationTest, EarlyTermination) {
     c_no.iters = max_iters;
     c_no.early_termination = false;
     c_no.sampling_fraction = 1.0f;
-    c_no.quantizer_type = GetParam().type;
-    auto km_no = skm_u8(n_clusters, d, c_no);
+    auto km_no = SuperKMeans<TypeParam::value>(n_clusters, d, c_no);
     km_no.Train(data.data(), n);
     size_t iters_no = km_no.iteration_stats.size();
 
@@ -304,16 +351,15 @@ TEST_P(QuantizedIntegrationTest, EarlyTermination) {
     EXPECT_LT(iters_early, iters_no);
 }
 
-TEST_P(QuantizedIntegrationTest, AngularMode_NormalizesCentroids) {
+TYPED_TEST(QuantizedIntegrationTest, AngularMode_NormalizesCentroids) {
     const size_t n = 5000, d = 64, n_clusters = 50;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);
 
     SuperKMeansConfig config;
     config.iters = 10;
     config.angular = true;
-    config.quantizer_type = GetParam().type;
 
-    auto kmeans = skm_u8(n_clusters, d, config);
+    auto kmeans = SuperKMeans<TypeParam::value>(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
     for (size_t c = 0; c < n_clusters; ++c) {
         float norm = 0.0f;
@@ -323,7 +369,7 @@ TEST_P(QuantizedIntegrationTest, AngularMode_NormalizesCentroids) {
     }
 }
 
-TEST_P(QuantizedIntegrationTest, Determinism_SameSeedSameCentroids) {
+TYPED_TEST(QuantizedIntegrationTest, Determinism_SameSeedSameCentroids) {
     const size_t n = 3000, d = 64, n_clusters = 10;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);
 
@@ -332,16 +378,15 @@ TEST_P(QuantizedIntegrationTest, Determinism_SameSeedSameCentroids) {
     config.early_termination = false;
     config.seed = 123;
     config.n_threads = 1;
-    config.quantizer_type = GetParam().type;
 
-    auto c1 = skm_u8(n_clusters, d, config).Train(data.data(), n);
-    auto c2 = skm_u8(n_clusters, d, config).Train(data.data(), n);
+    auto c1 = SuperKMeans<TypeParam::value>(n_clusters, d, config).Train(data.data(), n);
+    auto c2 = SuperKMeans<TypeParam::value>(n_clusters, d, config).Train(data.data(), n);
     ASSERT_EQ(c1.size(), c2.size());
     for (size_t i = 0; i < c1.size(); ++i)
         EXPECT_FLOAT_EQ(c1[i], c2[i]) << "at " << i;
 }
 
-TEST_P(QuantizedIntegrationTest, FullPrecisionFinalCentroids_ImprovesReconstruction) {
+TYPED_TEST(QuantizedIntegrationTest, FullPrecisionFinalCentroids_ImprovesReconstruction) {
     const size_t n = 5000, d = 64, n_clusters = 20;
     std::vector<float> data = MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
 
@@ -352,14 +397,15 @@ TEST_P(QuantizedIntegrationTest, FullPrecisionFinalCentroids_ImprovesReconstruct
         config.n_threads = 1;
         config.sampling_fraction = 1.0f;
         config.early_termination = false;
-        config.quantizer_type = GetParam().type;
         config.quantized_centroid_update = true;
         config.full_precision_final_centroids = full_precision;
         return config;
     };
 
-    auto centroids_q = skm_u8(n_clusters, d, make_config(false)).Train(data.data(), n);
-    auto centroids_fp = skm_u8(n_clusters, d, make_config(true)).Train(data.data(), n);
+    auto centroids_q =
+        SuperKMeans<TypeParam::value>(n_clusters, d, make_config(false)).Train(data.data(), n);
+    auto centroids_fp =
+        SuperKMeans<TypeParam::value>(n_clusters, d, make_config(true)).Train(data.data(), n);
 
     ASSERT_EQ(centroids_q.size(), n_clusters * d);
     ASSERT_EQ(centroids_fp.size(), n_clusters * d);
@@ -372,27 +418,30 @@ TEST_P(QuantizedIntegrationTest, FullPrecisionFinalCentroids_ImprovesReconstruct
     }
     EXPECT_GT(max_diff, 1e-4f) << "full_precision_final_centroids did not change the centroids";
 
-    skm_u8 assigner(n_clusters, d, make_config(false));
+    SuperKMeans<TypeParam::value> assigner(n_clusters, d, make_config(false));
     auto a_q = assigner.Assign(data.data(), centroids_q.data(), n, n_clusters);
     auto a_fp = assigner.Assign(data.data(), centroids_fp.data(), n, n_clusters);
-    double wcss_q = skm_u8::ComputeWCSS(data.data(), centroids_q.data(), a_q.data(), n, d);
-    double wcss_fp = skm_u8::ComputeWCSS(data.data(), centroids_fp.data(), a_fp.data(), n, d);
+    double wcss_q = SuperKMeans<TypeParam::value>::ComputeWCSS(
+        data.data(), centroids_q.data(), a_q.data(), n, d
+    );
+    double wcss_fp = SuperKMeans<TypeParam::value>::ComputeWCSS(
+        data.data(), centroids_fp.data(), a_fp.data(), n, d
+    );
     EXPECT_LE(wcss_fp, wcss_q) << "full-precision WCSS " << wcss_fp << " > quantized WCSS "
                                << wcss_q;
 }
 
 // Pruning integration tests (need d >= 128 and k > 256)
 
-TEST_P(QuantizedIntegrationTest, SLOW_PruningConverges) {
+TYPED_TEST(QuantizedIntegrationTest, SLOW_PruningConverges) {
     const size_t n = 10000, d = 128, n_clusters = 300;
     std::vector<float> data = MakeBlobs(n, d, n_clusters);
 
     SuperKMeansConfig config;
     config.iters = 5;
-    config.quantizer_type = GetParam().type;
     config.use_blas_only = false;
 
-    auto kmeans = skm_u8(n_clusters, d, config);
+    auto kmeans = SuperKMeans<TypeParam::value>(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
     EXPECT_EQ(centroids.size(), n_clusters * d);
 
@@ -403,28 +452,25 @@ TEST_P(QuantizedIntegrationTest, SLOW_PruningConverges) {
     EXPECT_LT(stats.back().objective, stats.front().objective);
 }
 
-TEST_P(QuantizedIntegrationTest, SLOW_PruningRecallCloseToNoPruning) {
+TYPED_TEST(QuantizedIntegrationTest, SLOW_PruningRecallCloseToNoPruning) {
     const std::string path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
-    float pruned =
-        skm_test::ClusteringRecall<Quantization::u8>(GetParam().type, path, 300, 1024, true);
-    float unpruned =
-        skm_test::ClusteringRecall<Quantization::u8>(GetParam().type, path, 300, 1024, false);
+    float pruned = skm_test::ClusteringRecall<TypeParam::value>(path, 300, 1024, true);
+    float unpruned = skm_test::ClusteringRecall<TypeParam::value>(path, 300, 1024, false);
     EXPECT_NEAR(pruned, unpruned, skm_test::RECALL_PRUNE_TOL)
         << "pruned=" << pruned << " unpruned=" << unpruned;
 }
 
-TEST_P(QuantizedIntegrationTest, SLOW_AssignTrainingPointsRecallMatchesQuantizedAssign) {
+TYPED_TEST(QuantizedIntegrationTest, SLOW_AssignTrainingPointsRecallMatchesQuantizedAssign) {
     const std::string path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
-    auto r =
-        skm_test::ClusteringRecallAssignMethods<Quantization::u8>(GetParam().type, path, 300, 1024);
+    auto r = skm_test::ClusteringRecallAssignMethods<TypeParam::value>(path, 300, 1024);
     EXPECT_GT(r.assign_training_points, 0.0f);
     EXPECT_GT(r.quantized_assign, 0.0f);
     EXPECT_NEAR(r.assign_training_points, r.quantized_assign, skm_test::RECALL_PRUNE_TOL)
         << "atp=" << r.assign_training_points << " qa=" << r.quantized_assign;
 }
 
-TEST_P(QuantizedIntegrationTest, SLOW_AssignTrainingPointsReuseMatchesQuantizedAssign) {
-    if (GetParam().type != QuantizerType::rabitq) {
+TYPED_TEST(QuantizedIntegrationTest, SLOW_AssignTrainingPointsReuseMatchesQuantizedAssign) {
+    if (TypeParam::value != Quantization::rabitq) {
         GTEST_SKIP() << "reuse and QuantizedAssign only share a quantization domain for rabitq";
     }
     const size_t n = 5000, d = 128, n_clusters = 300;
@@ -434,11 +480,10 @@ TEST_P(QuantizedIntegrationTest, SLOW_AssignTrainingPointsReuseMatchesQuantizedA
 
     SuperKMeansConfig config;
     config.iters = 10;
-    config.quantizer_type = GetParam().type;
     config.sampling_fraction = 1.0f;
     config.use_blas_only = false;
 
-    auto kmeans = skm_u8(n_clusters, d, config);
+    auto kmeans = SuperKMeans<TypeParam::value>(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
     auto approximate_assignments =

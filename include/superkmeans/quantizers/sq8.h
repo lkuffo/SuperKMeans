@@ -26,11 +26,16 @@ namespace skmeans {
  *
  * Global min/max quantization: q[i] = round((val[i] - base) * scale), clamped to [0, MAX_VALUE].
  * For L2 distance the base cancels: ||x-y||² = inv_scale² * Σ(x_q - y_q)².
+ *
+ * Code layout per vector:
+ *   [d u8 bytes]
+ *   CodeSize(d) = d
+ * base and scale are global (see GetParams()), so codes carry no per-vector metadata.
  */
-class SQ8Quantizer : public IQuantizer<Quantization::u8> {
+class SQ8Quantizer : public IQuantizer<Quantization::sq8> {
   public:
     using quantized_t = IQuantizer::quantized_t;
-    using u8_computer = DistanceComputer<DistanceFunction::l2, Quantization::u8>;
+    using u8_computer = DistanceComputer<DistanceFunction::l2, Quantization::sq8>;
 
     static constexpr uint8_t MAX_VALUE = 255;
 
@@ -249,7 +254,7 @@ class SQ8Quantizer : public IQuantizer<Quantization::u8> {
         size_t d,
         uint32_t* out_knn,
         float* out_distances,
-        PDXLayout<Quantization::u8, DistanceFunction::l2>& pdx_centroids,
+        PDXLayout<Quantization::sq8>& pdx_centroids,
         uint32_t partial_d,
         size_t* out_not_pruned_counts
     ) const override {

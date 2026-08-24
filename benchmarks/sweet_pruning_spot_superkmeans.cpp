@@ -130,10 +130,7 @@ int main(int argc, char* argv[]) {
                     config.angular = true;
                 }
 
-                auto kmeans_state =
-                    skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-                        n_clusters, d, config
-                    );
+                auto kmeans_state = skmeans::SuperKMeans(n_clusters, d, config);
 
                 bench_utils::TicToc timer;
                 timer.Tic();
