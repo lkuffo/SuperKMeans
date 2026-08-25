@@ -91,12 +91,17 @@ SuperKMeans supports **clustering quantized vectors**, substantially acceleratin
 kmeans = SuperKMeans(
     n_clusters=k,
     dimensionality=d,
-    quantizer='rabitq'
+    quantizer='rabitq' # or: sq8, lvq4
 )
 
 centroids = kmeans.train(data) # We return float32 centroids
 assignments = kmeans.quantized_assign(data, centroids)
 ```
+
+> [!TIP]
+> **Does quantized clustering hurt the index quality?** Usually, NO: in most embedding datasets, quantized clustering will get you right where full precision will (+ faster indexing). Read [our research paper](https://arxiv.org/pdf/2608.14648) for the full analysis.
+
+
 
 Check our fully working examples in [Python](./examples/quantized_clustering.py) or [C++](./examples/quantized_clustering.cpp).
 

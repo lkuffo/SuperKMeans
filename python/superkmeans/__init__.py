@@ -222,13 +222,11 @@ class SuperKMeans:
             If provided, enables early termination by recall
         overwrite_input : bool, optional (default=False)
             Rotate `data` in place instead of allocating a rotated copy, halving peak memory.
-            `data` is overwritten with its rotated form and is not restored, so it must be a
-            writeable, C-contiguous float32 array (no conversion is performed; a mismatch
-            raises rather than silently copying). Requires sampling_fraction == 1.0, which is
-            otherwise applied with a warning.
+            `data` is overwritten with its rotated form.
+            Requires sampling_fraction == 1.0, which is otherwise applied with a warning.
 
-            The returned centroids are rotated too: `unrotate_centroids` is forced to False so
-            that data and centroids stay in the same domain and remain directly comparable, so
+            `unrotate_centroids` is forced to False so that data and centroids stay 
+            in the same domain and remain directly comparable, so
             both `assign()` and `assign_training_points()` work as usual.
 
         Returns
@@ -512,9 +510,7 @@ class SuperKMeans:
     def quantized_data(self) -> Optional[NDArray[np.uint8]]:
         """Read-only view of the encoded training vectors, shape (n_encoded, code_size).
 
-        None before training, and None for quantizer="f32", which clusters the training data
-        directly instead of encoding a copy. This is a view into the model's own buffer, not a
-        copy, so it stays valid only while the model is alive.
+        None before training, and None for quantizer="f32".
         """
         if self._cpp_skmeans_obj is None:
             return None

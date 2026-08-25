@@ -105,13 +105,12 @@ labels = kmeans.assign_training_points(data, centroids)
 ```
 
 `data` is overwritten and is **not** restored, so it must be a writeable, C-contiguous float32
-array — no conversion is performed, and a mismatch raises rather than silently copying (which
-would defeat the purpose). It also requires `sampling_fraction == 1.0`, which is otherwise
+array — no conversion is performed, and a mismatch raises rather than silently copying. 
+It also requires `sampling_fraction == 1.0`, which is otherwise
 applied with a warning, since sampling gathers scattered rows and cannot be done in place.
 
-The returned centroids are rotated too — `unrotate_centroids` is forced to `False` — so data and
-centroids stay in the same domain and remain directly comparable. Both `assign()` and
-`assign_training_points()` work as usual on the rotated buffer.
+The returned centroids are rotated too — `unrotate_centroids` is forced to `False` (data and
+centroids stay in the same domain). 
 
 **`assign(vectors, centroids)`**
 
@@ -145,7 +144,7 @@ Fast assignment of the training data, reusing state from `train()`. `vectors` mu
 Training rotates the data before clustering. `rotate()` brings vectors *into* that domain,
 `unrotate()` brings them back out. Both require a trained model and return a new array.
 
-`rotate()` is what you need for queries after `train(overwrite_input=True)`, since the data and
+Use `rotate()` after `train(overwrite_input=True)`, since the data and
 centroids are left in the rotated domain:
 
 ```python
@@ -169,19 +168,15 @@ hits = kmeans.assign(kmeans.rotate(queries), centroids)
 - `quantization_params` (dict): Global parameters of the fitted quantizer, or `None` before
   training — see the table below
 - `quantized_data` (ndarray): Read-only view of the encoded training vectors, shape
-  `(n_encoded, code_size)`, dtype uint8. `None` for `quantizer="f32"`, which clusters the data
-  directly instead of encoding a copy
+  `(n_encoded, code_size)`, dtype uint8. `None` for `quantizer="f32"`
 - `sampled_indices` (ndarray): Read-only view mapping encoded row `i` to original row
   `sampled_indices[i]`. `None` when `sampling_fraction == 1.0`, where encoded row `i` *is* row `i`
 
-`quantized_data` and `sampled_indices` are **views into the model's own buffers, not copies** — so
-reading them is free regardless of size, but they stay valid only while the model is alive (the view
-holds a reference to it) and cannot be written to.
 
 ##### Code layout per scheme
 
-Together with the layout below, `quantization_params` is enough to interpret `quantized_data`
-yourself. Note the codes encode the **rotated** vectors, so use `unrotate()` to get back to the
+`quantization_params` is enough to interpret `quantized_data`. 
+Note the codes encode the **rotated** vectors, so use `unrotate()` to get back to the
 input domain.
 
 | scheme | `code_size` | layout per vector | `quantization_params` |

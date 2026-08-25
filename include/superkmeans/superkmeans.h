@@ -66,7 +66,7 @@ struct SuperKMeansConfig {
 };
 
 /**
- * @brief Observable state of a SuperKMeans instance. Records how training was carried out.
+ * @brief Observable state of a SuperKMeans instance.
  */
 struct SuperKMeansState {
     bool trained = false;
@@ -507,11 +507,7 @@ class SuperKMeans {
      * @brief Run k-means clustering to determine centroids.
      *
      * Transformations (rotation and/or quantization) are done in place using the caller's buffer.
-     * `data` is overwritten with its rotated form and is NOT restored, so on return the caller
-     * holds rotated vectors. The returned centroids are rotated too: unrotate_centroids is forced
-     * to false, so that data and centroids stay in the same domain and remain directly comparable
-     * (Assign(data, centroids) is valid). AssignTrainingPoints()/QuantizedAssign() take the
-     * rotated buffer as usual. Call Unrotate() to map back to the original domain.
+     * `unrotate_centroids is forced to false, so that data and centroids stay in the same domain
      *
      * Requires sampling_fraction == 1.0; a smaller value is overridden (with a warning) since
      * sampling gathers scattered rows and cannot be done in place.
@@ -1804,10 +1800,9 @@ class SuperKMeans {
     }
 
     /**
-     * @brief Rotates the caller's buffer in place and reconfigures for in-place training.
+     * @brief Reconfigures SuperKMeans for in-place training.
      *
-     * Once the buffer holds rotated vectors, data_already_rotated is set so that every downstream
-     * path (centroid generation, sampling, the assign family) treats it as such, and
+     * data_already_rotated is set so that every downstream path treats it as such
      * unrotate_centroids is cleared so the returned centroids stay in the same domain as the
      * caller's buffer.
      *

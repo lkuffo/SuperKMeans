@@ -54,7 +54,6 @@ inline void AccumulateNibbles(const uint8_t* code, size_t nbytes, uint32_t& sum,
 class LVQ4Quantizer : public IQuantizer<Quantization::lvq4> {
   public:
     using quantized_t = IQuantizer::quantized_t;
-    // The 4-bit nibble kernels are tagged sq4 (they predate lvq4)
     using u4_computer = DistanceComputer<DistanceFunction::l2, Quantization::sq4>;
     using u4_utils = UtilsComputer<Quantization::sq4>;
     using f32_utils = UtilsComputer<Quantization::f32>;

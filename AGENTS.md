@@ -167,13 +167,7 @@ invalid bounds** (no crash, just recall loss).
 `sampling_fraction = 1.0` with a warning, then `pruner->Rotate<true>`) and sets
 `config.data_already_rotated = true`, so the shared `Train` body then skips rotation and uses `data`
 directly as `data_to_cluster` — no `n × d` samples buffer is allocated at all (it is now allocated
-only `if (n_samples < n || !data_already_rotated)`, which also fixes a pre-existing waste for
-`data_already_rotated` users). It also forces `unrotate_centroids = false`: the caller's buffer is
-now in the rotated domain, so the centroids must be too, otherwise `Assign(data, centroids)` would
-silently compare across domains. `Rotate<IN_PLACE>` in
-`adsampling.h`: the DCT path is already in-place (`FlipSign` is elementwise, FFTW plans out→out), the
-matrix path can't alias its GEMM operands so it blocks through a scratch buffer of
-`INPLACE_ROTATION_BLOCK_ROWS` rows via `RotateImpl`.
+only `if (n_samples < n || !data_already_rotated)`. It forces `unrotate_centroids = false`: the caller's buffer is now in the rotated domain, so the centroids must be too
 
 **`SuperKMeansState` / `GetState()`** — how training was actually carried out (`trained`,
 `trained_in_place`, `training_data_rotated`, `code_size`, `n_encoded`, `rotator`), recorded at train

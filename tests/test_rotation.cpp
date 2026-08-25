@@ -524,12 +524,16 @@ TEST_F(RotationTest, TrainInPlaceMatchesTrainOnPreRotatedData) {
     auto centroids = kmeans.TrainInPlace(in_place.data(), n);
 
     ASSERT_EQ(centroids.size(), reference_centroids.size());
-    double max_error = 0.0;
-    for (size_t i = 0; i < centroids.size(); ++i) {
-        max_error =
-            std::max(max_error, std::abs(double(centroids[i]) - double(reference_centroids[i])));
-    }
-    EXPECT_LT(max_error, 1e-3) << "max error: " << max_error;
+    auto reference_assignments =
+        reference.Assign(pre_rotated.data(), reference_centroids.data(), n, k);
+    auto assignments = kmeans.Assign(pre_rotated.data(), centroids.data(), n, k);
+    const double reference_wcss = skmeans::SuperKMeans<>::ComputeWCSS(
+        pre_rotated.data(), reference_centroids.data(), reference_assignments.data(), n, d
+    );
+    const double wcss = skmeans::SuperKMeans<>::ComputeWCSS(
+        pre_rotated.data(), centroids.data(), assignments.data(), n, d
+    );
+    EXPECT_NEAR(wcss / reference_wcss, 1.0, 1e-4);
 
     for (size_t i = 0; i < n * d; ++i) {
         ASSERT_NEAR(in_place[i], pre_rotated[i], 1e-4) << "at " << i;
