@@ -25,16 +25,16 @@ struct HierarchicalSuperKMeansIterationStats {
     std::vector<SuperKMeansIterationStats> fineclustering_iteration_stats;
 };
 
-template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
-class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
-    using typename SuperKMeans<q, alpha>::centroid_value_t;
-    using typename SuperKMeans<q, alpha>::vector_value_t;
-    using typename SuperKMeans<q, alpha>::distance_t;
-    using typename SuperKMeans<q, alpha>::MatrixR;
-    using typename SuperKMeans<q, alpha>::VectorR;
-    using typename SuperKMeans<q, alpha>::pruner_t;
-    using typename SuperKMeans<q, alpha>::layout_t;
-    using typename SuperKMeans<q, alpha>::batch_computer;
+template <Quantization q = Quantization::f32>
+class HierarchicalSuperKMeans : public SuperKMeans<q> {
+    using typename SuperKMeans<q>::centroid_value_t;
+    using typename SuperKMeans<q>::vector_value_t;
+    using typename SuperKMeans<q>::distance_t;
+    using typename SuperKMeans<q>::MatrixR;
+    using typename SuperKMeans<q>::VectorR;
+    using typename SuperKMeans<q>::pruner_t;
+    using typename SuperKMeans<q>::layout_t;
+    using typename SuperKMeans<q>::batch_computer;
 
   public:
     /**
@@ -45,7 +45,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         size_t dimensionality,
         const HierarchicalSuperKMeansConfig& config
     )
-        : SuperKMeans<q, alpha>(n_clusters, dimensionality, config), hierarchical_config(config) {
+        : SuperKMeans<q>(n_clusters, dimensionality, config), hierarchical_config(config) {
         this->pruner = std::make_unique<pruner_t>(
             dimensionality, HIERARCHICAL_PRUNER_INITIAL_THRESHOLD, this->config.seed
         );
@@ -79,16 +79,16 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
      * @param data Pointer to the data matrix (row-major, n × d)
      * @param n Number of points (rows) in the data matrix
      *
-     * @return std::vector<skmeans_centroid_value_t<q>> Trained centroids
+     * @return std::vector<skmeans_centroid_value_t> Trained centroids
      */
-    std::vector<skmeans_centroid_value_t<q>> Train(
+    std::vector<skmeans_centroid_value_t> Train(
         const float* SKM_RESTRICT data,
         const size_t n,
         const float* SKM_RESTRICT queries = nullptr,
         const size_t n_queries = 0
     ) {
         SKMEANS_ENSURE_POSITIVE(n);
-        if (this->trained) {
+        if (this->state.trained) {
             throw std::runtime_error("The clustering has already been trained");
         }
         if (n_queries > 0) {
@@ -110,6 +110,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         const float* SKM_RESTRICT data_p = data;
         this->n_samples = this->GetNVectorsToSample(n, this->n_clusters);
         this->n_train = n;
+        this->state.training_data_rotated = this->hierarchical_config.data_already_rotated;
+        this->state.rotator = this->pruner.get();
         if (this->n_samples < this->n_clusters) {
             throw std::runtime_error(
                 "Not enough samples to train. Try increasing the sampling_fraction or "
@@ -132,7 +134,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             this->centroid_norms.reset(new float[this->n_clusters]);
         }
         this->EnsureTmpDistancesBuffer();
-        this->vertical_d = PDXLayout<q, alpha>::GetDimensionSplit(this->PDXDim(this->d)).vertical_d;
+        this->vertical_d = PDXLayout<q>::GetDimensionSplit(this->PDXDim(this->d)).vertical_d;
         this->partial_horizontal_centroids.reset(
             new centroid_value_t[this->n_clusters * this->vertical_d]
         );
@@ -153,7 +155,10 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             std::cout << "Sampling data..." << std::endl;
         }
         // Samples for both mesoclustering and fineclustering
-        std::unique_ptr<float[]> data_samples_buffer(new float[this->n_samples * this->d]);
+        std::unique_ptr<float[]> data_samples_buffer;
+        if (this->n_samples < n || !this->hierarchical_config.data_already_rotated) {
+            data_samples_buffer.reset(new float[this->n_samples * this->d]);
+        }
         auto data_to_cluster = this->SampleAndRotateVectors(
             data_p,
             data_samples_buffer.get(),
@@ -172,6 +177,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         this->quantizer = this->CreateQuantizer();
         this->quantizer->Fit(data_to_cluster, this->n_samples, this->d);
         this->code_size = this->quantizer->CodeSize(this->d);
+        this->state.code_size = this->code_size;
+        this->state.n_encoded = this->n_samples;
 
         // Non-PDX quantizers must override vertical_d to full d
         if (this->quantizer->SupportsPruning() && !this->quantizer->NeedsPDXLayout()) {
@@ -215,7 +222,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                 this->partial_hor_quantized_centroids.reset(
                     new vector_value_t[this->n_clusters * this->PDXDim(this->vertical_d)]
                 );
-                PDXLayout<q, alpha>::template PDXify<false>(
+                PDXLayout<q>::template PDXify<false>(
                     this->quantized_centroids.get(),
                     this->pdxified_quantized_centroids.get(),
                     n_mesoclusters,
@@ -416,7 +423,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             );
             if constexpr (q != Quantization::f32) {
                 if (this->quantizer->SupportsPruning() && this->quantizer->NeedsPDXLayout()) {
-                    PDXLayout<q, alpha>::template PDXify<false>(
+                    PDXLayout<q>::template PDXify<false>(
                         this->quantized_centroids.get(),
                         this->pdxified_quantized_centroids.get(),
                         n_fineclusters,
@@ -645,16 +652,43 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
                              timer_refinement.GetMilliseconds()
                       << " ms" << std::endl;
         }
-        this->trained = true;
+        this->state.trained = true;
 
-        // TODO(@lkuffo, high): If unrotate_centroids is false, this computes incorrect assignments
-        //   because it's using unrotated data with rotated output_centroids
         auto output_centroids =
             this->GetOutputCentroids(this->hierarchical_config.unrotate_centroids);
         if (this->hierarchical_config.verbose) {
             Profiler::Get().PrintHierarchical();
         }
         return output_centroids;
+    }
+
+    /**
+     * @brief Run hierarchical k-means clustering to determine centroids.
+     *
+     * Transformations (rotation and/or quantization) are done in place using the caller's buffer.
+     * `data` is overwritten with its rotated form and is NOT restored, so on return the caller
+     * holds rotated vectors. The returned centroids are rotated too: unrotate_centroids is forced
+     * to false, so that data and centroids stay in the same domain and remain directly comparable
+     * (Assign(data, centroids) is valid). AssignTrainingPoints()/QuantizedAssign() take the
+     * rotated buffer as usual. Call Unrotate() to map back to the original domain.
+     *
+     * Requires sampling_fraction == 1.0; a smaller value is overridden (with a warning) since
+     * sampling gathers scattered rows and cannot be done in place.
+     *
+     * @param data Pointer to the data matrix (row-major, n × d). Overwritten with rotated data.
+     * @param n Number of points (rows) in the data matrix
+     *
+     * @return std::vector<skmeans_centroid_value_t> Trained centroids
+     */
+    std::vector<skmeans_centroid_value_t> TrainInPlace(
+        float* SKM_RESTRICT data,
+        const size_t n,
+        const float* SKM_RESTRICT queries = nullptr,
+        const size_t n_queries = 0
+    ) {
+        this->ConfigInPlaceTraining(data, n);
+        static_cast<SuperKMeansConfig&>(hierarchical_config) = this->config;
+        return Train(data, n, queries, n_queries);
     }
 
     /**
@@ -925,7 +959,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
      * @param n_clusters Number of centroids to setupt
      * @return PDXLayout wrapper for the centroids
      */
-    PDXLayout<q, alpha> SetupCentroids(
+    PDXLayout<q> SetupCentroids(
         const centroid_value_t* SKM_RESTRICT centroids,
         const size_t n_clusters
     ) {
@@ -938,13 +972,13 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
         if constexpr (q == Quantization::f32) {
             {
                 SKM_PROFILE_SCOPE("consolidate/pdxify");
-                PDXLayout<q, alpha>::template PDXify<false>(
+                PDXLayout<q>::template PDXify<false>(
                     this->horizontal_centroids.get(), this->centroids.get(), n_clusters, this->d
                 );
             }
             //! We wrap centroids and partial_horizontal_centroids in the PDXLayout wrapper
             //! Any updates to these objects is reflected in the PDXLayout
-            auto pdx_centroids = PDXLayout<q, alpha>(
+            auto pdx_centroids = PDXLayout<q>(
                 this->centroids.get(),
                 *this->pruner,
                 n_clusters,
@@ -963,7 +997,7 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
             );
             if (this->quantizer->SupportsPruning() && this->quantizer->NeedsPDXLayout()) {
                 SKM_PROFILE_SCOPE("consolidate/pdxify");
-                PDXLayout<q, alpha>::template PDXify<false>(
+                PDXLayout<q>::template PDXify<false>(
                     this->quantized_centroids.get(),
                     this->pdxified_quantized_centroids.get(),
                     n_clusters,
@@ -994,28 +1028,8 @@ class HierarchicalSuperKMeans : public SuperKMeans<q, alpha> {
     HierarchicalSuperKMeansIterationStats hierarchical_iteration_stats;
 };
 
-template <QuantizerType scheme, DistanceFunction alpha = DistanceFunction::l2>
-class QuantizedHierarchicalSuperKMeans : public HierarchicalSuperKMeans<Quantization::u8, alpha> {
-    static_assert(
-        scheme != QuantizerType::none,
-        "QuantizedHierarchicalSuperKMeans requires sq8, lvq4, or rabitq"
-    );
-
-  public:
-    QuantizedHierarchicalSuperKMeans(
-        size_t n_clusters,
-        size_t dimensionality,
-        HierarchicalSuperKMeansConfig config = {}
-    )
-        : HierarchicalSuperKMeans<Quantization::u8, alpha>(
-              n_clusters,
-              dimensionality,
-              WithForcedQuantizer<scheme>(config)
-          ) {}
-};
-
-using HierarchicalSuperKMeansSQ8 = QuantizedHierarchicalSuperKMeans<QuantizerType::sq8>;
-using HierarchicalSuperKMeansLVQ4 = QuantizedHierarchicalSuperKMeans<QuantizerType::lvq4>;
-using HierarchicalSuperKMeansRabitQ = QuantizedHierarchicalSuperKMeans<QuantizerType::rabitq>;
+using HierarchicalSuperKMeansSQ8 = HierarchicalSuperKMeans<Quantization::sq8>;
+using HierarchicalSuperKMeansLVQ4 = HierarchicalSuperKMeans<Quantization::lvq4>;
+using HierarchicalSuperKMeansRabitQ = HierarchicalSuperKMeans<Quantization::rabitq>;
 
 } // namespace skmeans

@@ -13,7 +13,7 @@ int main() {
     for (auto& v : data)
         v = dist(rng);
 
-    skmeans::SuperKMeans<> skm(k, d);
+    skmeans::SuperKMeans skm(k, d);
     auto centroids = skm.Train(data.data(), n);
     auto assignments = skm.Assign(data.data(), centroids.data(), n, k);
 

@@ -35,10 +35,7 @@ TEST_F(HierarchicalSuperKMeansTest, ConfigSynchronizationWithParent) {
     config.seed = 123;
     config.sampling_fraction = 0.5f;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
 
     EXPECT_FALSE(kmeans.hierarchical_config.unrotate_centroids)
         << "unrotate_centroids should be forced to false when data_already_rotated=true";
@@ -69,10 +66,7 @@ TEST_F(HierarchicalSuperKMeansTest, BasicTraining_SmallDataset) {
     config.iters_refinement = 2;
     config.verbose = false;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
 
     EXPECT_FALSE(kmeans.IsTrained());
 
@@ -97,10 +91,7 @@ TEST_F(HierarchicalSuperKMeansTest, AllClustersUsed) {
     config.iters_refinement = 4;
     config.verbose = false;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
     auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
@@ -124,10 +115,7 @@ TEST_F(HierarchicalSuperKMeansTest, PerformAssignments_PopulatesAssignments) {
     config.iters_refinement = 2;
     config.verbose = false;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
     auto assignments = kmeans.Assign(data.data(), centroids.data(), n, n_clusters);
@@ -137,19 +125,6 @@ TEST_F(HierarchicalSuperKMeansTest, PerformAssignments_PopulatesAssignments) {
         EXPECT_LT(assignments[i], n_clusters)
             << "Assignment " << i << " has invalid cluster index: " << assignments[i];
     }
-}
-
-TEST_F(HierarchicalSuperKMeansTest, FlatRejectsQuantizerType) {
-    EXPECT_THROW(
-        ([&]() {
-            skmeans::HierarchicalSuperKMeansConfig config;
-            config.quantizer_type = skmeans::QuantizerType::sq8;
-            skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(10, 64, config);
-        }()),
-        std::invalid_argument
-    );
 }
 
 TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
@@ -162,9 +137,7 @@ TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // More clusters than data points
     EXPECT_THROW(
         ([&]() {
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(n + 10, d);
+            auto kmeans = skmeans::HierarchicalSuperKMeans(n + 10, d);
             kmeans.Train(data.data(), n);
         }()),
         std::runtime_error
@@ -172,21 +145,12 @@ TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
 
     // Zero n_clusters
     EXPECT_THROW(
-        ([&]() {
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(0, d);
-        }()),
-        std::invalid_argument
+        ([&]() { auto kmeans = skmeans::HierarchicalSuperKMeans(0, d); }()), std::invalid_argument
     );
 
     // Zero dimensionality
     EXPECT_THROW(
-        ([&]() {
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(n_clusters, 0);
-        }()),
+        ([&]() { auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, 0); }()),
         std::invalid_argument
     );
 
@@ -195,9 +159,7 @@ TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
         ([&]() {
             skmeans::HierarchicalSuperKMeansConfig config;
             config.iters_mesoclustering = 0;
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(n_clusters, d, config);
+            auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
         }()),
         std::invalid_argument
     );
@@ -207,9 +169,7 @@ TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
         ([&]() {
             skmeans::HierarchicalSuperKMeansConfig config;
             config.sampling_fraction = 0.0f;
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(n_clusters, d, config);
+            auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
         }()),
         std::invalid_argument
     );
@@ -219,9 +179,7 @@ TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
         ([&]() {
             skmeans::HierarchicalSuperKMeansConfig config;
             config.sampling_fraction = -0.5f;
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(n_clusters, d, config);
+            auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
         }()),
         std::invalid_argument
     );
@@ -231,9 +189,7 @@ TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
         ([&]() {
             skmeans::HierarchicalSuperKMeansConfig config;
             config.sampling_fraction = 1.5f;
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(n_clusters, d, config);
+            auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
         }()),
         std::invalid_argument
     );
@@ -241,9 +197,7 @@ TEST_F(HierarchicalSuperKMeansTest, InvalidInputs_ThrowExceptions) {
     // Training twice
     EXPECT_THROW(
         ([&]() {
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::f32,
-                skmeans::DistanceFunction::l2>(n_clusters, d);
+            auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d);
             kmeans.Train(data.data(), n);
             kmeans.Train(data.data(), n); // Should throw
         }()),
@@ -265,10 +219,7 @@ TEST_F(HierarchicalSuperKMeansTest, IterationStats_Populated) {
     config.verbose = false;
     config.early_termination = false;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
     const auto& hierarchical_stats = kmeans.hierarchical_iteration_stats;
@@ -285,9 +236,7 @@ TEST_F(HierarchicalSuperKMeansTest, IterationStats_Populated) {
     // Fineclustering stats
     // With early_termination=false, we expect exactly n_mesoclusters * iters_fineclustering
     // iterations
-    size_t n_mesoclusters = skmeans::HierarchicalSuperKMeans<
-        skmeans::Quantization::f32,
-        skmeans::DistanceFunction::l2>::GetNMesoclusters(n_clusters);
+    size_t n_mesoclusters = skmeans::HierarchicalSuperKMeans<>::GetNMesoclusters(n_clusters);
     size_t expected_fineclustering_iters = n_mesoclusters * config.iters_fineclustering;
     EXPECT_EQ(
         hierarchical_stats.fineclustering_iteration_stats.size(), expected_fineclustering_iters
@@ -326,10 +275,7 @@ TEST_F(HierarchicalSuperKMeansTest, Objective_MonotonicallyDecreases) {
     config.early_termination = false;
     config.sampling_fraction = 1.0f;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
     const auto& hierarchical_stats = kmeans.hierarchical_iteration_stats;
@@ -406,10 +352,7 @@ TEST_F(HierarchicalSuperKMeansTest, EarlyTermination_Mesoclustering) {
     config_early.seed = 42;
     config_early.sampling_fraction = 1.0f;
 
-    auto kmeans_early =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config_early
-        );
+    auto kmeans_early = skmeans::HierarchicalSuperKMeans(n_clusters, d, config_early);
     kmeans_early.Train(data.data(), n);
     const auto& stats_early =
         kmeans_early.hierarchical_iteration_stats.mesoclustering_iteration_stats;
@@ -425,10 +368,7 @@ TEST_F(HierarchicalSuperKMeansTest, EarlyTermination_Mesoclustering) {
     config_no_early.seed = 42;
     config_no_early.sampling_fraction = 1.0f;
 
-    auto kmeans_no_early =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config_no_early
-        );
+    auto kmeans_no_early = skmeans::HierarchicalSuperKMeans(n_clusters, d, config_no_early);
     kmeans_no_early.Train(data.data(), n);
     const auto& stats_no_early =
         kmeans_no_early.hierarchical_iteration_stats.mesoclustering_iteration_stats;
@@ -470,9 +410,7 @@ TEST_F(HierarchicalSuperKMeansTest, SLOW_Sampling_AffectsSpeed) {
         config.sampling_fraction = 1.0f;
         config.seed = static_cast<uint32_t>(42 + i);
 
-        auto kmeans = skmeans::HierarchicalSuperKMeans<
-            skmeans::Quantization::f32,
-            skmeans::DistanceFunction::l2>(n_clusters, d, config);
+        auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
 
         timer_full.Tic();
         kmeans.Train(data.data(), n);
@@ -486,9 +424,7 @@ TEST_F(HierarchicalSuperKMeansTest, SLOW_Sampling_AffectsSpeed) {
         config.sampling_fraction = 0.3f;
         config.seed = static_cast<uint32_t>(42 + i);
 
-        auto kmeans = skmeans::HierarchicalSuperKMeans<
-            skmeans::Quantization::f32,
-            skmeans::DistanceFunction::l2>(n_clusters, d, config);
+        auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
 
         timer_sampled.Tic();
         kmeans.Train(data.data(), n);
@@ -523,17 +459,11 @@ TEST_F(HierarchicalSuperKMeansTest, Reproducibility_SameSeed) {
     config.sampling_fraction = 1.0f;
 
     // First run
-    auto kmeans1 =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans1 = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids1 = kmeans1.Train(data.data(), n);
 
     // Second run with same seed
-    auto kmeans2 =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans2 = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids2 = kmeans2.Train(data.data(), n);
 
     // Centroids should be identical
@@ -559,10 +489,7 @@ TEST_F(HierarchicalSuperKMeansTest, SmallClusters_PrintsWarning) {
 
     // Should print warning for n_clusters < 128
     testing::internal::CaptureStdout();
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     std::string output = testing::internal::GetCapturedStdout();
 
     EXPECT_TRUE(output.find("WARNING") != std::string::npos) << "Should warn for n_clusters < 128";
@@ -582,10 +509,7 @@ TEST_F(HierarchicalSuperKMeansTest, AssignMethod_ProducesValidAssignments) {
     config.sampling_fraction = 1.0f;
     config.verbose = false;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
     // Use Assign method
@@ -617,10 +541,7 @@ TEST_F(HierarchicalSuperKMeansTest, AngularMode_Normalizes) {
     config.angular = true;
     config.verbose = false;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
     EXPECT_EQ(centroids.size(), n_clusters * d);
@@ -639,31 +560,26 @@ TEST_F(HierarchicalSuperKMeansTest, AngularMode_Normalizes) {
 }
 
 TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignPathsValid) {
-    const std::vector<std::pair<skmeans::QuantizerType, const char*>> quantizers = {
-        {skmeans::QuantizerType::sq8, "sq8"},
-        {skmeans::QuantizerType::lvq4, "lvq4"},
-        {skmeans::QuantizerType::rabitq, "rabitq"},
-    };
     const size_t n = 15000;
     const size_t d = 128;
     const size_t n_clusters = 300;
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
 
-    for (int iters_refinement : {0, 1}) {
-        SCOPED_TRACE("iters_refinement=" + std::to_string(iters_refinement));
-        for (const auto& [qt, name] : quantizers) {
-            SCOPED_TRACE(name);
+    auto run = [&](auto tag, int iters_refinement) {
+        constexpr skmeans::Quantization qt = decltype(tag)::value;
+        SCOPED_TRACE(
+            std::string(skmeans::QuantizationName(qt)) +
+            " iters_refinement=" + std::to_string(iters_refinement)
+        );
+        {
             skmeans::HierarchicalSuperKMeansConfig config;
             config.iters_mesoclustering = 5;
             config.iters_fineclustering = 5;
             config.iters_refinement = iters_refinement;
             config.seed = 42;
             config.sampling_fraction = 1.0f;
-            config.quantizer_type = qt;
 
-            auto kmeans = skmeans::HierarchicalSuperKMeans<
-                skmeans::Quantization::u8,
-                skmeans::DistanceFunction::l2>(n_clusters, d, config);
+            auto kmeans = skmeans::HierarchicalSuperKMeans<qt>(n_clusters, d, config);
             auto centroids = kmeans.Train(data.data(), n);
             ASSERT_EQ(centroids.size(), n_clusters * d);
 
@@ -692,11 +608,16 @@ TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignPathsValid) {
             }
             EXPECT_GE(static_cast<double>(agree_quant_exact) / n, 0.85)
                 << "quantized vs exact agreement too low";
-            if (qt == skmeans::QuantizerType::rabitq) {
+            if (qt == skmeans::Quantization::rabitq) {
                 EXPECT_GE(static_cast<double>(agree_reuse_quant) / n, 0.90)
                     << "reuse vs quantized agreement too low";
             }
         }
+    };
+    for (int iters_refinement : {0, 1}) {
+        run(skmeans::QuantizationTag<skmeans::Quantization::sq8>{}, iters_refinement);
+        run(skmeans::QuantizationTag<skmeans::Quantization::lvq4>{}, iters_refinement);
+        run(skmeans::QuantizationTag<skmeans::Quantization::rabitq>{}, iters_refinement);
     }
 }
 
@@ -728,47 +649,15 @@ TYPED_TEST(HierarchicalQuantizedWrapperTest, DefaultConfigForcesSchemeAndTrains)
         ASSERT_LT(assignments[i], n_clusters) << "at " << i;
 }
 
-TEST(HierarchicalQuantizedWrapper, ForcesSchemeOverMismatchedConfig) {
-    const size_t n = 15000, d = 128, n_clusters = 300;
-    std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
-
-    skmeans::HierarchicalSuperKMeansConfig config;
-    config.iters_mesoclustering = 5;
-    config.iters_fineclustering = 5;
-    config.seed = 42;
-    config.n_threads = 1;
-    config.early_termination = false;
-    config.quantizer_type = skmeans::QuantizerType::sq8;
-
-    auto wrapped =
-        skmeans::HierarchicalSuperKMeansLVQ4(n_clusters, d, config).Train(data.data(), n);
-
-    skmeans::HierarchicalSuperKMeansConfig forced = config;
-    forced.quantizer_type = skmeans::QuantizerType::lvq4;
-    auto direct =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::u8, skmeans::DistanceFunction::l2>(
-            n_clusters, d, forced
-        )
-            .Train(data.data(), n);
-
-    ASSERT_EQ(wrapped.size(), direct.size());
-    for (size_t i = 0; i < wrapped.size(); ++i)
-        EXPECT_FLOAT_EQ(wrapped[i], direct[i]) << "at " << i;
-}
-
 TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignTrainingPointsBlasOnlyReuse) {
-    const std::vector<std::pair<skmeans::QuantizerType, const char*>> quantizers = {
-        {skmeans::QuantizerType::sq8, "sq8"},
-        {skmeans::QuantizerType::lvq4, "lvq4"},
-        {skmeans::QuantizerType::rabitq, "rabitq"},
-    };
     const size_t n = 15000;
     const size_t d = 128;
     const size_t n_clusters = 300;
     std::vector<float> data = skmeans::MakeBlobs(n, d, n_clusters, false, 1.0f, 10.0f, 42);
 
-    for (const auto& [qt, name] : quantizers) {
-        SCOPED_TRACE(name);
+    auto run = [&](auto tag) {
+        constexpr skmeans::Quantization qt = decltype(tag)::value;
+        SCOPED_TRACE(skmeans::QuantizationName(qt));
         skmeans::HierarchicalSuperKMeansConfig config;
         config.iters_mesoclustering = 5;
         config.iters_fineclustering = 5;
@@ -776,11 +665,8 @@ TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignTrainingPointsBlasOnlyReuse)
         config.seed = 42;
         config.sampling_fraction = 1.0f;
         config.use_blas_only = true;
-        config.quantizer_type = qt;
 
-        auto kmeans = skmeans::HierarchicalSuperKMeans<
-            skmeans::Quantization::u8,
-            skmeans::DistanceFunction::l2>(n_clusters, d, config);
+        auto kmeans = skmeans::HierarchicalSuperKMeans<qt>(n_clusters, d, config);
         auto centroids = kmeans.Train(data.data(), n);
         ASSERT_EQ(centroids.size(), n_clusters * d);
 
@@ -796,7 +682,10 @@ TEST_F(HierarchicalSuperKMeansTest, Quantized_AssignTrainingPointsBlasOnlyReuse)
         }
         EXPECT_GE(static_cast<double>(agree_reuse_exact) / n, 0.85)
             << "gemm-only reuse vs exact agreement too low";
-    }
+    };
+    run(skmeans::QuantizationTag<skmeans::Quantization::sq8>{});
+    run(skmeans::QuantizationTag<skmeans::Quantization::lvq4>{});
+    run(skmeans::QuantizationTag<skmeans::Quantization::rabitq>{});
 }
 
 namespace {
@@ -813,10 +702,7 @@ void ExpectHierarchicalTrainAndAssignValid(
     config.seed = 42;
     config.sampling_fraction = 1.0f;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), n);
 
     ASSERT_EQ(centroids.size(), n_clusters * d);
@@ -965,10 +851,7 @@ TEST_P(HierarchicalWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
     config.angular = false;
     config.n_threads = 1;
 
-    auto kmeans =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), N_SAMPLES);
 
     const auto& hierarchical_stats = kmeans.hierarchical_iteration_stats;
@@ -1004,9 +887,7 @@ TEST_P(HierarchicalWCSSTest, MatchesGroundTruth_AndFineClusteringDecreases) {
 
     // Within each mesocluster's fineclustering block, WCSS should decrease
     const auto& fine_stats = hierarchical_stats.fineclustering_iteration_stats;
-    const size_t n_mesoclusters = skmeans::HierarchicalSuperKMeans<
-        skmeans::Quantization::f32,
-        skmeans::DistanceFunction::l2>::GetNMesoclusters(n_clusters);
+    const size_t n_mesoclusters = skmeans::HierarchicalSuperKMeans<>::GetNMesoclusters(n_clusters);
     const size_t iters_fine = ITERS_FINECLUSTERING;
     ASSERT_EQ(fine_stats.size(), n_mesoclusters * iters_fine)
         << "Expected " << n_mesoclusters * iters_fine << " fineclustering iterations";
@@ -1045,38 +926,86 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(HierarchicalRecallGroundTruthTest, F32_MatchesGroundTruth) {
     omp_set_num_threads(1);
-    float recall = skm_test::HierarchicalClusteringRecall<skmeans::Quantization::f32>(
-        skmeans::QuantizerType::none, CMAKE_SOURCE_DIR "/tests/test_data.bin"
-    );
+    float recall =
+        skm_test::HierarchicalClusteringRecall<skmeans::Quantization::f32>(CMAKE_SOURCE_DIR
+                                                                           "/tests/test_data.bin");
     EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at("hierarchical_f32") - skm_test::RECALL_TOL);
 }
 
-struct HierarchicalQParam {
-    skmeans::QuantizerType type;
-    const char* name;
+using QuantizedTags = ::testing::Types<
+    skmeans::QuantizationTag<skmeans::Quantization::sq8>,
+    skmeans::QuantizationTag<skmeans::Quantization::lvq4>,
+    skmeans::QuantizationTag<skmeans::Quantization::rabitq>>;
+
+struct QuantizerNames {
+    template <typename T>
+    static std::string GetName(int) {
+        return skmeans::QuantizationName(T::value);
+    }
 };
 
-class HierarchicalQuantizedRecallTest : public ::testing::TestWithParam<HierarchicalQParam> {};
+template <typename T>
+class HierarchicalQuantizedRecallTest : public ::testing::Test {};
 
-INSTANTIATE_TEST_SUITE_P(
-    Quantizers,
-    HierarchicalQuantizedRecallTest,
-    ::testing::Values(
-        HierarchicalQParam{skmeans::QuantizerType::sq8, "hierarchical_sq8"},
-        HierarchicalQParam{skmeans::QuantizerType::lvq4, "hierarchical_lvq4"},
-        HierarchicalQParam{skmeans::QuantizerType::rabitq, "hierarchical_rabitq"}
-    ),
-    [](const ::testing::TestParamInfo<HierarchicalQParam>& info) {
-        return std::string(info.param.name);
-    }
-);
+TYPED_TEST_SUITE(HierarchicalQuantizedRecallTest, QuantizedTags, QuantizerNames);
 
-TEST_P(HierarchicalQuantizedRecallTest, MatchesGroundTruth) {
+TYPED_TEST(HierarchicalQuantizedRecallTest, MatchesGroundTruth) {
     omp_set_num_threads(1);
-    float recall = skm_test::HierarchicalClusteringRecall<skmeans::Quantization::u8>(
-        GetParam().type, CMAKE_SOURCE_DIR "/tests/test_data.bin"
+    float recall = skm_test::HierarchicalClusteringRecall<TypeParam::value>(CMAKE_SOURCE_DIR
+                                                                            "/tests/test_data.bin");
+    const std::string gt_key =
+        std::string("hierarchical_") + skmeans::QuantizationName(TypeParam::value);
+    EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at(gt_key) - skm_test::RECALL_TOL);
+}
+
+TEST(HierarchicalRecallGroundTruthTest, F32_TrainInPlace_RecallMatchesTrain) {
+    omp_set_num_threads(1);
+    const char* path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
+    float recall = skm_test::HierarchicalClusteringRecall<skmeans::Quantization::f32>(path);
+    float recall_in_place =
+        skm_test::HierarchicalClusteringRecall<skmeans::Quantization::f32, true>(path);
+    EXPECT_NEAR(recall_in_place, recall, skm_test::RECALL_TOL);
+}
+
+TYPED_TEST(HierarchicalQuantizedRecallTest, TrainInPlace_RecallMatchesTrain) {
+    omp_set_num_threads(1);
+    const char* path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
+    float recall = skm_test::HierarchicalClusteringRecall<TypeParam::value>(path);
+    float recall_in_place = skm_test::HierarchicalClusteringRecall<TypeParam::value, true>(path);
+    EXPECT_NEAR(recall_in_place, recall, skm_test::RECALL_TOL);
+}
+
+template <typename T>
+class HierarchicalQuantizedStateTest : public ::testing::Test {};
+
+TYPED_TEST_SUITE(HierarchicalQuantizedStateTest, QuantizedTags, QuantizerNames);
+
+TYPED_TEST(HierarchicalQuantizedStateTest, ExposesQuantizerAndQuantizedBuffer) {
+    omp_set_num_threads(1);
+    const size_t n = 8000, d = 128, k = 300;
+    auto data = skm_test::LoadTestDataSubdim(
+        CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d
     );
-    EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at(GetParam().name) - skm_test::RECALL_TOL);
+
+    skmeans::HierarchicalSuperKMeansConfig config;
+    config.iters_mesoclustering = 2;
+    config.iters_fineclustering = 2;
+    config.seed = 42;
+    config.n_threads = 1;
+    config.suppress_warnings = true;
+    auto kmeans = skmeans::HierarchicalSuperKMeans<TypeParam::value>(k, d, config);
+    EXPECT_EQ(kmeans.GetQuantizer(), nullptr);
+    kmeans.Train(data.data(), n);
+
+    const auto* quantizer = kmeans.GetQuantizer();
+    ASSERT_NE(quantizer, nullptr);
+    EXPECT_TRUE(quantizer->IsFitted());
+    EXPECT_NE(kmeans.GetQuantizedData(), nullptr);
+
+    const auto& state = kmeans.GetState();
+    EXPECT_EQ(state.code_size, quantizer->CodeSize(d));
+    EXPECT_EQ(state.n_encoded, n);
+    EXPECT_NE(state.rotator, nullptr);
 }
 
 } // anonymous namespace

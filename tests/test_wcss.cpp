@@ -136,9 +136,7 @@ TEST_P(WCSSTest, MonotonicallyDecreases_AndMatchesGroundTruth) {
     config.n_threads = 1;
     config.max_points_per_cluster = 99999;
 
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
+    auto kmeans = skmeans::SuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), N_SAMPLES);
     const auto& stats = kmeans.iteration_stats;
     ASSERT_GE(stats.size(), 1) << "Expected at least 1 iteration recorded";
@@ -241,9 +239,7 @@ TEST_P(WCSSTest, BlasOnly_MonotonicallyDecreases_AndMatchesGroundTruth) {
     config.use_blas_only = true;
     config.max_points_per_cluster = 99999;
 
-    auto kmeans = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-        n_clusters, d, config
-    );
+    auto kmeans = skmeans::SuperKMeans(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), N_SAMPLES);
     const auto& stats = kmeans.iteration_stats;
     ASSERT_GE(stats.size(), 1) << "Expected at least 1 iteration recorded";
@@ -319,10 +315,17 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(RecallGroundTruthTest, F32_MatchesGroundTruth) {
     omp_set_num_threads(1);
-    float recall = skm_test::ClusteringRecall<skmeans::Quantization::f32>(
-        skmeans::QuantizerType::none, CMAKE_SOURCE_DIR "/tests/test_data.bin"
-    );
+    float recall = skm_test::ClusteringRecall<skmeans::Quantization::f32>(CMAKE_SOURCE_DIR
+                                                                          "/tests/test_data.bin");
     EXPECT_GE(recall, skm_test::RECALL_GROUND_TRUTH.at("f32") - skm_test::RECALL_TOL);
+}
+
+TEST(RecallGroundTruthTest, F32_TrainInPlace_RecallMatchesTrain) {
+    omp_set_num_threads(1);
+    const char* path = CMAKE_SOURCE_DIR "/tests/test_data.bin";
+    float recall = skm_test::ClusteringRecall<skmeans::Quantization::f32>(path);
+    float recall_in_place = skm_test::ClusteringRecall<skmeans::Quantization::f32, true>(path);
+    EXPECT_NEAR(recall_in_place, recall, skm_test::RECALL_TOL);
 }
 
 } // anonymous namespace

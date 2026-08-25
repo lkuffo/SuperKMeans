@@ -23,7 +23,7 @@ class F32Quantizer : public IQuantizer<Quantization::f32> {
     using quantized_t = IQuantizer::quantized_t; // float
 
     using batch_computer = BatchComputer<DistanceFunction::l2, Quantization::f32>;
-    using layout_t = PDXLayout<Quantization::f32, DistanceFunction::l2>;
+    using layout_t = PDXLayout<Quantization::f32>;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
     using VectorR = Eigen::VectorXf;
 

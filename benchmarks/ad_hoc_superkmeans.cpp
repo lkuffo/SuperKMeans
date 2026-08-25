@@ -19,6 +19,7 @@ int main(int argc, char* argv[]) {
     const std::string algorithm = "superkmeans";
     std::string dataset = (argc > 1) ? std::string(argv[1]) : std::string("yahoo");
     bool blas_only = !(argc > 2 && std::string(argv[2]) == "pruning");
+    bool in_place = (argc > 3 && std::string(argv[3]) == "inplace");
 
     auto it = bench_utils::DATASET_PARAMS.find(dataset);
     if (it == bench_utils::DATASET_PARAMS.end()) {
@@ -39,7 +40,8 @@ int main(int argc, char* argv[]) {
     std::cout << "=== Running algorithm: " << algorithm << " ===" << std::endl;
     std::cout << "Dataset: " << dataset << " (n=" << n << ", d=" << d << ")\n";
     std::cout << "n_clusters=" << n_clusters << " n_iters=" << n_iters
-              << " sampling_fraction=" << sampling_fraction << "\n";
+              << " sampling_fraction=" << sampling_fraction
+              << " training=" << (in_place ? "in-place" : "out-of-place") << "\n";
     std::cout << "Eigen # threads: " << Eigen::nbThreads()
               << " (note: it will always be 1 if BLAS is enabled)" << std::endl;
 
@@ -90,16 +92,22 @@ int main(int argc, char* argv[]) {
         config.angular = true;
     }
 
-    auto kmeans_state =
-        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans_state = skmeans::SuperKMeans(n_clusters, d, config);
+    const double rss_after_load = bench_utils::PeakRSSGiB();
+    std::cout << "Peak RSS after loading data: " << std::fixed << std::setprecision(2)
+              << rss_after_load << " GiB" << std::endl;
+
     bench_utils::TicToc timer;
     timer.Tic();
-    std::vector<float> centroids = kmeans_state.Train(
-        data.data(), n //, queries.data(), n_queries
-    );
+    std::vector<float> centroids =
+        in_place ? kmeans_state.TrainInPlace(data.data(), n) : kmeans_state.Train(data.data(), n);
     timer.Toc();
+
+    const double rss_after_train = bench_utils::PeakRSSGiB();
+    std::cout << "Peak RSS after training:     " << std::fixed << std::setprecision(2)
+              << rss_after_train << " GiB  (training added " << rss_after_train - rss_after_load
+              << " GiB)" << std::endl;
+
     double construction_time_ms = timer.GetMilliseconds();
     int actual_iterations = static_cast<int>(kmeans_state.iteration_stats.size());
     double final_objective = kmeans_state.iteration_stats.back().objective;
@@ -113,18 +121,17 @@ int main(int argc, char* argv[]) {
     auto assignments =
         kmeans_state.AssignTrainingPoints(data.data(), centroids.data(), n, n_clusters);
 
-    using SKM = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>;
+    using SKM = skmeans::SuperKMeans<>;
     double wcss_f32 = SKM::ComputeWCSS(data.data(), centroids.data(), assignments.data(), n, d);
     std::cout << "WCSS (f32): " << std::fixed << std::setprecision(2) << wcss_f32 << std::endl;
 
     auto balance_stats =
-        skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>::
-            GetClustersBalanceStats(assignments.data(), n, n_clusters);
+        skmeans::SuperKMeans<>::GetClustersBalanceStats(assignments.data(), n, n_clusters);
     balance_stats.print();
 
     // Compute top-k distances for a random sample of points
-    std::string topk_output =
-        bench_utils::BENCHMARKS_ROOT + "/results/topk_distances_" + dataset + "_f32.json";
+    std::string topk_output = bench_utils::BENCHMARKS_ROOT + "/results/topk_distances_" + dataset +
+                              "_f32" + (in_place ? "_inplace" : "") + ".json";
     bench_utils::ComputeAndStoreTopkDistances(
         data.data(),
         centroids.data(),
@@ -151,13 +158,24 @@ int main(int argc, char* argv[]) {
         std::cout << "Using " << n_queries << " queries (loaded " << gt_map.size()
                   << " from ground truth)" << std::endl;
 
+        // TrainInPlace leaves the data buffer and the centroids in the rotated domain, so the
+        // queries must be rotated too before being compared against the centroids.
+        std::vector<float> rotated_queries;
+        const float* queries_p = queries.data();
+        if (in_place) {
+            skmeans::ADSamplingPruner pruner(d, skmeans::PRUNER_INITIAL_THRESHOLD, config.seed);
+            rotated_queries.resize(n_queries * d);
+            pruner.Rotate(queries.data(), rotated_queries.data(), n_queries);
+            queries_p = rotated_queries.data();
+        }
+
         auto results_knn_10 = bench_utils::ComputeRecall(
-            gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 10
+            gt_map, assignments, queries_p, centroids.data(), n_queries, n_clusters, d, 10
         );
         bench_utils::PrintRecallResults(results_knn_10, 10);
 
         auto results_knn_100 = bench_utils::ComputeRecall(
-            gt_map, assignments, queries.data(), centroids.data(), n_queries, n_clusters, d, 100
+            gt_map, assignments, queries_p, centroids.data(), n_queries, n_clusters, d, 100
         );
         bench_utils::PrintRecallResults(results_knn_100, 100);
     } else {

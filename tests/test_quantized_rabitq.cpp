@@ -20,8 +20,6 @@ using namespace skmeans;
 
 namespace {
 
-using skm_u8 = SuperKMeans<Quantization::u8, DistanceFunction::l2>;
-
 std::vector<float> ColumnMean(const std::vector<float>& data, size_t n, size_t d) {
     std::vector<double> acc(d, 0.0);
     for (size_t i = 0; i < n; ++i)
@@ -188,4 +186,36 @@ TEST_F(RaBitQQuantizerTest, FindNearestNeighbor_HighDimensionNoOverflow) {
     // (guards the uint16 FastScan accumulator boundary).
     EXPECT_GT(NearestNeighborRecall(2048, 16, 20, 11), 0.9);
     EXPECT_GT(NearestNeighborRecall(RABITQ_MAX_DIMS, 16, 12, 13), 0.9);
+}
+
+TEST(RaBitQStateParams, ExposedCentroidIsTheRotatedDataMean) {
+    const size_t n = 3000, d = 128, n_clusters = 300;
+    auto data = skm_test::LoadTestDataSubdim(
+        CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d
+    );
+
+    SuperKMeansConfig config;
+    config.iters = 3;
+    config.seed = 42;
+    config.n_threads = 1;
+    config.sampling_fraction = 1.0f;
+    config.max_points_per_cluster = 99999;
+    config.suppress_warnings = true;
+
+    auto kmeans = SuperKMeansRabitQ(n_clusters, d, config);
+    std::vector<float> rotated(data);
+    kmeans.TrainInPlace(rotated.data(), n);
+
+    const auto* rabitq = dynamic_cast<const RaBitQQuantizer*>(kmeans.GetQuantizer());
+    ASSERT_NE(rabitq, nullptr);
+    const auto params = rabitq->GetParams();
+    ASSERT_NE(params.centroid, nullptr);
+    EXPECT_EQ(params.binary_bytes, (d + 7) / 8);
+    EXPECT_EQ(kmeans.GetState().code_size, params.binary_bytes + sizeof(RaBitQFactors));
+
+    // Fit runs on the rotated training data, so the exposed centroid is its column mean
+    auto expected = ColumnMean(rotated, n, d);
+    for (size_t j = 0; j < d; ++j) {
+        ASSERT_NEAR(params.centroid[j], expected[j], 1e-4f) << "at dim " << j;
+    }
 }

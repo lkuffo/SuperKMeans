@@ -94,10 +94,7 @@ int main(int argc, char* argv[]) {
         config.angular = true;
     }
 
-    auto kmeans_state =
-        skmeans::HierarchicalSuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>(
-            n_clusters, d, config
-        );
+    auto kmeans_state = skmeans::HierarchicalSuperKMeans(n_clusters, d, config);
     bench_utils::TicToc timer;
     timer.Tic();
     std::vector<float> centroids = kmeans_state.Train(
@@ -128,13 +125,13 @@ int main(int argc, char* argv[]) {
         kmeans_state.assignments.get(), kmeans_state.assignments.get() + n
     );
 
-    using SKM = skmeans::SuperKMeans<skmeans::Quantization::f32, skmeans::DistanceFunction::l2>;
+    using SKM = skmeans::SuperKMeans<>;
     double wcss_f32 = SKM::ComputeWCSS(data.data(), centroids.data(), assignments.data(), n, d);
     std::cout << "WCSS (f32): " << std::fixed << std::setprecision(2) << wcss_f32 << std::endl;
 
-    auto balance_stats = skmeans::HierarchicalSuperKMeans<
-        skmeans::Quantization::f32,
-        skmeans::DistanceFunction::l2>::GetClustersBalanceStats(assignments.data(), n, n_clusters);
+    auto balance_stats = skmeans::HierarchicalSuperKMeans<>::GetClustersBalanceStats(
+        assignments.data(), n, n_clusters
+    );
     balance_stats.print();
 
     // Compute recall if ground truth file exists

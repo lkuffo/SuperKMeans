@@ -26,6 +26,14 @@ struct RaBitQFactors {
 static_assert(sizeof(RaBitQFactors) == 8);
 
 /**
+ * @brief Trained RaBitQ parameters.
+ */
+struct RaBitQParams {
+    const float* centroid;
+    size_t binary_bytes;
+};
+
+/**
  * @brief RaBitQ quantizer with FastScan-accelerated distance kernel.
  *
  * Distance computation uses a custom FastScan kernel (VPSHUFB/TBL lookups)
@@ -34,8 +42,13 @@ static_assert(sizeof(RaBitQFactors) == 8);
  * For k-means: centroids (K, small) are SQ-quantized to qb bits once,
  * then LUTs are built from the quantized values. Data points (N, large)
  * are byte-transposed into blocks of 32 for SIMD lookup.
+ *
+ * Code layout per vector:
+ *   [(d+7)/8 sign bytes] [float or_minus_c_l2sqr: 4B] [float dp_multiplier: 4B]
+ *   CodeSize(d) = (d+7)/8 + 8
+ * The centering centroid is global (see GetParams()); the two factors are per-vector.
  */
-class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
+class RaBitQQuantizer : public IQuantizer<Quantization::rabitq> {
   public:
     using quantized_t = IQuantizer::quantized_t;
 
@@ -257,6 +270,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
     bool IsFitted() const override { return fitted_; }
     bool SupportsPruning() const override { return true; }
     bool NeedsPDXLayout() const override { return false; }
+    RaBitQParams GetParams() const { return {centroid_.data(), binary_bytes_}; }
 
     /// Front checkpoint fraction, 8-aligned for bitplane layout.
     /// Note: vertical_d == d for RaBitQ (NeedsPDXLayout() is false).
@@ -370,7 +384,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         size_t d,
         uint32_t* out_knn,
         float* out_distances,
-        PDXLayout<Quantization::u8, DistanceFunction::l2>& /*pdx_centroids*/,
+        PDXLayout<Quantization::rabitq>& /*pdx_centroids*/,
         uint32_t partial_d,
         size_t* out_not_pruned_counts
     ) const override {
@@ -446,7 +460,7 @@ class RaBitQQuantizer : public IQuantizer<Quantization::u8> {
         const size_t block_bytes = FastScanComputer::kBlockSize * binary_bytes_;
         const size_t n_blocks = cached_n_blocks_;
 
-        using b8_computer = DistanceComputer<DistanceFunction::l2, Quantization::b8>;
+        using b8_computer = DistanceComputer<DistanceFunction::l2, Quantization::rabitq>;
 
         {
             constexpr size_t kSuperBlock = 4;

@@ -2,7 +2,7 @@
   Super K-Means
 <div align="center">
     <a href="https://arxiv.org/pdf/2603.20009"><img src="https://img.shields.io/badge/Paper%20I-SuperKMeans-red" alt="Paper" /></a>
-    <a href="https://arxiv.org/pdf/2603.20009"><img src="https://img.shields.io/badge/Paper%20II-Quantized%20Clustering-red" alt="Paper" /></a>
+    <a href="https://arxiv.org/pdf/2608.14648"><img src="https://img.shields.io/badge/Paper%20II-Quantized%20Clustering-red" alt="Paper" /></a>
     <a href="https://pypi.org/project/superkmeans/"><img src="https://img.shields.io/pypi/pyversions/superkmeans.svg" alt="PyPI" /></a>
     <img src="https://github.com/cwida/SuperKMeans/actions/workflows/ci.yml/badge.svg?cacheSeconds=3600" alt="License" />
     <a href="https://github.com/cwida/SuperKMeans/blob/main/LICENSE"><img src="https://img.shields.io/github/license/cwida/SuperKMeans?cacheSeconds=3600" alt="License" /></a>
@@ -91,12 +91,17 @@ SuperKMeans supports **clustering quantized vectors**, substantially acceleratin
 kmeans = SuperKMeans(
     n_clusters=k,
     dimensionality=d,
-    quantizer='rabitq'
+    quantizer='rabitq' # or: sq8, lvq4
 )
 
 centroids = kmeans.train(data) # We return float32 centroids
 assignments = kmeans.quantized_assign(data, centroids)
 ```
+
+> [!TIP]
+> **Does quantized clustering hurt the index quality?** Usually, NO: in most embedding datasets, quantized clustering will get you right where full precision will (+ faster indexing). Read [our research paper](https://arxiv.org/pdf/2608.14648) for the full analysis.
+
+
 
 Check our fully working examples in [Python](./examples/quantized_clustering.py) or [C++](./examples/quantized_clustering.cpp).
 
@@ -219,7 +224,7 @@ SuperKMeans' ideas have been adopted in:
 }
 ```
 
-**Stop Indexing at Full Precision: Revisiting Clustering for Vector Embeddings**   
+**[Stop Indexing at Full Precision: Revisiting Clustering for Vector Embeddings](https://arxiv.org/pdf/2608.14648)**   
 
 ```bibtex
 @article{kuffo2026superquantized,

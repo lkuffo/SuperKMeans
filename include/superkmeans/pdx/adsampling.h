@@ -2,6 +2,9 @@
 
 #include "superkmeans/distance_computers/base_computers.h"
 #include "superkmeans/pdx/utils.h"
+#include <algorithm>
+#include <cstring>
+#include <memory>
 #include <omp.h>
 #include <random>
 
@@ -46,15 +49,8 @@ inline float ComputeADSamplingRatio(
  *
  * For high-dimensional data (>= D_THRESHOLD_FOR_DCT_ROTATION), uses DCT-based rotation
  * which is more efficient than full matrix multiplication.
- *
- * @tparam q Quantization type (f32 or u8)
  */
-template <Quantization q = Quantization::f32>
 class ADSamplingPruner {
-    using DISTANCES_TYPE = skmeans_distance_t<q>;
-    using value_t = skmeans_value_t<q>;
-    using KNNCandidate_t = KNNCandidate<q>;
-    using VectorComparator_t = VectorComparator<q>;
     using MatrixR = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
   public:
@@ -133,16 +129,14 @@ class ADSamplingPruner {
     /**
      * @brief Computes the pruning threshold for a given number of visited dimensions.
      *
-     * @tparam Q Quantization type
      * @param best_candidate Current best candidate (threshold)
      * @param current_dimension_idx Number of dimensions visited so far
      * @return Pruning threshold - vectors with partial distance above this can be pruned
      */
-    template <Quantization Q = q>
-    skmeans_distance_t<Q> GetPruningThreshold(
-        const KNNCandidate<Q>& best_candidate,
+    skmeans_distance_t GetPruningThreshold(
+        const KNNCandidate& best_candidate,
         const uint32_t current_dimension_idx
-    ) {
+    ) const {
         return best_candidate.distance * ratios[current_dimension_idx];
     }
 
@@ -153,11 +147,11 @@ class ADSamplingPruner {
      * @param out Output vectors (row-major, n × num_dimensions)
      * @param n Number of vectors
      */
-    void FlipSign(const value_t* data, value_t* out, const size_t n) {
+    void FlipSign(const float* data, float* out, const size_t n) const {
 #pragma omp parallel for num_threads(g_n_threads)
         for (size_t i = 0; i < n; ++i) {
             const size_t offset = i * num_dimensions;
-            UtilsComputer<q>::FlipSign(
+            UtilsComputer<Quantization::f32>::FlipSign(
                 data + offset, out + offset, flip_masks.data(), num_dimensions
             );
         }
@@ -172,15 +166,17 @@ class ADSamplingPruner {
      * For DCT path: applies sign flipping followed by DCT-II transform.
      * For matrix path: computes out = vectors * matrix^T.
      *
+     * With IN_PLACE, callers pass the same pointer for vectors and out_buffer. The DCT path
+     * already transforms out_buffer in place. The matrix path cannot alias its GEMM operands,
+     * so it walks blocks of INPLACE_ROTATION_BLOCK_ROWS through a scratch buffer.
+     *
+     * @tparam IN_PLACE Whether vectors and out_buffer are the same buffer
      * @param vectors Input vectors (row-major, n × num_dimensions)
      * @param out_buffer Output buffer for rotated vectors (n × num_dimensions)
      * @param n Number of vectors to rotate
      */
-    void Rotate(
-        const float* SKM_RESTRICT vectors,
-        float* SKM_RESTRICT out_buffer,
-        const uint32_t n
-    ) {
+    template <bool IN_PLACE = false>
+    void Rotate(const float* vectors, float* out_buffer, const uint32_t n) const {
         Eigen::Map<MatrixR> out(out_buffer, n, num_dimensions);
 #ifdef HAS_FFTW
 #ifdef __AVX2__
@@ -211,6 +207,32 @@ class ADSamplingPruner {
             return;
         }
 #endif
+        if constexpr (IN_PLACE) {
+            const size_t n_block_rows = std::min<size_t>(INPLACE_ROTATION_BLOCK_ROWS, n);
+            std::unique_ptr<float[]> tmp_block(new float[n_block_rows * num_dimensions]);
+            for (size_t i = 0; i < n; i += n_block_rows) {
+                const size_t n_rows = std::min(n_block_rows, static_cast<size_t>(n) - i);
+                float* dst = out_buffer + i * num_dimensions;
+                std::memcpy(tmp_block.get(), dst, n_rows * num_dimensions * sizeof(float));
+                RotateImpl(tmp_block.get(), dst, static_cast<uint32_t>(n_rows));
+            }
+        } else {
+            RotateImpl(vectors, out_buffer, n);
+        }
+    }
+
+    /**
+     * @brief Computes out = vectors * matrix^T. Operands must not alias.
+     *
+     * @param vectors Input vectors (row-major, n × num_dimensions)
+     * @param out_buffer Output buffer for rotated vectors (n × num_dimensions)
+     * @param n Number of vectors to rotate
+     */
+    void RotateImpl(
+        const float* SKM_RESTRICT vectors,
+        float* SKM_RESTRICT out_buffer,
+        const uint32_t n
+    ) const {
         const char trans_a = 'T';
         const char trans_b = 'N';
         int m = static_cast<int>(num_dimensions);
@@ -247,7 +269,7 @@ class ADSamplingPruner {
         const float* SKM_RESTRICT rotated_vectors,
         float* SKM_RESTRICT out_buffer,
         const uint32_t n
-    ) {
+    ) const {
         Eigen::Map<MatrixR> out(out_buffer, n, num_dimensions);
 #ifdef HAS_FFTW
 #ifdef __AVX2__

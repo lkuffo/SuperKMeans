@@ -25,17 +25,16 @@ struct PDXDimensionSplit {
  * Reference: https://dl.acm.org/doi/abs/10.1145/3725333
  * TODO(lkuffo, high): In this version of PDX we don't use the vertical dimensions
  *
- * @tparam q Quantization type (f32 or u8)
- * @tparam alpha Distance function (l2 or dp)
+ * @tparam q Quantizer type (f32 or sq8)
  */
-template <Quantization q = Quantization::f32, DistanceFunction alpha = DistanceFunction::l2>
+template <Quantization q = Quantization::f32>
 class PDXLayout {
 
     using index_t = IndexPDXIVF<q>;
     using scalar_t = skmeans_value_t<q>;
     using cluster_t = Cluster<q>;
-    using pruner_t = ADSamplingPruner<Quantization::f32>;
-    using searcher_t = PDXearch<q, IndexPDXIVF<q>, alpha>;
+    using pruner_t = ADSamplingPruner;
+    using searcher_t = PDXearch<q, IndexPDXIVF<q>>;
 
   public:
     PDXLayout() = default;

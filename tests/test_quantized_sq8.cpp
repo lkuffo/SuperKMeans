@@ -18,11 +18,7 @@
 
 using namespace skmeans;
 
-namespace {
-
-using skm_u8 = SuperKMeans<Quantization::u8, DistanceFunction::l2>;
-
-} // namespace
+namespace {} // namespace
 
 //  SQ8Quantizer unit tests
 
@@ -57,6 +53,42 @@ TEST_F(SQ8QuantizerTest, FitEncodeDecode_Roundtrip) {
     float max_err = params.inv_quantization_scale;
     for (size_t i = 0; i < n * d; ++i) {
         EXPECT_NEAR(data[i], decoded[i], max_err + 1e-5f) << "at index " << i;
+    }
+}
+
+TEST(SQ8StateParams, ExposedParamsDecodeTheExposedCodes) {
+    const size_t n = 3000, d = 128, n_clusters = 300;
+    auto data = skm_test::LoadTestDataSubdim(
+        CMAKE_SOURCE_DIR "/tests/test_data.bin", n, skm_test::RECALL_D, d
+    );
+
+    SuperKMeansConfig config;
+    config.iters = 3;
+    config.seed = 42;
+    config.n_threads = 1;
+    config.sampling_fraction = 1.0f;
+    config.max_points_per_cluster = 99999;
+    config.suppress_warnings = true;
+
+    auto kmeans = SuperKMeansSQ8(n_clusters, d, config);
+    std::vector<float> rotated(data);
+    kmeans.TrainInPlace(rotated.data(), n);
+
+    const auto* sq8 = dynamic_cast<const SQ8Quantizer*>(kmeans.GetQuantizer());
+    ASSERT_NE(sq8, nullptr);
+    const uint8_t* codes = kmeans.GetQuantizedData();
+    ASSERT_NE(codes, nullptr);
+    ASSERT_EQ(kmeans.GetState().code_size, d);
+
+    const auto& params = sq8->GetParams();
+    const float tolerance = params.inv_quantization_scale + 1e-5f;
+    for (size_t i = 0; i < n; i += 293) {
+        for (size_t j = 0; j < d; ++j) {
+            const float decoded =
+                static_cast<float>(codes[i * d + j]) * params.inv_quantization_scale +
+                params.quantization_base;
+            ASSERT_NEAR(rotated[i * d + j], decoded, tolerance) << "at " << i << "," << j;
+        }
     }
 }
 

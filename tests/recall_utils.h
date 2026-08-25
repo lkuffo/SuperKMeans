@@ -130,9 +130,11 @@ inline float RecallAtFraction(
 
 // Train n_clusters centroids on the first RECALL_N rows of data_path, then return
 // average recall@RECALL_KNN at RECALL_FRAC. Defaults reproduce the ground-truth config.
-template <skmeans::Quantization Q>
+//
+// With IN_PLACE, training rotates the data buffer in place and leaves both data and centroids in
+// the rotated domain. Rotation is orthonormal, so recall is comparable to the default path.
+template <skmeans::Quantization q, bool IN_PLACE = false>
 inline float ClusteringRecall(
-    skmeans::QuantizerType qt,
     const std::string& data_path,
     size_t n_clusters = RECALL_N_CLUSTERS,
     size_t d = RECALL_D,
@@ -149,11 +151,15 @@ inline float ClusteringRecall(
     config.sampling_fraction = 1.0f;
     config.max_points_per_cluster = 99999;
     config.n_threads = 1;
-    config.quantizer_type = qt;
     config.use_blas_only = !pruning;
 
-    auto kmeans = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>(n_clusters, d, config);
-    auto centroids = kmeans.Train(data.data(), RECALL_N);
+    auto kmeans = skmeans::SuperKMeans<q>(n_clusters, d, config);
+    std::vector<skmeans::skmeans_centroid_value_t> centroids;
+    if constexpr (IN_PLACE) {
+        centroids = kmeans.TrainInPlace(data.data(), RECALL_N);
+    } else {
+        centroids = kmeans.Train(data.data(), RECALL_N);
+    }
     auto assign = kmeans.Assign(data.data(), centroids.data(), RECALL_N, n_clusters);
     return RecallAtFraction(
         gt,
@@ -168,8 +174,8 @@ inline float ClusteringRecall(
     );
 }
 
-template <skmeans::Quantization Q>
-inline float HierarchicalClusteringRecall(skmeans::QuantizerType qt, const std::string& data_path) {
+template <skmeans::Quantization q, bool IN_PLACE = false>
+inline float HierarchicalClusteringRecall(const std::string& data_path) {
     auto data = LoadTestDataSubdim(data_path, RECALL_N, RECALL_D, RECALL_D);
     auto gt = BuildGroundTruthNN(data.data(), RECALL_N, RECALL_D, RECALL_N_QUERIES, RECALL_KNN);
 
@@ -183,12 +189,13 @@ inline float HierarchicalClusteringRecall(skmeans::QuantizerType qt, const std::
     config.sampling_fraction = 1.0f;
     config.max_points_per_cluster = 99999;
     config.n_threads = 1;
-    config.quantizer_type = qt;
-
-    auto kmeans = skmeans::HierarchicalSuperKMeans<Q, skmeans::DistanceFunction::l2>(
-        RECALL_N_CLUSTERS, RECALL_D, config
-    );
-    auto centroids = kmeans.Train(data.data(), RECALL_N);
+    auto kmeans = skmeans::HierarchicalSuperKMeans<q>(RECALL_N_CLUSTERS, RECALL_D, config);
+    std::vector<skmeans::skmeans_centroid_value_t> centroids;
+    if constexpr (IN_PLACE) {
+        centroids = kmeans.TrainInPlace(data.data(), RECALL_N);
+    } else {
+        centroids = kmeans.Train(data.data(), RECALL_N);
+    }
     auto assign = kmeans.Assign(data.data(), centroids.data(), RECALL_N, RECALL_N_CLUSTERS);
     return RecallAtFraction(
         gt,
@@ -211,9 +218,8 @@ struct AssignMethodRecall {
 // Train once, then measure IVF recall of the training points under two assignment
 // methods: AssignTrainingPoints (reuses trained state) vs QuantizedAssign (standalone
 // re-encode). Used to check both yield comparable end-to-end recall.
-template <skmeans::Quantization Q>
+template <skmeans::Quantization q>
 inline AssignMethodRecall ClusteringRecallAssignMethods(
-    skmeans::QuantizerType qt,
     const std::string& data_path,
     size_t n_clusters,
     size_t d
@@ -229,10 +235,9 @@ inline AssignMethodRecall ClusteringRecallAssignMethods(
     config.sampling_fraction = 1.0f;
     config.max_points_per_cluster = 99999;
     config.n_threads = 1;
-    config.quantizer_type = qt;
     config.use_blas_only = false;
 
-    auto kmeans = skmeans::SuperKMeans<Q, skmeans::DistanceFunction::l2>(n_clusters, d, config);
+    auto kmeans = skmeans::SuperKMeans<q>(n_clusters, d, config);
     auto centroids = kmeans.Train(data.data(), RECALL_N);
 
     auto atp = kmeans.AssignTrainingPoints(data.data(), centroids.data(), RECALL_N, n_clusters);

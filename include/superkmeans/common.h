@@ -90,6 +90,7 @@ namespace skmeans {
 static inline constexpr float PROPORTION_HORIZONTAL_DIM = 0.75;
 static inline constexpr size_t D_THRESHOLD_FOR_DCT_ROTATION = 512;
 static inline constexpr size_t H_DIM_SIZE = 64;
+static inline constexpr size_t INPLACE_ROTATION_BLOCK_ROWS = 4096;
 
 // Below 32, GEMM stops accelerating
 static inline constexpr uint32_t MIN_PARTIAL_D = 32;
@@ -152,58 +153,79 @@ inline bool DetectAMX() {
 
 enum class DistanceFunction : uint8_t { l2, dp };
 
-enum class Quantization : uint8_t { f32, u8, u4, b8, f16, bf16 };
+enum class Quantization : uint8_t { f32, sq8, lvq4, rabitq, sq4 };
 
-enum class QuantizerType : uint8_t { none, sq8, rabitq, lvq4 };
-
-inline const char* QuantizerTypeName(QuantizerType q) {
+inline const char* QuantizationName(Quantization q) {
     switch (q) {
-    case QuantizerType::none:
-        return "none";
-    case QuantizerType::sq8:
+    case Quantization::f32:
+        return "f32";
+    case Quantization::sq8:
         return "sq8";
-    case QuantizerType::rabitq:
-        return "rabitq";
-    case QuantizerType::lvq4:
+    case Quantization::lvq4:
         return "lvq4";
+    case Quantization::rabitq:
+        return "rabitq";
+    case Quantization::sq4:
+        return "sq4";
     }
     return "unknown";
 }
 
-// Distance type: float for all quantization types.
-// Even u8 GEMM produces integer dot products, but we convert to float L2 distances
-// so that convergence/recall code works uniformly.
 template <Quantization q>
-struct DistanceType {
-    using type = float;
+struct QuantizationTag {
+    static constexpr Quantization value = q;
+};
+
+class F32Quantizer;
+class SQ8Quantizer;
+class LVQ4Quantizer;
+class RaBitQQuantizer;
+
+template <Quantization q>
+struct QuantizerClass;
+template <>
+struct QuantizerClass<Quantization::f32> {
+    using type = F32Quantizer;
+};
+template <>
+struct QuantizerClass<Quantization::sq8> {
+    using type = SQ8Quantizer;
+};
+template <>
+struct QuantizerClass<Quantization::lvq4> {
+    using type = LVQ4Quantizer;
+};
+template <>
+struct QuantizerClass<Quantization::rabitq> {
+    using type = RaBitQQuantizer;
 };
 template <Quantization q>
-using skmeans_distance_t = typename DistanceType<q>::type;
+using skmeans_quantizer_t = typename QuantizerClass<q>::type;
 
-// PDX-internal distance type: uint32_t for u8 (exact integer accumulation in quantized domain),
-// float for f32. Final distances (out_distances, KNNCandidate) always use float.
+// Distances and centroids are always float, regardless of the quantization scheme
+using skmeans_distance_t = float;
+using skmeans_centroid_value_t = float;
+
+// PDX-internal distance type: uint32_t for the quantized schemes (exact integer accumulation in
+// quantized domain), float for f32. Final distances (out_distances, KNNCandidate) always use float.
 template <Quantization q>
 struct PDXDistanceType {
-    using type = skmeans_distance_t<q>;
+    using type = skmeans_distance_t;
 };
 template <>
-struct PDXDistanceType<Quantization::u8> {
+struct PDXDistanceType<Quantization::sq8> {
     using type = uint32_t;
 };
 template <>
-struct PDXDistanceType<Quantization::u4> {
+struct PDXDistanceType<Quantization::sq4> {
     using type = uint32_t;
 };
 template <>
-struct PDXDistanceType<Quantization::b8> {
+struct PDXDistanceType<Quantization::rabitq> {
     using type = uint32_t;
 };
 template <Quantization q>
 using pdx_distance_t = typename PDXDistanceType<q>::type;
-
-// Input data type: always float (user provides float data, quantization is internal)
-template <Quantization q>
-using skmeans_input_t = float;
 
 template <Quantization q>
 struct DataType {
@@ -216,26 +238,13 @@ struct DataType<Quantization::f32> {
 template <Quantization q>
 using skmeans_value_t = typename DataType<q>::type;
 
-template <Quantization q>
-struct CentroidDataType {
-    using type = float;
-};
-template <>
-struct CentroidDataType<Quantization::f32> {
-    using type = float;
-};
-template <Quantization q>
-using skmeans_centroid_value_t = typename CentroidDataType<q>::type;
-
-template <Quantization q>
 struct KNNCandidate {
     uint32_t index;
     float distance;
 };
 
-template <Quantization q>
 struct VectorComparator {
-    bool operator()(const KNNCandidate<q>& a, const KNNCandidate<q>& b) {
+    bool operator()(const KNNCandidate& a, const KNNCandidate& b) {
         return a.distance < b.distance;
     }
 };
@@ -246,16 +255,6 @@ struct Cluster {
     uint32_t* indices = nullptr;
     skmeans_value_t<q>* data = nullptr;
     skmeans_value_t<q>* aux_vertical_dimensions_in_horizontal_layout =
-        nullptr; // Contains the vertical dimensions minus partial_d in a horizontal layout, aka the
-                 // ones not visited by GEMM
-};
-
-template <>
-struct Cluster<Quantization::f32> {
-    uint32_t num_embeddings{};
-    uint32_t* indices = nullptr;
-    skmeans_value_t<Quantization::f32>* data = nullptr;
-    skmeans_value_t<Quantization::f32>* aux_vertical_dimensions_in_horizontal_layout =
         nullptr; // Contains the vertical dimensions minus partial_d in a horizontal layout, aka the
                  // ones not visited by GEMM
 };

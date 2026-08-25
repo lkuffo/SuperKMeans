@@ -11,11 +11,11 @@ template <DistanceFunction alpha, Quantization q>
 class ScalarComputer {};
 
 template <>
-class ScalarComputer<DistanceFunction::l2, Quantization::u8> {
+class ScalarComputer<DistanceFunction::l2, Quantization::sq8> {
 
   public:
-    using distance_t = pdx_distance_t<Quantization::u8>;
-    using data_t = skmeans_value_t<Quantization::u8>;
+    using distance_t = pdx_distance_t<Quantization::sq8>;
+    using data_t = skmeans_value_t<Quantization::sq8>;
 
     static distance_t Horizontal(
         const data_t* SKM_RESTRICT vector1,
@@ -35,7 +35,7 @@ class ScalarComputer<DistanceFunction::l2, Quantization::u8> {
 template <>
 class ScalarComputer<DistanceFunction::l2, Quantization::f32> {
   public:
-    using distance_t = skmeans_distance_t<Quantization::f32>;
+    using distance_t = skmeans_distance_t;
     using data_t = skmeans_value_t<Quantization::f32>;
 
     static distance_t Horizontal(
@@ -56,7 +56,7 @@ class ScalarComputer<DistanceFunction::l2, Quantization::f32> {
 template <>
 class ScalarComputer<DistanceFunction::dp, Quantization::f32> {
   public:
-    using distance_t = skmeans_distance_t<Quantization::f32>;
+    using distance_t = skmeans_distance_t;
     using data_t = skmeans_value_t<Quantization::f32>;
 
     static distance_t Horizontal(
@@ -74,10 +74,10 @@ class ScalarComputer<DistanceFunction::dp, Quantization::f32> {
 };
 
 template <>
-class ScalarComputer<DistanceFunction::l2, Quantization::u4> {
+class ScalarComputer<DistanceFunction::l2, Quantization::sq4> {
   public:
-    using distance_t = pdx_distance_t<Quantization::u4>;
-    using data_t = skmeans_value_t<Quantization::u4>;
+    using distance_t = pdx_distance_t<Quantization::sq4>;
+    using data_t = skmeans_value_t<Quantization::sq4>;
 
     /**
      * @brief Computes L2² distance between two packed u4x2 vectors (scalar).
@@ -107,10 +107,10 @@ class ScalarComputer<DistanceFunction::l2, Quantization::u4> {
 };
 
 template <>
-class ScalarComputer<DistanceFunction::l2, Quantization::b8> {
+class ScalarComputer<DistanceFunction::l2, Quantization::rabitq> {
   public:
-    using distance_t = pdx_distance_t<Quantization::b8>;
-    using data_t = skmeans_value_t<Quantization::b8>;
+    using distance_t = pdx_distance_t<Quantization::rabitq>;
+    using data_t = skmeans_value_t<Quantization::rabitq>;
 
     /**
      * @brief Computes popcount(a AND b) — binary inner product.
@@ -265,10 +265,10 @@ class ScalarUtilsComputer<Quantization::f32> {
 };
 
 template <>
-class ScalarUtilsComputer<Quantization::u4> {
+class ScalarUtilsComputer<Quantization::sq4> {
   public:
-    using data_t = skmeans_value_t<Quantization::u4>;
-    using pdx_dist_t = pdx_distance_t<Quantization::u4>;
+    using data_t = skmeans_value_t<Quantization::sq4>;
+    using pdx_dist_t = pdx_distance_t<Quantization::sq4>;
 
     static void FlipSign(const data_t*, data_t*, const uint32_t*, size_t) {
         assert(false && "FlipSign not supported for u4");

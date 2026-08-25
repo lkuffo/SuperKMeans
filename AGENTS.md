@@ -52,7 +52,11 @@ Docs: `README.md`, `INSTALL.md`, `BENCHMARKING.md`, `CONTRIBUTING.md`, `python/R
 4. **C++ tests** — `ctest --output-on-failure` all pass (a few parametrized cases skip by design).
 5. **Lint** — `./scripts/tidy_check.sh`: no `.clang-tidy` warnings from `include/superkmeans/`.
 6. **Python** — `venv/bin/pip install .` (builds the bindings), then `venv/bin/pytest python/tests/`.
-7. **AGENTS.md accurate** — if the change invalidated anything here (paths, commands, contracts,
+7. **Examples** — `make examples`, then run all of them to completion: the C++ ones
+   (`./examples/{simple,hierarchical,quantized}_clustering.out <n> <d> <k>`, e.g. `100000 128 1000`)
+   and the Python ones (`venv/bin/python3 examples/{simple,quantized}_clustering.py`;
+   `hdf5_clustering.py` too if an `.hdf5` dataset is at hand — they live outside the repo).
+8. **AGENTS.md accurate** — if the change invalidated anything here (paths, commands, contracts,
    thresholds, gotchas, SIMD org, style), update this file in the same change.
 
 New feature ⇒ ship a unit test with it (C++ in `tests/`, Python in `python/tests/` if exposed).
@@ -83,8 +87,11 @@ distro/apt OpenBLAS is slow, build from source). See INSTALL.md.
 
 Performance-critical — weigh every copy/allocation.
 - **SIMD is centralized.** Distance kernels exist for **NEON / AVX2 / AVX512 / scalar**,
-  dispatched at compile time. **All** SIMD lives in `distance_computers/` — don't scatter it
-  elsewhere; keep all backends in sync when changing a kernel.
+  dispatched at compile time and tagged by `Quantization` scheme (`f32`/`sq8`/`sq4`/`rabitq`).
+  **All** SIMD lives in `distance_computers/` — don't scatter it elsewhere; keep all backends in
+  sync when changing a kernel. `sq4` tags the legacy 4-bit nibble kernels + PDX machinery of a
+  former quantizer — kept because they're non-trivial to reimplement and **lvq4 uses them**, but
+  `SuperKMeans<Quantization::sq4>` itself `static_assert`s (not implemented).
 - **`SKM_VECTORIZE_LOOP`** (`common.h`) forces loop autovectorization (esp. FP reductions).
   Other macros there: `SKM_RESTRICT`, `SKM_ALWAYS_INLINE`, `SKM_NO_INLINE`,
   `SKM_LIKELY`/`SKM_UNLIKELY`, `SKM_PREFETCH`.
@@ -96,14 +103,16 @@ Performance-critical — weigh every copy/allocation.
   (`neon_computers.h`, `avx2_computers.h`, `avx512_computers.h`, `scalar_computers.h`) in
   lockstep. On ARM the x86 ones aren't compiled or linted, so eyeball them / rely on x86 CI.
   Cover it in `tests/test_distance_computers.cpp`.
-- **Add a quantizer** — implement the `IQuantizer<q>` pure-virtual interface
-  (`quantizers/quantizer.h`: `Fit`/`Encode`/`Decode`/`ComputeNorms`/`FindNearestNeighbor`/…), add
-  a value to `QuantizerType` + a case in `QuantizerTypeName()` (`common.h`), register it in
-  `CreateQuantizer()` (`superkmeans.h`), expose a thin convenience wrapper — a
-  `using SuperKMeans<Name> = QuantizedSuperKMeans<QuantizerType::…>` alias in `superkmeans.h` and
-  its `HierarchicalSuperKMeans<Name>` twin in `hierarchical_superkmeans.h` (so users never type
-  `Quantization::u8`) — expose it in the bindings (`bindings.cpp` enum + `__init__.py`
-  `_QUANTIZERS`/`_QUANTIZER_MAP`), and add tests (see Testing).
+- **Add a quantizer** — implement a class deriving `IQuantizer<q>`
+  (`quantizers/quantizer.h`: `Fit`/`Encode`/`Decode`/`ComputeNorms`/`FindNearestNeighbor`/…); in
+  `common.h` add a `Quantization` enum value, a `QuantizationName()` case, and a
+  `QuantizerClass<q>` specialization pointing at the class (`CreateQuantizer()`/`GetQuantizer()`
+  resolve through that trait — nothing to register in `superkmeans.h`); add a
+  `using SuperKMeans<Name> = SuperKMeans<Quantization::…>` alias in `superkmeans.h` and its
+  `HierarchicalSuperKMeans<Name>` twin in `hierarchical_superkmeans.h`; in the bindings
+  instantiate `BindSuperKMeans<q>` + the hierarchical bind (`bindings.cpp`, plus a
+  `QuantizerParams` overload if it exposes params) and add the string to `_QUANTIZER_MAP` in
+  `__init__.py`; add tests (see Testing).
 - **Add a benchmark** — register the target with `skmeans_add_benchmark(<name>.out <source>)` in
   `benchmarks/CMakeLists.txt` (`skmeans_add_faiss_benchmark` for FAISS-linked ones).
 
@@ -111,14 +120,16 @@ Performance-critical — weigh every copy/allocation.
 
 - C++ in `tests/` (GoogleTest), Python in `python/tests/`. Compile with
   `-DSKMEANS_COMPILE_TESTS=ON`, run via `ctest`.
-- Quantized tests are **parametrized over quantizers** with `TEST_P` + `INSTANTIATE_TEST_SUITE_P`:
-  shared u8 integration/pruning tests live **once** in `tests/test_quantized.cpp` (auto-covers
-  sq8/lvq4/rabitq via `GetParam()`); quantizer-*specific* unit tests go in
-  `test_quantized_{sq8,lvq4,rabitq}.cpp`. Hierarchical quantized tests are parametrized the same
-  way in `test_hierarchical_superkmeans.cpp`.
+- Quantized tests are **typed tests** (`TYPED_TEST_SUITE` + `TYPED_TEST`) over a
+  `skmeans::QuantizationTag<...>` type list; the scheme is `TypeParam::value` and
+  `SuperKMeans<TypeParam::value>` is constructed directly. Shared integration/pruning tests live
+  **once** in `tests/test_quantized.cpp` (auto-covers sq8/lvq4/rabitq); quantizer-*specific* unit
+  tests go in `test_quantized_{sq8,lvq4,rabitq}.cpp`. Hierarchical quantized tests are typed the
+  same way in `test_hierarchical_superkmeans.cpp`. For runtime loops over schemes (benchmarks,
+  non-fixture tests) use a generic lambda over `skmeans::QuantizationTag` values.
 - **Unless the user says otherwise, a new test must cover all quantizers *and* hierarchical with
-  all quantizers** — add it as a parametrized `TEST_P` (flat) plus its hierarchical counterpart,
-  not a single-quantizer case.
+  all quantizers** — add it as a `TYPED_TEST` (flat) plus its hierarchical counterpart, not a
+  single-quantizer case.
 - Recall-checking tests need `#undef HAS_FFTW` at the top (see Gotchas).
 
 ## Gotchas
@@ -150,6 +161,19 @@ and **(b) ADSampling pruning for every quantizer** (pruning bounds derive from t
 rotation → valid only on rotated data). sq8/lvq4 may skip rotation **only on a non-pruning
 path**. Encoding in the wrong domain, or pruning on un-rotated data ⇒ **silently bad params /
 invalid bounds** (no crash, just recall loss).
+
+**`TrainInPlace(float* data, …)`** — memory-halving twin of `Train`, in both `SuperKMeans` and
+`HierarchicalSuperKMeans`. It rotates the **caller's** buffer via `ConfigInPlaceTraining` (forces
+`sampling_fraction = 1.0` with a warning, then `pruner->Rotate<true>`) and sets
+`config.data_already_rotated = true`, so the shared `Train` body then skips rotation and uses `data`
+directly as `data_to_cluster` — no `n × d` samples buffer is allocated at all (it is now allocated
+only `if (n_samples < n || !data_already_rotated)`. It forces `unrotate_centroids = false`: the caller's buffer is now in the rotated domain, so the centroids must be too
+
+**`SuperKMeansState` / `GetState()`** — how training was actually carried out (`trained`,
+`trained_in_place`, `training_data_rotated`, `code_size`, `n_encoded`, `rotator`), recorded at train
+time and exposed read-only, alongside `GetQuantizer()`, `GetQuantizedData()` and public
+`sampled_indices`. The rotation is exposed as the **pruner, not a matrix**, because the DCT path has
+no d × d matrix to hand out. 
 
 **Assign family (3 methods):**
 - **`Assign`** — exact f32 brute force. Standalone, no trained state. Ground-truth reference.
@@ -188,3 +212,11 @@ kmeans = SuperKMeans(n_clusters=k, dimensionality=d, quantizer="rabitq")  # or f
 centroids   = kmeans.train(data)               # float32 centroids (k×d)
 assignments = kmeans.assign(data, centroids)   # exact; quantized_assign(...) needs train() first
 ```
+`train(data, overwrite_input=True)` is the `TrainInPlace` path (name follows SciPy's
+`overwrite_x`/`overwrite_a`). It dispatches to a **separate** `train_in_place` binding declared
+`py::array_t<float, py::array::c_style>` — **no `forcecast`** — so pybind raises instead of
+converting; otherwise a float64/F-order/sliced input would be silently rotated as a temporary while
+the caller's array stayed untouched. `writeable()` is checked explicitly (pybind does not), and
+`validate_numpy_array(..., overwrite=True)` refuses rather than substituting an
+`ascontiguousarray` copy. `unrotate_centroids` is exposed for the normal path, and forced to False
+on the in-place one.
